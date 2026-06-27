@@ -6,9 +6,11 @@ import { Splitter } from './components/Splitter'
 import { SettingsPanel } from './components/SettingsPanel'
 import { Icon } from './components/Icon'
 import { useResizable } from './hooks/useResizable'
+import { applyLanguagePreference, useI18n } from './lib/i18n'
 import { applyFontSizePreference, applyThemePreference } from './lib/preferences'
 
 export default function App() {
+  const { t } = useI18n()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const { width: sidebarWidth, onDragStart } = useResizable(
     'cockpit.sidebarWidth',
@@ -21,6 +23,7 @@ export default function App() {
   useEffect(() => {
     applyThemePreference()
     applyFontSizePreference()
+    applyLanguagePreference()
   }, [])
 
   return (
@@ -30,7 +33,7 @@ export default function App() {
       <div className="titlebar">
         <span className="titlebar-brand">✦ cockpit</span>
         <span className="titlebar-spacer" />
-        <button className="titlebar-icon-btn" onClick={() => setSettingsOpen(true)} title="设置">
+        <button className="titlebar-icon-btn" onClick={() => setSettingsOpen(true)} title={t('app.settings')}>
           <Icon name="settings" size={14} />
         </button>
       </div>
@@ -42,7 +45,7 @@ export default function App() {
             path="/"
             element={
               <div className="detail">
-                <div className="empty">选个 session,看看 agent 干了什么</div>
+                <div className="empty">{t('app.empty')}</div>
               </div>
             }
           />

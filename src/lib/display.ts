@@ -1,4 +1,5 @@
 import type { Source } from './types'
+import { translate, type ResolvedLocale } from './i18n'
 
 export function sourceBadge(source: Source): string {
   if (source === 'claude-code') return 'Claude'
@@ -15,22 +16,22 @@ export function sourceLabel(source: Source): string {
 }
 
 // 相对时间(借 Codex 桌面端:2周/3周)。
-export function relativeTime(iso: string): string {
+export function relativeTime(iso: string, locale?: ResolvedLocale): string {
   const t = new Date(iso).getTime()
   if (!Number.isFinite(t)) return ''
   const diff = Date.now() - t
   const min = Math.floor(diff / 60000)
-  if (min < 1) return '刚刚'
-  if (min < 60) return `${min}分钟前`
+  if (min < 1) return translate('time.justNow', undefined, locale)
+  if (min < 60) return translate('time.minutesAgo', { count: min }, locale)
   const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr}小时前`
+  if (hr < 24) return translate('time.hoursAgo', { count: hr }, locale)
   const day = Math.floor(hr / 24)
-  if (day < 7) return `${day}天前`
+  if (day < 7) return translate('time.daysAgo', { count: day }, locale)
   const wk = Math.floor(day / 7)
-  if (wk < 5) return `${wk}周前`
+  if (wk < 5) return translate('time.weeksAgo', { count: wk }, locale)
   const mo = Math.floor(day / 30)
-  if (mo < 12) return `${mo}个月前`
-  return `${Math.floor(day / 365)}年前`
+  if (mo < 12) return translate('time.monthsAgo', { count: mo }, locale)
+  return translate('time.yearsAgo', { count: Math.floor(day / 365) }, locale)
 }
 
 // 显示用标题清洗:把首条 user_text 的几类噪音(slash 命令 / cockpit 转发 prompt /
@@ -50,8 +51,8 @@ function stripMarkup(s: string): string {
     .trim()
 }
 
-export function displayTitle(raw: string, maxLen = 60): string {
-  if (!raw) return '(无标题)'
+export function displayTitle(raw: string, maxLen = 60, locale?: ResolvedLocale): string {
+  if (!raw) return translate('title.untitled', undefined, locale)
   const text = raw.trim()
 
   // 1) Claude slash 命令:<command-name> / <command-message> / <command-args> 任意顺序
@@ -85,7 +86,7 @@ export function displayTitle(raw: string, maxLen = 60): string {
     const v = extractTag(text, tag)
     if (v) return stripMarkup(v).slice(0, maxLen)
   }
-  return stripMarkup(text).slice(0, maxLen) || '(无标题)'
+  return stripMarkup(text).slice(0, maxLen) || translate('title.untitled', undefined, locale)
 }
 
 export function agentAvatarClass(agent?: string): { cls: string; letter: string } {

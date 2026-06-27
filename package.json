@@ -37,6 +37,9 @@
     "electron:build-main": "esbuild electron/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist-electron/main.cjs --external:electron && esbuild electron/preload.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist-electron/preload.cjs --external:electron && cp electron/tray-icon.png electron/tray-icon@2x.png dist-electron/",
     "electron:dev": "concurrently -k -n vite,electron -c blue,magenta \"vite\" \"wait-on http://localhost:5173 && pnpm electron:build-main && electron .\"",
     "electron:build": "pnpm build && pnpm electron:build-main && electron-builder",
+    "electron:build:linux": "pnpm build && pnpm electron:build-main && electron-builder --linux --publish never",
+    "electron:build:mac": "pnpm build && pnpm electron:build-main && electron-builder --mac --publish never",
+    "electron:build:win": "pnpm build && pnpm electron:build-main && electron-builder --win --publish never",
     "electron:pack": "pnpm build && pnpm electron:build-main && electron-builder --dir"
   },
   "build": {
@@ -45,6 +48,7 @@
     "directories": {
       "output": "release"
     },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "files": [
       "dist/**",
       "dist-electron/**",
@@ -55,6 +59,20 @@
       "target": [
         "dmg",
         "zip"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ]
+    },
+    "linux": {
+      "category": "Development",
+      "target": [
+        "AppImage",
+        "deb",
+        "tar.gz"
       ]
     }
   },

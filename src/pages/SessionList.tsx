@@ -10,6 +10,7 @@ import {
 import { displayTitle, relativeTime } from '../lib/display'
 import { AgentIcon } from '../components/AgentIcon'
 import { Icon } from '../components/Icon'
+import { useI18n, type MessageKey, type ResolvedLocale } from '../lib/i18n'
 
 type ViewMode = 'all' | 'cockpit' | 'claude-code' | 'codex'
 type GroupMode = 'project' | 'time'
@@ -51,9 +52,12 @@ function writeGroupMode(mode: GroupMode) {
   window.localStorage.setItem(GROUP_MODE_KEY, mode)
 }
 
-function projectInfo(s: SessionSummaryDTO): { key: string; label: string; sortBy: string } {
+function projectInfo(
+  s: SessionSummaryDTO,
+  t: (key: MessageKey) => string,
+): { key: string; label: string; sortBy: string } {
   if (s.source === 'cockpit') {
-    return { key: 'group:cockpit', label: '群聊', sortBy: '0:cockpit' }
+    return { key: 'group:cockpit', label: t('sessions.groupChat'), sortBy: '0:cockpit' }
   }
   if (s.cwd) {
     const label = s.cwd.split('/').filter(Boolean).at(-1) || s.cwd
@@ -62,7 +66,7 @@ function projectInfo(s: SessionSummaryDTO): { key: string; label: string; sortBy
   if (s.source === 'codex') {
     return { key: 'source:codex', label: 'Codex sessions', sortBy: '1:codex' }
   }
-  return { key: 'source:unknown', label: '未知项目', sortBy: '2:unknown' }
+  return { key: 'source:unknown', label: t('sessions.unknownProject'), sortBy: '2:unknown' }
 }
 
 function localDateKey(iso: string): string | null {
@@ -83,37 +87,40 @@ function daysSinceLocalDate(iso: string): number | null {
   return Math.floor((todayMidnight - dayMidnight) / DAY_MS)
 }
 
-function timeInfo(s: SessionSummaryDTO): { key: string; label: string; sortBy: string } {
+function timeInfo(
+  s: SessionSummaryDTO,
+  t: (key: MessageKey) => string,
+): { key: string; label: string; sortBy: string } {
   const days = daysSinceLocalDate(s.updatedAt)
-  if (days === 0) return { key: 'time:today', label: '今天', sortBy: '0' }
-  if (days === 1) return { key: 'time:yesterday', label: '昨天', sortBy: '1' }
+  if (days === 0) return { key: 'time:today', label: t('sessions.today'), sortBy: '0' }
+  if (days === 1) return { key: 'time:yesterday', label: t('sessions.yesterday'), sortBy: '1' }
   if (days != null && days > 1 && days < 7) {
-    return { key: 'time:last-7-days', label: '最近 7 天', sortBy: '2' }
+    return { key: 'time:last-7-days', label: t('sessions.last7Days'), sortBy: '2' }
   }
   if (days != null && days >= 7 && days < 30) {
-    return { key: 'time:last-30-days', label: '最近 30 天', sortBy: '3' }
+    return { key: 'time:last-30-days', label: t('sessions.last30Days'), sortBy: '3' }
   }
   const month = localDateKey(s.updatedAt)?.slice(0, 7) ?? 'unknown'
   return {
     key: `time:month:${month}`,
-    label: month === 'unknown' ? '更早' : month,
+    label: month === 'unknown' ? t('sessions.older') : month,
     sortBy: `4:${month}`,
   }
 }
 
-function sourceMeta(s: SessionSummaryDTO): string {
-  if (s.source === 'cockpit') return '群聊'
+function sourceMeta(s: SessionSummaryDTO, t: (key: MessageKey) => string): string {
+  if (s.source === 'cockpit') return t('sessions.groupChat')
   if (s.source === 'claude-code') return 'Claude'
   if (s.source === 'codex') return 'Codex'
   return String(s.source)
 }
 
-function searchableText(s: SessionSummaryDTO): string {
+function searchableText(s: SessionSummaryDTO, t: (key: MessageKey) => string, locale: ResolvedLocale): string {
   return [
     s.title,
-    displayTitle(s.title),
+    displayTitle(s.title, 60, locale),
     s.cwd ?? '',
-    sourceMeta(s),
+    sourceMeta(s, t),
     s.id,
     s.messageCount == null ? '' : String(s.messageCount),
   ]
@@ -122,6 +129,7 @@ function searchableText(s: SessionSummaryDTO): string {
 }
 
 export function SessionList({ style }: { style?: CSSProperties }) {
+  const { locale, t } = useI18n()
   const [sessions, setSessions] = useState<SessionSummaryDTO[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -164,9 +172,9 @@ export function SessionList({ style }: { style?: CSSProperties }) {
     const q = query.trim().toLowerCase()
     const sourceFiltered =
       viewMode === 'all' ? sessions : sessions.filter((s) => s.source === viewMode)
-    const items = q ? sourceFiltered.filter((s) => searchableText(s).includes(q)) : sourceFiltered
+    const items = q ? sourceFiltered.filter((s) => searchableText(s, t, locale).includes(q)) : sourceFiltered
     return items.slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-  }, [sessions, query, viewMode])
+  }, [sessions, query, viewMode, locale, t])
 
   const projects = useMemo(() => {
     const map = new Map<
@@ -174,7 +182,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
       { key: string; label: string; sortBy: string; updatedAt: string; items: SessionSummaryDTO[] }
     >()
     for (const s of filtered) {
-      const info = groupMode === 'project' ? projectInfo(s) : timeInfo(s)
+      const info = groupMode === 'project' ? projectInfo(s, t) : timeInfo(s, t)
       const cur = map.get(info.key)
       if (cur) {
         cur.items.push(s)
@@ -187,7 +195,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
       if (a.sortBy !== b.sortBy) return a.sortBy < b.sortBy ? -1 : 1
       return b.updatedAt.localeCompare(a.updatedAt)
     })
-  }, [filtered, groupMode])
+  }, [filtered, groupMode, t])
 
   const recentSessions = useMemo(() => {
     if (query.trim()) return []
@@ -198,10 +206,10 @@ export function SessionList({ style }: { style?: CSSProperties }) {
     if (!selSource || !selId) return
     const selected = sessions.find((s) => s.source === selSource && s.id === selId)
     if (!selected) return
-    const key = (groupMode === 'project' ? projectInfo(selected) : timeInfo(selected)).key
+    const key = (groupMode === 'project' ? projectInfo(selected, t) : timeInfo(selected, t)).key
     setOpenProjects((prev) => new Set(prev).add(key))
     setExpandedProjects((prev) => new Set(prev).add(key))
-  }, [sessions, groupMode, selSource, selId])
+  }, [sessions, groupMode, selSource, selId, t])
 
   const handleCreateGroup = async () => {
     setCreatingGroup(true)
@@ -225,7 +233,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
 
   const startRename = (s: SessionSummaryDTO) => {
     setEditingId(s.id)
-    setEditingTitle(displayTitle(s.title))
+    setEditingTitle(displayTitle(s.title, 60, locale))
   }
 
   const submitRename = async (s: SessionSummaryDTO) => {
@@ -246,7 +254,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
   }
 
   const removeGroup = async (s: SessionSummaryDTO) => {
-    if (!window.confirm(`删除群聊“${displayTitle(s.title)}”？`)) return
+    if (!window.confirm(t('sessions.deleteConfirm', { title: displayTitle(s.title, 60, locale) }))) return
     setBusyGroupId(s.id)
     try {
       await deleteGroupThread(s.id)
@@ -266,8 +274,8 @@ export function SessionList({ style }: { style?: CSSProperties }) {
   }
 
   const viewItems: { key: ViewMode; label: string; icon?: Parameters<typeof Icon>[0]['name'] }[] = [
-    { key: 'all', label: '全部', icon: 'folder' },
-    { key: 'cockpit', label: '群聊', icon: 'users' },
+    { key: 'all', label: t('sessions.all'), icon: 'folder' },
+    { key: 'cockpit', label: t('sessions.groupChat'), icon: 'users' },
     { key: 'claude-code', label: 'Claude' },
     { key: 'codex', label: 'Codex' },
   ]
@@ -306,14 +314,20 @@ export function SessionList({ style }: { style?: CSSProperties }) {
               disabled={busy}
               autoFocus
             />
-            <button className="project-row-action" type="submit" title="保存" aria-label="保存" disabled={busy}>
+            <button
+              className="project-row-action"
+              type="submit"
+              title={t('common.save')}
+              aria-label={t('common.save')}
+              disabled={busy}
+            >
               <Icon name="check" size={12} />
             </button>
             <button
               className="project-row-action"
               type="button"
-              title="取消"
-              aria-label="取消"
+              title={t('common.cancel')}
+              aria-label={t('common.cancel')}
               disabled={busy}
               onClick={() => {
                 setEditingId(null)
@@ -331,16 +345,16 @@ export function SessionList({ style }: { style?: CSSProperties }) {
               <AgentIcon source={s.source} size={16} className="project-session-icon" />
             )}
             <span className="project-session-title" title={s.title}>
-              {displayTitle(s.title)}
+              {displayTitle(s.title, 60, locale)}
             </span>
-            <span className="project-session-time">{relativeTime(s.updatedAt)}</span>
+            <span className="project-session-time">{relativeTime(s.updatedAt, locale)}</span>
           </Link>
         )}
         {isGroup && !editing && (
           <button
             className="project-row-action"
-            title="重命名群聊"
-            aria-label="重命名群聊"
+            title={t('sessions.renameGroup')}
+            aria-label={t('sessions.renameGroup')}
             disabled={busy}
             onClick={() => startRename(s)}
           >
@@ -350,8 +364,8 @@ export function SessionList({ style }: { style?: CSSProperties }) {
         {isGroup && !editing && (
           <button
             className="project-row-action danger"
-            title="删除群聊"
-            aria-label="删除群聊"
+            title={t('sessions.deleteGroup')}
+            aria-label={t('sessions.deleteGroup')}
             disabled={busy}
             onClick={() => void removeGroup(s)}
           >
@@ -361,8 +375,8 @@ export function SessionList({ style }: { style?: CSSProperties }) {
         {!editing && (
           <button
             className={`session-pin project-pin ${isPinned ? 'active' : ''}`}
-            title={isPinned ? '取消置顶' : '置顶'}
-            aria-label={isPinned ? '取消置顶' : '置顶'}
+            title={isPinned ? t('sessions.unpin') : t('sessions.pin')}
+            aria-label={isPinned ? t('sessions.unpin') : t('sessions.pin')}
             onClick={() =>
               setPinned((prev) => {
                 const next = new Set(prev)
@@ -388,14 +402,14 @@ export function SessionList({ style }: { style?: CSSProperties }) {
           disabled={creatingGroup}
         >
           <Icon name="edit" size={16} />
-          <span>新对话</span>
+          <span>{t('sessions.newChat')}</span>
         </button>
         <button
           className={`project-nav-item ${searchOpen ? 'active' : ''}`}
           onClick={() => setSearchOpen((v) => !v)}
         >
           <Icon name="search" size={16} />
-          <span>搜索</span>
+          <span>{t('sessions.search')}</span>
         </button>
       </div>
 
@@ -404,7 +418,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
           <Icon name="search" size={13} className="project-search-icon" />
           <input
             className="project-search-input"
-            placeholder="搜索标题、项目、agent、ID..."
+            placeholder={t('sessions.searchPlaceholder')}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             autoFocus
@@ -426,12 +440,12 @@ export function SessionList({ style }: { style?: CSSProperties }) {
       </div>
 
       <div className="project-list">
-        {loading && <div className="project-empty">加载中...</div>}
-        {error && <div className="project-empty">加载失败:{error}</div>}
+        {loading && <div className="project-empty">{t('common.loading')}</div>}
+        {error && <div className="project-empty">{t('sessions.loadFailed', { error })}</div>}
         {!loading && !error && projects.length === 0 && (
           <div className="project-empty">
-            <div className="project-empty-title">{query ? '没有匹配结果' : '还没有会话'}</div>
-            <div className="project-empty-copy">点“新对话”创建 Cockpit 群聊。</div>
+            <div className="project-empty-title">{query ? t('sessions.noMatches') : t('sessions.noSessions')}</div>
+            <div className="project-empty-copy">{t('sessions.emptyHint')}</div>
           </div>
         )}
 
@@ -448,7 +462,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
                   className={`project-group-caret ${recentOpen ? 'open' : ''}`}
                 />
                 <Icon name="clock" size={12} />
-                <span>最近活跃</span>
+                <span>{t('sessions.recent')}</span>
               </span>
               <span className="project-group-count">{recentSessions.length}</span>
             </button>
@@ -463,26 +477,26 @@ export function SessionList({ style }: { style?: CSSProperties }) {
         {projects.length > 0 && (
           <div className="project-list-head project-group-mode-head">
             <span className="project-list-head-main">
-              <span>分组</span>
+              <span>{t('sessions.grouping')}</span>
             </span>
-            <div className="project-group-mode-switch" role="group" aria-label="分组方式">
+            <div className="project-group-mode-switch" role="group" aria-label={t('sessions.groupingLabel')}>
               <button
                 className={`project-group-mode-item ${groupMode === 'project' ? 'active' : ''}`}
                 onClick={() => setGroupMode('project')}
-                title="按项目分组"
+                title={t('sessions.byProject')}
                 aria-pressed={groupMode === 'project'}
               >
                 <Icon name="folder" size={12} />
-                <span>项目</span>
+                <span>{t('sessions.project')}</span>
               </button>
               <button
                 className={`project-group-mode-item ${groupMode === 'time' ? 'active' : ''}`}
                 onClick={() => setGroupMode('time')}
-                title="按时间分组"
+                title={t('sessions.byTime')}
                 aria-pressed={groupMode === 'time'}
               >
                 <Icon name="clock" size={12} />
-                <span>时间</span>
+                <span>{t('sessions.time')}</span>
               </button>
             </div>
           </div>
@@ -524,7 +538,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
                       className="project-expand"
                       onClick={() => setExpandedProjects((prev) => new Set(prev).add(project.key))}
                     >
-                      展开显示
+                      {t('sessions.showMore')}
                     </button>
                   )}
                 </div>

@@ -25,6 +25,7 @@ import {
   type SourceFilterPreference,
   type ThemePreference,
 } from '../lib/preferences'
+import { useI18n, type LocalePreference } from '../lib/i18n'
 
 const MODEL_OPTIONS: Record<AgentName, { value: string; label: string }[]> = {
   claude: [
@@ -102,6 +103,7 @@ function ToggleRow({
 }
 
 export function SettingsPanel({ onClose }: { onClose: () => void }) {
+  const { preference: language, setLanguagePreference: pickLanguage, t } = useI18n()
   const [theme, setTheme] = useState<ThemePreference>(() => readThemePreference())
   const [fontSize, setFontSize] = useState<FontSizePreference>(() => readFontSizePreference())
   const [defaultAgent, setAgent] = useState<AgentName>(() => readDefaultAgent())
@@ -170,6 +172,21 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const selectedCli = readCliSelection(defaultAgent)
   void cliRev
   const selectedStatus = diagnostics?.agents.find((a) => a.name === defaultAgent)
+  const modelOptions = MODEL_OPTIONS[defaultAgent].map((option) =>
+    option.value ? option : { ...option, label: t('common.cliDefault') },
+  )
+  const effortLabels: Record<string, string> = {
+    '': t('common.cliDefault'),
+    low: t('common.low'),
+    medium: t('common.medium'),
+    high: t('common.high'),
+    xhigh: t('common.xhigh'),
+    max: t('common.max'),
+  }
+  const effortOptions = EFFORT_OPTIONS[defaultAgent].map((option) => ({
+    ...option,
+    label: effortLabels[option.value] ?? option.label,
+  }))
   const agentPaths =
     defaultAgent === 'claude'
       ? [
@@ -185,10 +202,10 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       <section className="settings-panel" onMouseDown={(e) => e.stopPropagation()}>
         <header className="settings-head">
           <div>
-            <h1>设置</h1>
-            <p>本机偏好和诊断信息</p>
+            <h1>{t('settings.title')}</h1>
+            <p>{t('settings.subtitle')}</p>
           </div>
-          <button className="head-icon-btn" onClick={onClose} title="关闭">
+          <button className="head-icon-btn" onClick={onClose} title={t('common.close')}>
             <Icon name="close" size={14} />
           </button>
         </header>
@@ -214,42 +231,42 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                 {defaultAgent === 'claude' ? 'Claude CLI' : 'Codex CLI'}
                 {selectedStatus && (
                   <strong className={`settings-inline-status ${selectedStatus.available ? 'ok' : 'bad'}`}>
-                    {selectedStatus.available ? '可用' : '不可用'}
+                    {selectedStatus.available ? t('common.available') : t('common.unavailable')}
                   </strong>
                 )}
               </div>
               <SelectRow
-                label="默认模型"
+                label={t('settings.defaultModel')}
                 value={selectedCli.model ?? ''}
                 onChange={(value) => pickCli(defaultAgent, 'model', value)}
-                options={MODEL_OPTIONS[defaultAgent]}
+                options={modelOptions}
               />
               <SelectRow
-                label="默认推理"
+                label={t('settings.defaultReasoning')}
                 value={selectedCli.effort ?? ''}
                 onChange={(value) => pickCli(defaultAgent, 'effort', value)}
-                options={EFFORT_OPTIONS[defaultAgent]}
+                options={effortOptions}
               />
               <div className="settings-diagnostic-card selectable">
                 <div className="settings-diagnostic-head">
-                  <span>检测状态</span>
+                  <span>{t('settings.detectionStatus')}</span>
                   <button className="settings-mini-btn" onClick={() => setRefreshKey((n) => n + 1)}>
-                    <Icon name="rotate-ccw" size={12} /> 重新检测
+                    <Icon name="rotate-ccw" size={12} /> {t('settings.retryDetection')}
                   </button>
                 </div>
                 {diagLoading ? (
                   <div className="settings-progress">
                     <span className="settings-progress-bar" />
-                    <span>正在检测 {defaultAgent === 'claude' ? 'Claude' : 'Codex'} CLI…</span>
+                    <span>{t('settings.detectingCli', { agent: defaultAgent === 'claude' ? 'Claude' : 'Codex' })}</span>
                   </div>
                 ) : diagError ? (
-                  <div className="settings-error">诊断失败:{diagError}</div>
+                  <div className="settings-error">{t('settings.diagnosticsFailed', { error: diagError })}</div>
                 ) : (
                   <>
                     <div className="settings-status-detail">
                       <span>CLI</span>
                       <strong className={selectedStatus?.available ? 'ok' : 'bad'}>
-                        {selectedStatus?.available ? '已连接' : '未检测到'}
+                        {selectedStatus?.available ? t('settings.connected') : t('settings.notDetected')}
                       </strong>
                     </div>
                     {selectedStatus?.error && <div className="settings-error">{selectedStatus.error}</div>}
@@ -257,7 +274,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                       {agentPaths.map(([key, value]) => (
                         <div key={key} className="settings-path-line">
                           <span>{key}</span>
-                          <code title={value}>{value ?? '检测中…'}</code>
+                          <code title={value}>{value ?? t('common.detecting')}</code>
                         </div>
                       ))}
                     </div>
@@ -268,50 +285,60 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
           </section>
 
           <section className="settings-section">
-            <h2>界面</h2>
+            <h2>{t('settings.interface')}</h2>
             <SelectRow
-              label="主题"
+              label={t('settings.theme')}
               value={theme}
               onChange={(value) => pickTheme(value as ThemePreference)}
               options={[
-                { value: 'system', label: '跟随系统' },
-                { value: 'light', label: '浅色' },
-                { value: 'dark', label: '深色' },
+                { value: 'system', label: t('settings.themeSystem') },
+                { value: 'light', label: t('settings.themeLight') },
+                { value: 'dark', label: t('settings.themeDark') },
               ]}
             />
             <SelectRow
-              label="字体大小"
+              label={t('settings.language')}
+              value={language}
+              onChange={(value) => pickLanguage(value as LocalePreference)}
+              options={[
+                { value: 'system', label: t('settings.languageSystem') },
+                { value: 'en', label: t('settings.languageEnglish') },
+                { value: 'zh-CN', label: t('settings.languageChinese') },
+              ]}
+            />
+            <SelectRow
+              label={t('settings.fontSize')}
               value={fontSize}
               onChange={(value) => pickFontSize(value as FontSizePreference)}
               options={[
-                { value: 'small', label: '小' },
-                { value: 'medium', label: '标准' },
-                { value: 'large', label: '大' },
-                { value: 'xlarge', label: '更大' },
+                { value: 'small', label: t('settings.fontSmall') },
+                { value: 'medium', label: t('settings.fontMedium') },
+                { value: 'large', label: t('settings.fontLarge') },
+                { value: 'xlarge', label: t('settings.fontXLarge') },
               ]}
             />
             <SelectRow
-              label="默认过滤"
+              label={t('settings.defaultFilter')}
               value={sourceFilter}
               onChange={(value) => pickSourceFilter(value as SourceFilterPreference)}
               options={[
-                { value: 'all', label: '全部 session' },
+                { value: 'all', label: t('settings.allSessions') },
                 { value: 'claude-code', label: 'Claude' },
                 { value: 'codex', label: 'Codex' },
               ]}
             />
-            <ToggleRow label="打开 session 后自动刷新" checked={autoRefresh} onChange={pickAutoRefresh} />
+            <ToggleRow label={t('settings.autoRefresh')} checked={autoRefresh} onChange={pickAutoRefresh} />
             <button className="settings-secondary-btn" onClick={resetLayoutPreferences}>
-              <Icon name="rotate-ccw" size={13} /> 重置侧栏宽度
+              <Icon name="rotate-ccw" size={13} /> {t('settings.resetSidebar')}
             </button>
           </section>
 
           <section className="settings-section">
-            <h2>本机数据</h2>
+            <h2>{t('settings.localData')}</h2>
             {diagLoading && (
               <div className="settings-progress">
                 <span className="settings-progress-bar" />
-                <span>正在刷新本机路径…</span>
+                <span>{t('settings.refreshingPaths')}</span>
               </div>
             )}
             {diagnostics && (
