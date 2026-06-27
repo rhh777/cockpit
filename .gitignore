@@ -1,0 +1,22 @@
+/.idea/
+.vscode/
+node_modules/
+dist/
+dist-electron/
+release/
+coverage/
+*.log
+
+# env
+.env
+.env.*
+*.local
+
+# Claude Code 个人权限配置(勿提交)
+.claude/settings.json
+.claude/settings.local.json
+
+# OS / 编辑器
+.DS_Store
+.codegraph/
+tsconfig.tsbuildinfo

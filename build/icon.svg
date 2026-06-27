@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- App icon:渐变天空 + 舷窗 + 地平线 + 太阳 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="55%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#7c2d12"/>
+    </linearGradient>
+    <clipPath id="porthole">
+      <circle cx="512" cy="512" r="300"/>
+    </clipPath>
+  </defs>
+
+  <!-- 圆角背景 -->
+  <rect x="0" y="0" width="1024" height="1024" rx="224" fill="url(#bg)"/>
+
+  <!-- 舷窗外圈金属环 -->
+  <circle cx="512" cy="512" r="330" fill="#334155"/>
+  <circle cx="512" cy="512" r="316" fill="#0f172a"/>
+
+  <!-- 舷窗内景 -->
+  <g clip-path="url(#porthole)">
+    <rect x="212" y="212" width="600" height="600" fill="url(#sky)"/>
+    <!-- 地平线下方:云海/海面 -->
+    <rect x="212" y="572" width="600" height="240" fill="#1e1b4b" opacity="0.55"/>
+    <!-- 太阳 -->
+    <circle cx="640" cy="500" r="68" fill="#fef3c7"/>
+    <!-- 远山轮廓 -->
+    <path d="M 212 612 L 320 560 L 420 595 L 520 540 L 640 590 L 760 555 L 812 580 L 812 812 L 212 812 Z"
+          fill="#1e293b" opacity="0.8"/>
+  </g>
+
+  <!-- 舷窗内圈高光 -->
+  <circle cx="512" cy="512" r="300" fill="none" stroke="#ffffff" stroke-width="3" opacity="0.18"/>
+  <!-- 顶部反光 -->
+  <path d="M 320 380 Q 512 290 704 380" fill="none" stroke="#ffffff" stroke-width="6" opacity="0.22" stroke-linecap="round"/>
+</svg>
