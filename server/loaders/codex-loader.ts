@@ -220,6 +220,14 @@ interface IndexEntry {
   updated_at?: string
 }
 
+export function resolveCodexUpdatedAt(indexedAt: string | undefined, fileMtimeMs: number): string {
+  const fileAt = new Date(fileMtimeMs).toISOString()
+  if (!indexedAt) return fileAt
+  const indexedMs = Date.parse(indexedAt)
+  if (!Number.isFinite(indexedMs)) return fileAt
+  return indexedMs > fileMtimeMs ? new Date(indexedMs).toISOString() : fileAt
+}
+
 async function readSessionIndex(): Promise<Map<string, IndexEntry>> {
   const map = new Map<string, IndexEntry>()
   try {
@@ -327,13 +335,14 @@ export const codexLoader: SessionSourceLoader = {
       const entry = index.get(f.id)
       const indexedTitle = entry?.thread_name?.trim()
       const fallback = await summarizeCodexFile(f.filePath, indexedTitle ? 20 : 200, !indexedTitle)
+      const updatedAt = resolveCodexUpdatedAt(entry?.updated_at, f.mtimeMs)
       summaries.push({
         id: f.id,
         source: SOURCE,
         title: indexedTitle || fallback.title || '(无标题)',
         cwd: fallback.cwd ?? null,
-        startedAt: entry?.updated_at ?? fallback.startedAt ?? new Date(f.mtimeMs).toISOString(),
-        updatedAt: entry?.updated_at ?? new Date(f.mtimeMs).toISOString(),
+        startedAt: fallback.startedAt ?? entry?.updated_at ?? new Date(f.mtimeMs).toISOString(),
+        updatedAt,
         messageCount: null,
         filePath: f.filePath,
         fileMtimeMs: f.mtimeMs,

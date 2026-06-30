@@ -473,7 +473,8 @@ export function FollowupComposer({
           </div>
         )}
       </div>
-      <div className="composer-input-wrap">
+      <div className="composer-input-area">
+        <div className={`composer-input-wrap ${groupMode ? 'group-composer-shell' : ''}`}>
         {groupMode && attachments.length > 0 && (
           <div className="attachment-tray" aria-label="附件">
             {attachments.map((a, index) => (
@@ -492,33 +493,9 @@ export function FollowupComposer({
           </div>
         )}
         {groupMode && attachmentError && <div className="attachment-error">{attachmentError}</div>}
-        {groupMode && !hasActiveStreams && (
-          <div className="attachment-menu-wrap composer-left-action" ref={attachmentMenuRef}>
-            <button
-              className="attachment-action-btn"
-              onClick={() => setAttachmentMenuOpen((v) => !v)}
-              title="添加附件"
-              aria-label="添加附件"
-            >
-              <Icon name="paperclip" size={14} />
-            </button>
-            {attachmentMenuOpen && (
-              <div className="attachment-menu">
-                <button onMouseDown={(e) => e.preventDefault()} onClick={pickFiles}>
-                  <Icon name="file-text" size={13} />
-                  <span>文件</span>
-                </button>
-                <button onMouseDown={(e) => e.preventDefault()} onClick={pickDirectory}>
-                  <Icon name="folder" size={13} />
-                  <span>文件夹</span>
-                </button>
-              </div>
-            )}
-          </div>
-        )}
         <textarea
           ref={textareaRef}
-          className={`composer-input ${groupMode ? 'has-left-action' : ''}`}
+          className="composer-input"
           placeholder={
             groupMode
               ? '群聊消息;输入 @ 可选择成员回答…'
@@ -594,44 +571,93 @@ export function FollowupComposer({
             <span>已添加 @{mentionConfirm}</span>
           </div>
         )}
-        <div className="composer-send-overlay">
-          {!groupMode && !usingNative && !hasActiveStreams && (
-            <div className="advanced-menu-wrap" ref={advancedMenuRef}>
-              <button
-                className="advanced-action-btn"
-                onClick={() => setAdvancedMenuOpen((v) => !v)}
-                title="高级"
-                aria-label="高级"
-              >
-                <Icon name="more-horizontal" size={15} />
-              </button>
-              {advancedMenuOpen && (
-                <div className="advanced-menu">
-                  <button onMouseDown={(e) => e.preventDefault()} onClick={pickReviewTemplate}>
-                    <Icon name="sparkle" size={13} />
-                    <span>Review</span>
+        {groupMode ? (
+          <div className="composer-action-bar">
+            <div className="composer-action-left">
+              {groupMode && !hasActiveStreams && (
+                <div className="attachment-menu-wrap" ref={attachmentMenuRef}>
+                  <button
+                    className="composer-attach-btn"
+                    onClick={() => setAttachmentMenuOpen((v) => !v)}
+                    title="添加附件"
+                    aria-label="添加附件"
+                    aria-expanded={attachmentMenuOpen}
+                  >
+                    <Icon name="paperclip" size={16} />
                   </button>
+                  {attachmentMenuOpen && (
+                    <div className="attachment-menu">
+                      <button onMouseDown={(e) => e.preventDefault()} onClick={pickFiles}>
+                        <Icon name="file-text" size={13} />
+                        <span>文件</span>
+                      </button>
+                      <button onMouseDown={(e) => e.preventDefault()} onClick={pickDirectory}>
+                        <Icon name="folder" size={13} />
+                        <span>文件夹</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-          )}
-          <button
-            className={`send-btn primary-action ${hasActiveStreams ? 'is-canceling' : 'is-ready'}`}
-            onClick={hasActiveStreams ? onCancelAll : send}
-            disabled={!hasActiveStreams && !text.trim() && attachments.length === 0}
-            title={hasActiveStreams ? '取消当前所有正在生成的回复' : `${sendTitle}; Enter 发送, Alt+Enter 换行`}
-            aria-label={hasActiveStreams ? '取消生成' : '发送'}
-          >
-            {hasActiveStreams ? (
-              <>
-                <span className="send-pulse" aria-hidden />
-                <Icon name="close" size={14} />
-              </>
-            ) : (
-              <Icon name="send" size={14} />
+            <button
+              className={`send-btn primary-action ${hasActiveStreams ? 'is-canceling' : 'is-ready'}`}
+              onClick={hasActiveStreams ? onCancelAll : send}
+              disabled={!hasActiveStreams && !text.trim() && attachments.length === 0}
+              title={hasActiveStreams ? '取消当前所有正在生成的回复' : `${sendTitle}; Enter 发送, Alt+Enter 换行`}
+              aria-label={hasActiveStreams ? '取消生成' : '发送'}
+            >
+              {hasActiveStreams ? (
+                <>
+                  <span className="send-pulse" aria-hidden />
+                  <Icon name="close" size={14} />
+                </>
+              ) : (
+                <Icon name="arrow-up" size={18} />
+              )}
+            </button>
+          </div>
+        ) : (
+          <div className="composer-send-overlay">
+            {!groupMode && !usingNative && !hasActiveStreams && (
+              <div className="advanced-menu-wrap" ref={advancedMenuRef}>
+                <button
+                  className="advanced-action-btn"
+                  onClick={() => setAdvancedMenuOpen((v) => !v)}
+                  title="高级"
+                  aria-label="高级"
+                >
+                  <Icon name="more-horizontal" size={15} />
+                </button>
+                {advancedMenuOpen && (
+                  <div className="advanced-menu">
+                    <button onMouseDown={(e) => e.preventDefault()} onClick={pickReviewTemplate}>
+                      <Icon name="sparkle" size={13} />
+                      <span>Review</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
-          </button>
-        </div>
+            <button
+              className={`send-btn primary-action ${hasActiveStreams ? 'is-canceling' : 'is-ready'}`}
+              onClick={hasActiveStreams ? onCancelAll : send}
+              disabled={!hasActiveStreams && !text.trim() && attachments.length === 0}
+              title={hasActiveStreams ? '取消当前所有正在生成的回复' : `${sendTitle}; Enter 发送, Alt+Enter 换行`}
+              aria-label={hasActiveStreams ? '取消生成' : '发送'}
+            >
+              {hasActiveStreams ? (
+                <>
+                  <span className="send-pulse" aria-hidden />
+                  <Icon name="close" size={14} />
+                </>
+              ) : (
+                <Icon name="send" size={14} />
+              )}
+            </button>
+          </div>
+        )}
+      </div>
       </div>
     </div>
   )

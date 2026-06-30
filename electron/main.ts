@@ -3,6 +3,7 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import path from 'node:path'
 import fs from 'node:fs'
 import { cockpitApi } from '../server/index'
+import { fixPath } from './fix-path'
 
 // Electron 主进程:dev 模式直接指向 vite (localhost:5173);
 // 生产模式启动内置 http server (随机端口) 同时提供 /api/* 和静态资源。
@@ -12,6 +13,13 @@ declare const __dirname: string
 
 const isDev = !app.isPackaged
 const DEV_URL = 'http://localhost:5173'
+
+// 打包态从 GUI(Finder/Dock 双击)启动时,进程 PATH 只有系统默认极简值,
+// 不含 homebrew / ~/.local/bin 等用户级 bin 目录,会导致检测 claude/codex 失败。
+// dev 模式从终端启动已继承正确 PATH,跳过。必须在任何 spawn 子进程前执行。
+if (!isDev) {
+  fixPath()
+}
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null

@@ -1851,16 +1851,51 @@ body.resizing * {
   border-color: color-mix(in srgb, var(--color-followup) 58%, var(--color-border));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-followup) 14%, transparent);
 }
-.composer-input.has-left-action {
-  padding-left: 46px;
-}
-.composer-input-wrap {
-  position: relative;
+.composer-input-area {
   display: flex;
   flex-direction: column;
   gap: 6px;
   flex: 1;
   min-height: 0;
+}
+.composer-input-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.composer-input-wrap.group-composer-shell {
+  min-height: 132px;
+  padding: 14px 18px 12px;
+  border: 0.5px solid color-mix(in srgb, var(--color-border), transparent 8%);
+  border-radius: 24px;
+  background: var(--color-background-primary);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.08), 0 1px 0 rgba(255, 255, 255, 0.7) inset;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.composer-input-wrap.group-composer-shell:focus-within {
+  border-color: color-mix(in srgb, var(--color-followup) 48%, var(--color-border));
+  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.1), 0 0 0 3px color-mix(in srgb, var(--color-followup) 12%, transparent);
+}
+.composer-input-wrap.group-composer-shell .composer-input {
+  min-height: 68px;
+  max-height: 220px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: calc(var(--app-font-size) + 1px);
+  line-height: 1.6;
+}
+.composer-input-wrap.group-composer-shell .composer-input:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
+.composer-input-wrap.group-composer-shell .composer-input::placeholder {
+  color: color-mix(in srgb, var(--color-text-secondary) 70%, transparent);
+  font-weight: 520;
 }
 .composer-send-overlay {
   position: absolute;
@@ -1874,11 +1909,46 @@ body.resizing * {
 .composer-send-overlay > * {
   pointer-events: auto;
 }
-.composer-left-action {
-  position: absolute;
-  left: 8px;
-  bottom: 8px;
-  z-index: 2;
+/* 群聊:Codex 风格的大输入框底部工具栏。 */
+.composer-action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  padding-top: 12px;
+}
+.composer-action-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.composer-attach-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.composer-attach-btn:hover {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-text-secondary) 9%, transparent);
+}
+.composer-attach-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(29, 29, 31, 0.12);
+}
+.composer-attach-btn[aria-expanded='true'] {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-text-secondary) 12%, transparent);
 }
 .attachment-tray {
   display: flex;
@@ -1989,9 +2059,11 @@ body.resizing * {
   gap: 2px;
   z-index: 5;
 }
-.composer-left-action .attachment-menu {
+/* 群聊操作栏左侧附件菜单:左对齐,向上弹出(菜单在按钮上方)。 */
+.composer-action-left .attachment-menu-wrap .attachment-menu {
   left: 0;
   right: auto;
+  bottom: calc(100% + 8px);
 }
 .attachment-menu button,
 .advanced-menu button {
@@ -2614,6 +2686,22 @@ body.resizing * {
 .send-btn.primary-action.is-ready {
   background: linear-gradient(180deg, #2c2c2e 0%, #1d1d1f 100%);
 }
+.group-composer-shell .send-btn.primary-action {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  border-radius: 999px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.18), 0 1px 0 rgba(255, 255, 255, 0.2) inset;
+}
+.group-composer-shell .send-btn.primary-action:disabled {
+  opacity: 1;
+  background: linear-gradient(180deg, #2c2c2e 0%, #1d1d1f 100%);
+  color: rgba(255, 255, 255, 0.72);
+  border-color: color-mix(in srgb, #1d1d1f 78%, #ffffff);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.16), 0 1px 0 rgba(255, 255, 255, 0.2) inset;
+  cursor: default;
+}
 .send-btn.primary-action.is-canceling {
   background: var(--color-background-danger);
   color: var(--color-text-danger);
@@ -2700,6 +2788,12 @@ body.resizing * {
   display: flex;
   flex-direction: column;
   gap: 1px;
+}
+/* 群聊模式:左侧(第一个)按钮的弹出框向右展开,避免向左溢出被左侧栏遮挡;
+   右侧按钮保持 right:0 向左展开。两边都朝 composer 内部展开。 */
+.group-model-settings > :first-child .model-popover {
+  left: 0;
+  right: auto;
 }
 .model-popover-group {
   display: flex;

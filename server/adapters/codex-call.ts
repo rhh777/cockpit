@@ -25,16 +25,22 @@ const CODEX_COMMAND_CANDIDATES = [
   'codex',
 ].filter((v): v is string => !!v)
 
+// 缓存成功的解析结果(并并发去重)。失败不缓存:用户在 GUI 启动初期(PATH 尚未修好
+// 或 plugin 未装)触发一次检测返回 null 后,若缓存会导致后续即使装好也永久显示"未检测到"。
 let resolvedCodexCommand: Promise<string | null> | null = null
 
 async function resolveCodexCommand(): Promise<string | null> {
-  resolvedCodexCommand ??= (async () => {
+  if (resolvedCodexCommand) return resolvedCodexCommand
+  const p = (async () => {
     for (const candidate of CODEX_COMMAND_CANDIDATES) {
       if (await commandExists(candidate, ['--version'])) return candidate
     }
     return null
   })()
-  return resolvedCodexCommand
+  resolvedCodexCommand = p
+  const found = await p
+  if (!found) resolvedCodexCommand = null // 失败不缓存,下次重试
+  return found
 }
 
 function isRetryableCodexError(message: string): boolean {

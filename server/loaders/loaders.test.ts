@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { claudeLoader } from './claude-loader'
-import { codexLoader, summarizeCodexFile } from './codex-loader'
+import { codexLoader, resolveCodexUpdatedAt, summarizeCodexFile } from './codex-loader'
 import type { NormalizedEvent } from './types'
 
 const FIX = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../__fixtures__')
@@ -79,6 +79,19 @@ test('codex loader: indexed sessions still get cwd from file header', async () =
   assert.equal(patch.title, undefined)
   assert.equal(patch.cwd, '/Users/demo/proj')
   assert.equal(patch.startedAt, '2026-06-16T08:00:00.000Z')
+})
+
+test('codex loader: updatedAt uses file mtime when session index is stale', () => {
+  const fileMtimeMs = Date.parse('2026-06-29T03:41:41.000Z')
+
+  assert.equal(
+    resolveCodexUpdatedAt('2026-06-26T09:51:49.225706Z', fileMtimeMs),
+    '2026-06-29T03:41:41.000Z',
+  )
+  assert.equal(
+    resolveCodexUpdatedAt('2026-06-30T09:51:49.225Z', fileMtimeMs),
+    '2026-06-30T09:51:49.225Z',
+  )
 })
 
 test('codex loader: agent_message_delta carries streamId/delta for UI merge', async () => {
