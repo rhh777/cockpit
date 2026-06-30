@@ -9,6 +9,7 @@ import { groupAttachmentsDir, groupThreadStore } from '../store/group-thread-sto
 import { sessionRegistry } from '../registry/session-registry'
 import { parseMentions } from '../util/mentions'
 import { cleanTitle } from '../util/title'
+import { runRegistry } from '../runs/run-registry'
 
 type RunStatus = 'running' | 'completed' | 'failed' | 'aborted'
 
@@ -357,16 +358,64 @@ async function handlePostMessage(req: IncomingMessage, res: ServerResponse, id: 
 }
 
 async function handleCancel(res: ServerResponse, id: string, groupTurnId: string, req: IncomingMessage) {
+  const body = (await readBody(req)) as { runId?: string }
   const active = activeTurns.get(id)
   if (!active || active.groupTurnId !== groupTurnId) {
-    sendJson(res, 204, { ok: true })
+    runRegistry.cancelGroupTurn(id, body.runId)
+    sendJson(res, 202, { ok: true })
     return
   }
-  const body = (await readBody(req)) as { runId?: string }
   for (const run of active.runs) {
     if (!body.runId || body.runId === run.runId) run.controller.abort()
   }
+  runRegistry.cancelGroupTurn(id, body.runId)
   sendJson(res, 202, { ok: true })
+}
+
+async function handleStartRun(req: IncomingMessage, res: ServerResponse, id: string) {
+  const state = await groupThreadStore.readState(id)
+  if (!state) {
+    sendJson(res, 404, { error: 'group thread not found' })
+    return
+  }
+  const body = (await readBody(req)) as {
+    text?: string
+    useTools?: boolean
+    targetAgents?: AgentName[]
+    cliByAgent?: Partial<Record<AgentName, { model?: string; effort?: string }>>
+    attachments?: AttachmentDraft[]
+  }
+  const text = (body.text ?? '').trim()
+  const attachments = await normalizeAttachments(id, body.attachments)
+  if (!text && attachments.length === 0) {
+    sendJson(res, 400, { error: 'empty message' })
+    return
+  }
+
+  const mentions = parseMentions(text)
+  const memberSet = new Set(state.agents)
+  const targetAgents = mentions.filter((a) => memberSet.has(a))
+  try {
+    const started = await runRegistry.startGroupTurn({
+      id,
+      text,
+      targetAgents,
+      useTools: body.useTools ?? true,
+      cliByAgent: body.cliByAgent,
+      attachments,
+    })
+    if (state.title.trim() === 'Group Chat' && text) {
+      const title = cleanTitle(text, 36)
+      if (title && title !== state.title) {
+        await groupThreadStore.update(id, { title })
+        sessionRegistry.invalidate()
+      }
+    }
+    sendJson(res, 202, started)
+  } catch (e) {
+    const message = String((e as Error)?.message ?? e)
+    sendJson(res, message.includes('already running') ? 409 : 400, { error: message })
+  }
 }
 
 export async function handleGroupThreadsRoute(
@@ -386,6 +435,11 @@ export async function handleGroupThreadsRoute(
 
   if (req.method === 'POST' && parts.length === 4 && parts[3] === 'messages') {
     await handlePostMessage(req, res, id)
+    return true
+  }
+
+  if (req.method === 'POST' && parts.length === 4 && parts[3] === 'runs') {
+    await handleStartRun(req, res, id)
     return true
   }
 

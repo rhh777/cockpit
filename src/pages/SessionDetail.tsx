@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { fetchChanges, fetchSessionDetail, revealSession, type SessionDetailDTO } from '../lib/api'
+import { fetchChanges, fetchRunningRuns, fetchSessionDetail, revealSession, type SessionDetailDTO } from '../lib/api'
 import {
-  postFollowupStream,
-  postGroupMessageStream,
-  postNativeResumeStream,
+  attachRunStream,
+  cancelRun,
+  fetchActiveRuns,
   subscribeSessionStream,
+  startFollowupRun,
+  startGroupRun,
+  startNativeResumeRun,
+  type RunRecord,
+  type RunStreamMessage,
 } from '../lib/sse'
 import { sourceLabel, displayTitle } from '../lib/display'
 import { buildTimeline, summarizeTools, type FilterKind, type TraceGroup } from '../lib/timeline'
@@ -47,6 +52,10 @@ function isGroupSource(source: string | undefined): boolean {
   return source === 'cockpit'
 }
 
+function isServerRunClientId(clientId: string): boolean {
+  return clientId.startsWith('run_') || clientId.startsWith('native_run_')
+}
+
 export function SessionDetail() {
   const { source, id } = useParams()
   const { width: reviewWidth, onDragStart: onReviewDrag } = useResizable(
@@ -77,7 +86,7 @@ export function SessionDetail() {
   const eventsLenRef = useRef(0)
   const seenIds = useRef<Set<string>>(new Set())
   const streamsRef = useRef<ActiveStream[]>([])
-  const abortsRef = useRef<Map<string, AbortController>>(new Map())
+  const abortsRef = useRef<Map<string, () => void>>(new Map())
   eventsLenRef.current = events.length
   streamsRef.current = streams
 
@@ -103,6 +112,219 @@ export function SessionDetail() {
     seenIds.current = new Set(d.events.map((e, i) => e.sourceEventId ?? `#${i}`))
   }, [])
 
+  const attachFollowupRun = useCallback(
+    (run: RunRecord, parentTurnId?: string) => {
+      if (!source || !id || isGroupSource(source)) return
+      const clientId = run.runId
+      if (abortsRef.current.has(clientId)) return
+      const agent = run.agent as AgentName
+      const ac = new AbortController()
+      abortsRef.current.set(clientId, () => ac.abort())
+      setStreams((prev) =>
+        prev.some((s) => s.clientId === clientId)
+          ? prev
+          : [
+              ...prev,
+              {
+                clientId,
+                agent,
+                turnId: run.turnId,
+                rootTurnId: parentTurnId ?? run.turnId,
+                startedAt: Date.parse(run.startedAt) || Date.now(),
+              },
+            ],
+      )
+      if (parentTurnId) {
+        setClientChainHints((h) => ({
+          parentOf: { ...h.parentOf, [run.turnId]: parentTurnId },
+          agentOf: { ...h.agentOf, [parentTurnId]: agent },
+        }))
+      } else {
+        setClientChainHints((h) => ({
+          ...h,
+          agentOf: { ...h.agentOf, [run.turnId]: agent },
+        }))
+      }
+
+      const cleanup = (reason: 'done' | 'aborted' | 'error', message?: string) => {
+        abortsRef.current.delete(clientId)
+        setStreams((prev) => prev.filter((s) => s.clientId !== clientId))
+        const status = reason === 'done' ? 'completed' : reason
+        appendEnvelopes([
+          {
+            origin: 'cockpit',
+            source: source as Source,
+            sourceEventId: `status:${run.turnId}:${status}`,
+            turnId: run.turnId,
+            runId: run.runId,
+            event: {
+              type: 'meta',
+              key: 'turn_status',
+              value: reason === 'error' ? { status, error: message } : { status },
+              ts: new Date().toISOString(),
+            },
+          },
+        ])
+        if (reason === 'error') setSendError(message ?? '请求失败')
+      }
+
+      attachRunStream(
+        run.runId,
+        (msg: RunStreamMessage) => {
+          if (msg.kind === 'meta' && 'turnId' in msg) {
+            setStreams((prev) =>
+              prev.map((s) =>
+                s.clientId === clientId
+                  ? { ...s, turnId: msg.turnId, rootTurnId: s.rootTurnId ?? msg.turnId }
+                  : s,
+              ),
+            )
+          } else if (msg.kind === 'event' && !('groupTurnId' in msg)) {
+            const list: EventEnvelope[] = []
+            if (agent === sessionAgentOf(source)) {
+              const bKey = `boundary:${source}:${id}`
+              if (!seenIds.current.has(bKey)) {
+                list.push({
+                  origin: 'cockpit',
+                  source: source as Source,
+                  sourceEventId: bKey,
+                  event: { type: 'followup_boundary', ts: msg.envelope.event.ts },
+                })
+              }
+            }
+            list.push(msg.envelope)
+            appendEnvelopes(list)
+          } else if (msg.kind === 'done') {
+            cleanup('done')
+          } else if (msg.kind === 'aborted') {
+            cleanup('aborted')
+          } else if (msg.kind === 'error') {
+            cleanup('error', msg.message)
+          }
+        },
+        ac.signal,
+      ).catch((e) => {
+        if (!ac.signal.aborted) cleanup('error', String(e))
+      })
+    },
+    [source, id, appendEnvelopes],
+  )
+
+  const attachGroupRun = useCallback(
+    (run: RunRecord) => {
+      if (!id || !isGroupSource(source)) return
+      const clientId = run.runId
+      if (abortsRef.current.has(clientId)) return
+      const agent = run.agent as AgentName
+      const ac = new AbortController()
+      abortsRef.current.set(clientId, () => ac.abort())
+      setStreams((prev) =>
+        prev.some((s) => s.clientId === clientId)
+          ? prev
+          : [
+              ...prev,
+              {
+                clientId,
+                agent,
+                turnId: run.turnId,
+                rootTurnId: run.turnId,
+                startedAt: Date.parse(run.startedAt) || Date.now(),
+              },
+            ],
+      )
+
+      const cleanup = (reason: 'done' | 'aborted' | 'error', message?: string) => {
+        abortsRef.current.delete(clientId)
+        setStreams((prev) => prev.filter((s) => s.clientId !== clientId))
+        if (reason === 'error') setSendError(message ?? '群聊发送失败')
+      }
+
+      attachRunStream(
+        run.runId,
+        (msg: RunStreamMessage) => {
+          if (msg.kind === 'meta' && 'groupTurnId' in msg) {
+            setStreams((prev) =>
+              prev.map((s) => (s.clientId === clientId ? { ...s, turnId: msg.groupTurnId, rootTurnId: msg.groupTurnId } : s)),
+            )
+          } else if (msg.kind === 'event' && 'groupTurnId' in msg) {
+            appendEnvelopes([msg.envelope])
+          } else if (msg.kind === 'run_done' && msg.runId === run.runId) {
+            cleanup(msg.status === 'completed' ? 'done' : msg.status === 'aborted' ? 'aborted' : 'error', msg.message)
+          } else if (msg.kind === 'error') {
+            cleanup('error', msg.message)
+          }
+        },
+        ac.signal,
+      ).catch((e) => {
+        if (!ac.signal.aborted) cleanup('error', String(e))
+      })
+    },
+    [source, id, appendEnvelopes],
+  )
+
+  const attachNativeRun = useCallback(
+    (run: RunRecord) => {
+      if (!source || !id || !canNativeResume(source)) return
+      const clientId = run.runId
+      if (abortsRef.current.has(clientId)) return
+      const agent = run.agent as AgentName
+      const ac = new AbortController()
+      abortsRef.current.set(clientId, () => ac.abort())
+      setStreams((prev) =>
+        prev.some((s) => s.clientId === clientId)
+          ? prev
+          : [
+              ...prev,
+              {
+                clientId,
+                agent,
+                turnId: run.turnId,
+                rootTurnId: run.turnId,
+                startedAt: Date.parse(run.startedAt) || Date.now(),
+              },
+            ],
+      )
+
+      const cleanup = async (reason: 'done' | 'aborted' | 'error', message?: string) => {
+        abortsRef.current.delete(clientId)
+        setStreams((prev) => prev.filter((s) => s.clientId !== clientId))
+        if (reason === 'error') setSendError(message ?? '原生续写失败')
+        if (reason === 'done') {
+          try {
+            const d = await fetchSessionDetail(source, id)
+            resetFrom(d)
+            setLive(true)
+          } catch (e) {
+            setSendError(`原生续写已完成,但刷新失败:${String(e)}`)
+          }
+        }
+      }
+
+      attachRunStream(
+        run.runId,
+        (msg: RunStreamMessage) => {
+          if (msg.kind === 'meta' && 'turnId' in msg) {
+            setStreams((prev) =>
+              prev.map((s) => (s.clientId === clientId ? { ...s, turnId: msg.turnId, rootTurnId: msg.turnId } : s)),
+            )
+          } else if (msg.kind === 'event' && !('groupTurnId' in msg)) {
+            appendEnvelopes([msg.envelope])
+          } else if (msg.kind === 'done' && 'turnId' in msg) {
+            cleanup('done')
+          } else if (msg.kind === 'aborted') {
+            cleanup('aborted')
+          } else if (msg.kind === 'error') {
+            cleanup('error', msg.message)
+          }
+        },
+        ac.signal,
+      ).catch((e) => {
+        if (!ac.signal.aborted) cleanup('error', String(e))
+      })
+    },
+    [source, id, appendEnvelopes, resetFrom],
+  )
+
   // 初次加载 / 切换 session。
   useEffect(() => {
     if (!source || !id) return
@@ -111,8 +333,8 @@ export function SessionDetail() {
     setDetail(null)
     setEvents([])
     setSendError(null)
-    // 切 session 时取消所有进行中的流(它们针对的是上一个 session)。
-    for (const ac of abortsRef.current.values()) ac.abort()
+    // 切 session 时只断开当前页面的订阅。follow-up run 留在服务端继续跑,显式取消才 abort。
+    for (const abort of abortsRef.current.values()) abort()
     abortsRef.current.clear()
     setStreams([])
     let alive = true
@@ -121,12 +343,32 @@ export function SessionDetail() {
         if (!alive) return
         resetFrom(d)
         setLoading(false)
+        if (isGroupSource(source)) {
+          fetchRunningRuns()
+            .then((runs) => {
+              if (!alive) return
+              for (const run of runs) {
+                if (run.kind === 'group-member' && run.groupThreadId === id) attachGroupRun(run as RunRecord)
+              }
+            })
+            .catch(() => {})
+        } else {
+          fetchActiveRuns(source, id)
+            .then((runs) => {
+              if (!alive) return
+              for (const run of runs) {
+                if (run.kind === 'native-resume') attachNativeRun(run)
+                else attachFollowupRun(run, undefined)
+              }
+            })
+            .catch(() => {})
+        }
       })
       .catch((e) => alive && (setError(String(e)), setLoading(false)))
     return () => {
       alive = false
     }
-  }, [source, id, resetFrom])
+  }, [source, id, resetFrom, attachFollowupRun, attachGroupRun, attachNativeRun])
 
   useEffect(() => {
     const onPrefs = () => setAutoRefresh(readAutoRefreshPreference())
@@ -266,19 +508,6 @@ export function SessionDetail() {
       if (!source || !id || agents.length === 0) return
       setSendError(null)
       for (const agent of agents) {
-        const clientId =
-          typeof crypto !== 'undefined' && 'randomUUID' in crypto
-            ? `cli_${crypto.randomUUID()}`
-            : `cli_${Date.now()}_${Math.random().toString(36).slice(2)}`
-        const ac = new AbortController()
-        abortsRef.current.set(clientId, ac)
-        const rec: ActiveStream = {
-          clientId,
-          agent,
-          startedAt: Date.now(),
-          rootTurnId: parentTurnId,
-        }
-        setStreams((prev) => [...prev, rec])
         // 即便 root 的旧 user_text 没存 targetAgent,也立刻把 root→agent 记下;child→root
         // 等 meta 拿到 turnId 再补。
         if (parentTurnId) {
@@ -287,119 +516,39 @@ export function SessionDetail() {
             agentOf: { ...h.agentOf, [parentTurnId]: agent },
           }))
         }
-
-        let curTurnId = ''
-        const cleanup = (reason: 'done' | 'aborted' | 'error', message?: string) => {
-          abortsRef.current.delete(clientId)
-          setStreams((prev) => prev.filter((s) => s.clientId !== clientId))
-          // 在主 timeline 末尾补一个本轮的 turn_status(与服务端落盘一致)。
-          if (curTurnId) {
-            const status = reason === 'done' ? 'completed' : reason
-            appendEnvelopes([
-              {
-                origin: 'cockpit',
-                source: source as Source,
-                sourceEventId: `status:${curTurnId}:${status}`,
-                turnId: curTurnId,
-                event: {
-                  type: 'meta',
-                  key: 'turn_status',
-                  value: reason === 'error' ? { status, error: message } : { status },
-                  ts: new Date().toISOString(),
-                },
-              },
-            ])
-          }
-          if (reason === 'error') setSendError(message ?? '请求失败')
-        }
-
-        postFollowupStream(
-          source,
-          id,
-          {
+        startFollowupRun(source, id, {
             text,
             targetAgent: agent,
             useTools: true,
             parentTurnId,
             model: cli?.model,
             effort: cli?.effort,
-          },
-          (msg) => {
-            if (msg.kind === 'meta') {
-              curTurnId = msg.turnId
-              const rootForThis = parentTurnId ?? msg.turnId
-              setStreams((prev) =>
-                prev.map((s) =>
-                  s.clientId === clientId
-                    ? { ...s, turnId: msg.turnId, rootTurnId: s.rootTurnId ?? msg.turnId }
-                    : s,
-                ),
-              )
+          })
+          .then(({ run, userEnvelope }) => {
+            appendEnvelopes([userEnvelope])
+            const rootForThis = parentTurnId ?? run.turnId
+            if (parentTurnId) {
               setClientChainHints((h) => ({
                 parentOf:
-                  parentTurnId && msg.turnId !== parentTurnId
-                    ? { ...h.parentOf, [msg.turnId]: parentTurnId }
+                  run.turnId !== parentTurnId
+                    ? { ...h.parentOf, [run.turnId]: parentTurnId }
                     : h.parentOf,
                 agentOf: { ...h.agentOf, [rootForThis]: agent },
               }))
-            } else if (msg.kind === 'event') {
-              const list: EventEnvelope[] = []
-              // 主 timeline 才需要 followup_boundary;旁路 agent 走 review 栏,不打分隔条。
-              if (agent === sessionAgentOf(source)) {
-                const bKey = `boundary:${source}:${id}`
-                if (!seenIds.current.has(bKey)) {
-                  list.push({
-                    origin: 'cockpit',
-                    source: source as Source,
-                    sourceEventId: bKey,
-                    event: { type: 'followup_boundary', ts: msg.envelope.event.ts },
-                  })
-                }
-              }
-              list.push(msg.envelope)
-              appendEnvelopes(list)
-            } else if (msg.kind === 'done') {
-              cleanup('done')
-            } else if (msg.kind === 'aborted') {
-              cleanup('aborted')
-            } else if (msg.kind === 'error') {
-              cleanup('error', msg.message)
             }
-          },
-          ac.signal,
-        ).catch((e) => {
-          if (!ac.signal.aborted) cleanup('error', String(e))
-          else cleanup('aborted')
-        })
+            attachFollowupRun(run, parentTurnId)
+          })
+          .catch((e) => setSendError(String(e)))
       }
     },
-    [source, id, appendEnvelopes],
+    [source, id, appendEnvelopes, attachFollowupRun],
   )
 
   const handleGroupSend = useCallback(
     (text: string, agents: AgentName[], options?: CliSelection | CliSelectionByAgent, attachments?: AttachmentDraft[]) => {
       if (!id) return
       setSendError(null)
-      const clientId =
-        typeof crypto !== 'undefined' && 'randomUUID' in crypto
-          ? `group_${crypto.randomUUID()}`
-          : `group_${Date.now()}_${Math.random().toString(36).slice(2)}`
-      const ac = new AbortController()
-      abortsRef.current.set(clientId, ac)
-      if (agents.length > 0) {
-        setStreams((prev) => [
-          ...prev,
-          ...agents.map((agent) => ({ clientId: `${clientId}:${agent}`, agent, startedAt: Date.now() })),
-        ])
-      }
-
-      const cleanup = (reason: 'done' | 'aborted' | 'error', message?: string) => {
-        abortsRef.current.delete(clientId)
-        setStreams((prev) => prev.filter((s) => !s.clientId.startsWith(`${clientId}:`)))
-        if (reason === 'error') setSendError(message ?? '群聊发送失败')
-      }
-
-      postGroupMessageStream(
+      startGroupRun(
         id,
         {
           text,
@@ -408,104 +557,40 @@ export function SessionDetail() {
           cliByAgent: options as CliSelectionByAgent | undefined,
           attachments,
         },
-        (msg) => {
-          if (msg.kind === 'meta') {
-            setStreams((prev) =>
-              prev.map((s) => {
-                const run = msg.runs.find((r) => `${clientId}:${r.agent}` === s.clientId)
-                return run ? { ...s, turnId: msg.groupTurnId, rootTurnId: msg.groupTurnId } : s
-              }),
-            )
-          } else if (msg.kind === 'event') {
-            appendEnvelopes([msg.envelope])
-          } else if (msg.kind === 'run_done') {
-            setStreams((prev) => prev.filter((s) => s.clientId !== `${clientId}:${msg.agent}`))
-          } else if (msg.kind === 'done') {
-            cleanup('done')
-          } else if (msg.kind === 'error') {
-            cleanup('error', msg.message)
-          }
-        },
-        ac.signal,
-      ).catch((e) => {
-        if (!ac.signal.aborted) cleanup('error', String(e))
-        else cleanup('aborted')
-      })
+      )
+        .then(({ records, userEnvelope, turnStart }) => {
+          appendEnvelopes([userEnvelope, ...(turnStart ? [turnStart] : [])])
+          for (const run of records) attachGroupRun(run)
+        })
+        .catch((e) => setSendError(String(e)))
     },
-    [id, appendEnvelopes],
+    [id, appendEnvelopes, attachGroupRun],
   )
 
   const handleNativeSend = useCallback(
     (text: string) => {
       if (!source || !id || !canNativeResume(source)) return
       setSendError(null)
-      const agent = sessionAgentOf(source)
-      const clientId =
-        typeof crypto !== 'undefined' && 'randomUUID' in crypto
-          ? `native_${crypto.randomUUID()}`
-          : `native_${Date.now()}_${Math.random().toString(36).slice(2)}`
-      const ac = new AbortController()
-      abortsRef.current.set(clientId, ac)
-      setStreams((prev) => [
-        ...prev,
-        {
-          clientId,
-          agent,
-          startedAt: Date.now(),
-        },
-      ])
-
-      const cleanup = async (reason: 'done' | 'aborted' | 'error', message?: string) => {
-        abortsRef.current.delete(clientId)
-        setStreams((prev) => prev.filter((s) => s.clientId !== clientId))
-        if (reason === 'error') setSendError(message ?? '原生续写失败')
-        if (reason === 'done') {
-          try {
-            const d = await fetchSessionDetail(source, id)
-            resetFrom(d)
-            setLive(true)
-          } catch (e) {
-            setSendError(`原生续写已完成,但刷新失败:${String(e)}`)
-          }
-        }
-      }
-
-      postNativeResumeStream(
-        source,
-        id,
-        { text },
-        (msg) => {
-          if (msg.kind === 'meta') {
-            setStreams((prev) =>
-              prev.map((s) =>
-                s.clientId === clientId ? { ...s, turnId: msg.turnId, rootTurnId: msg.turnId } : s,
-              ),
-            )
-          } else if (msg.kind === 'event') {
-            appendEnvelopes([msg.envelope])
-          } else if (msg.kind === 'done') {
-            cleanup('done')
-          } else if (msg.kind === 'aborted') {
-            cleanup('aborted')
-          } else if (msg.kind === 'error') {
-            cleanup('error', msg.message)
-          }
-        },
-        ac.signal,
-      ).catch((e) => {
-        if (!ac.signal.aborted) cleanup('error', String(e))
-        else cleanup('aborted')
-      })
+      startNativeResumeRun(source, id, { text })
+        .then(({ run, userEnvelope }) => {
+          appendEnvelopes([userEnvelope])
+          attachNativeRun(run)
+        })
+        .catch((e) => setSendError(String(e)))
     },
-    [source, id, appendEnvelopes, resetFrom],
+    [source, id, appendEnvelopes, attachNativeRun],
   )
 
   const handleCancelAll = useCallback(() => {
-    for (const ac of abortsRef.current.values()) ac.abort()
+    for (const stream of streamsRef.current) {
+      if (isServerRunClientId(stream.clientId)) cancelRun(stream.clientId).catch(() => {})
+    }
+    for (const abort of abortsRef.current.values()) abort()
   }, [])
 
   const handleCancelOne = useCallback((clientId: string) => {
-    abortsRef.current.get(clientId)?.abort()
+    if (isServerRunClientId(clientId)) cancelRun(clientId).catch(() => {})
+    abortsRef.current.get(clientId)?.()
   }, [])
 
   const handleReveal = useCallback(

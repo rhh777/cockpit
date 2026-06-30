@@ -3,8 +3,10 @@ import { Link, useMatch, useNavigate } from 'react-router-dom'
 import {
   createGroupThread,
   deleteGroupThread,
+  fetchRunningRuns,
   fetchSessions,
   renameGroupThread,
+  type ActiveRunDTO,
   type SessionSummaryDTO,
 } from '../lib/api'
 import { displayTitle, relativeTime } from '../lib/display'
@@ -20,6 +22,7 @@ const GROUP_MODE_KEY = 'cockpit.sessionGroupMode'
 const MAX_COLLAPSED_ITEMS = 5
 const RECENT_SESSION_LIMIT = 5
 const DAY_MS = 24 * 60 * 60 * 1000
+const ACTIVE_RUN_POLL_MS = 2000
 
 function sessionKey(s: Pick<SessionSummaryDTO, 'source' | 'id'>): string {
   return `${s.source}:${s.id}`
@@ -145,6 +148,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [busyGroupId, setBusyGroupId] = useState<string | null>(null)
+  const [activeBySession, setActiveBySession] = useState<Map<string, ActiveRunDTO[]>>(new Map())
   const navigate = useNavigate()
   const match = useMatch('/:source/:id')
   const selSource = match?.params.source
@@ -167,6 +171,37 @@ export function SessionList({ style }: { style?: CSSProperties }) {
   useEffect(() => {
     writeGroupMode(groupMode)
   }, [groupMode])
+
+  useEffect(() => {
+    let alive = true
+    const refresh = () => {
+      fetchRunningRuns()
+        .then((runs) => {
+          if (!alive) return
+          const next = new Map<string, ActiveRunDTO[]>()
+          for (const run of runs) {
+            const key =
+              run.kind === 'group-member' && run.groupThreadId
+                ? `cockpit:${run.groupThreadId}`
+                : run.source && run.sessionId
+                  ? `${run.source}:${run.sessionId}`
+                  : ''
+            if (!key) continue
+            next.set(key, [...(next.get(key) ?? []), run])
+          }
+          setActiveBySession(next)
+        })
+        .catch(() => {
+          if (alive) setActiveBySession(new Map())
+        })
+    }
+    refresh()
+    const timer = window.setInterval(refresh, ACTIVE_RUN_POLL_MS)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
+    }
+  }, [])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -287,9 +322,16 @@ export function SessionList({ style }: { style?: CSSProperties }) {
     const isGroup = s.source === 'cockpit'
     const editing = isGroup && editingId === s.id
     const busy = busyGroupId === s.id
+    const activeRuns = activeBySession.get(key) ?? []
+    const isRunning = activeRuns.length > 0
+    const activeAgents = [...new Set(activeRuns.map((r) => r.agent))]
+    const runningLabel =
+      activeAgents.length === 1
+        ? `${activeAgents[0] === 'claude' ? 'Claude' : activeAgents[0] === 'codex' ? 'Codex' : activeAgents[0]} 回答中`
+        : `${activeAgents.length} 个 agent 回答中`
     return (
       <div
-        className={`project-session-row ${isGroup ? 'group-row' : ''} ${selected ? 'selected' : ''} ${editing ? 'editing' : ''}`}
+        className={`project-session-row ${isGroup ? 'group-row' : ''} ${selected ? 'selected' : ''} ${editing ? 'editing' : ''} ${isRunning ? 'running' : ''}`}
         key={key}
       >
         {editing ? (
@@ -347,7 +389,14 @@ export function SessionList({ style }: { style?: CSSProperties }) {
             <span className="project-session-title" title={s.title}>
               {displayTitle(s.title, 60, locale)}
             </span>
-            <span className="project-session-time">{relativeTime(s.updatedAt, locale)}</span>
+            {isRunning ? (
+              <span className="project-session-running" title={runningLabel}>
+                <span className="project-session-running-dot" aria-hidden />
+                <span>{runningLabel}</span>
+              </span>
+            ) : (
+              <span className="project-session-time">{relativeTime(s.updatedAt, locale)}</span>
+            )}
           </Link>
         )}
         {isGroup && !editing && (

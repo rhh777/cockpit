@@ -3903,8 +3903,46 @@ body.resizing * {
   background: color-mix(in srgb, var(--color-background-tertiary), transparent 58%);
 }
 
+.project-session-row.running {
+  overflow: hidden;
+  background:
+    linear-gradient(
+      100deg,
+      color-mix(in srgb, var(--color-followup) 12%, transparent) 0%,
+      color-mix(in srgb, var(--color-background-primary) 72%, transparent) 42%,
+      color-mix(in srgb, var(--color-agent-codex, #5661f5) 12%, transparent) 100%
+    );
+  background-size: 210% 100%;
+  animation: project-session-running-sheen 2.8s ease-in-out infinite;
+}
+
+.project-session-row.running::before {
+  content: '';
+  position: absolute;
+  inset: 6px auto 6px 0;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--color-followup);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--color-followup) 55%, transparent);
+}
+
+.project-session-row.running:hover:not(.selected) {
+  background-color: color-mix(in srgb, var(--color-background-tertiary), transparent 44%);
+}
+
 .project-session-row.selected {
   background: color-mix(in srgb, var(--color-background-tertiary), transparent 16%);
+}
+
+.project-session-row.running.selected {
+  background:
+    linear-gradient(
+      100deg,
+      color-mix(in srgb, var(--color-followup) 15%, transparent) 0%,
+      color-mix(in srgb, var(--color-background-tertiary) 70%, transparent) 42%,
+      color-mix(in srgb, var(--color-agent-codex, #5661f5) 14%, transparent) 100%
+    );
+  background-size: 210% 100%;
 }
 
 .project-session-link {
@@ -3974,6 +4012,53 @@ body.resizing * {
   font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
+}
+
+.project-session-running {
+  justify-self: end;
+  max-width: 94px;
+  min-width: 0;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--color-followup) 22%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-background-primary) 84%, transparent);
+  color: var(--color-followup);
+  font-size: var(--compact-font-size);
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.project-session-running span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project-session-running-dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--color-followup) 18%, transparent);
+  border-top-color: var(--color-followup);
+  animation: spinner-spin 0.85s linear infinite;
+}
+
+@keyframes project-session-running-sheen {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
 }
 
 .project-pin {

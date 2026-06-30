@@ -42,22 +42,26 @@ export interface SendFollowupBody {
   effort?: string
 }
 
-export async function postFollowupStream(
-  source: string,
-  id: string,
-  body: SendFollowupBody,
-  onMessage: (msg: StreamMessage) => void,
-  signal: AbortSignal,
+export interface RunRecord {
+  runId: string
+  kind: 'followup' | 'native-resume' | 'group-member'
+  status: 'running' | 'completed' | 'failed' | 'aborted' | 'interrupted'
+  source?: string
+  sessionId?: string
+  groupThreadId?: string
+  turnId: string
+  agent: string
+  startedAt: string
+  endedAt?: string
+  error?: string
+}
+
+export type RunStreamMessage = StreamMessage | GroupStreamMessage
+
+async function readSse<T>(
+  res: Response,
+  onMessage: (msg: T) => void,
 ): Promise<void> {
-  const res = await fetch(
-    `/api/threads/${encodeURIComponent(source)}/${encodeURIComponent(id)}/messages`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal,
-    },
-  )
   if (!res.ok || !res.body) {
     let detail = `${res.status}`
     try {
@@ -75,7 +79,6 @@ export async function postFollowupStream(
     const { value, done } = await reader.read()
     if (done) break
     buf += decoder.decode(value, { stream: true })
-    // SSE 事件以空行分隔
     let idx: number
     while ((idx = buf.indexOf('\n\n')) >= 0) {
       const chunk = buf.slice(0, idx)
@@ -83,12 +86,131 @@ export async function postFollowupStream(
       const line = chunk.split('\n').find((l) => l.startsWith('data:'))
       if (!line) continue
       try {
-        onMessage(JSON.parse(line.slice(5).trim()) as StreamMessage)
+        onMessage(JSON.parse(line.slice(5).trim()) as T)
       } catch {
         /* 跳过坏帧 */
       }
     }
   }
+}
+
+export async function startFollowupRun(
+  source: string,
+  id: string,
+  body: SendFollowupBody,
+): Promise<{ run: RunRecord; userEnvelope: EventEnvelope }> {
+  const res = await fetch(`/api/sessions/${encodeURIComponent(source)}/${encodeURIComponent(id)}/runs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    let detail = `${res.status}`
+    try {
+      detail = (await res.json()).error ?? detail
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail)
+  }
+  return res.json()
+}
+
+export async function fetchActiveRuns(source: string, id: string): Promise<RunRecord[]> {
+  const res = await fetch(`/api/sessions/${encodeURIComponent(source)}/${encodeURIComponent(id)}/runs?status=running`)
+  if (!res.ok) throw new Error(`runs ${res.status}`)
+  const json = await res.json()
+  return Array.isArray(json.runs) ? json.runs : []
+}
+
+export async function attachRunStream(
+  runId: string,
+  onMessage: (msg: RunStreamMessage) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/stream`, { signal })
+  await readSse<RunStreamMessage>(res, onMessage)
+}
+
+export async function cancelRun(runId: string): Promise<void> {
+  await fetch(`/api/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' })
+}
+
+export async function startNativeResumeRun(
+  source: string,
+  id: string,
+  body: { text: string },
+): Promise<{ run: RunRecord; userEnvelope: EventEnvelope }> {
+  const res = await fetch(`/api/native/${encodeURIComponent(source)}/${encodeURIComponent(id)}/runs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    let detail = `${res.status}`
+    try {
+      detail = (await res.json()).error ?? detail
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail)
+  }
+  return res.json()
+}
+
+export async function startGroupRun(
+  id: string,
+  body: {
+    text: string
+    targetAgents?: string[]
+    useTools?: boolean
+    cliByAgent?: Partial<Record<string, { model?: string; effort?: string }>>
+    attachments?: Array<
+      | Pick<ChatAttachment, 'kind' | 'path' | 'name'>
+      | { kind: 'imageData'; dataUrl: string; name: string; mimeType: string }
+    >
+  },
+): Promise<{
+  groupTurnId: string
+  baseEventSeq: number
+  records: RunRecord[]
+  userEnvelope: EventEnvelope
+  turnStart?: EventEnvelope
+}> {
+  const res = await fetch(`/api/group-threads/${encodeURIComponent(id)}/runs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    let detail = `${res.status}`
+    try {
+      detail = (await res.json()).error ?? detail
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail)
+  }
+  return res.json()
+}
+
+export async function postFollowupStream(
+  source: string,
+  id: string,
+  body: SendFollowupBody,
+  onMessage: (msg: StreamMessage) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const res = await fetch(
+    `/api/threads/${encodeURIComponent(source)}/${encodeURIComponent(id)}/messages`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    },
+  )
+  await readSse<StreamMessage>(res, onMessage)
 }
 
 export type SessionStreamMessage =
@@ -112,29 +234,7 @@ export async function subscribeSessionStream(
     `/api/sessions/${encodeURIComponent(source)}/${encodeURIComponent(id)}/stream?since=${since}`,
     { signal },
   )
-  if (!res.ok || !res.body) {
-    throw new Error(`stream ${res.status}`)
-  }
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buf = ''
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-    let idx: number
-    while ((idx = buf.indexOf('\n\n')) >= 0) {
-      const chunk = buf.slice(0, idx)
-      buf = buf.slice(idx + 2)
-      const line = chunk.split('\n').find((l) => l.startsWith('data:'))
-      if (!line) continue
-      try {
-        onMessage(JSON.parse(line.slice(5).trim()) as SessionStreamMessage)
-      } catch {
-        /* 跳过坏帧 */
-      }
-    }
-  }
+  await readSse<SessionStreamMessage>(res, onMessage)
 }
 
 export async function postNativeResumeStream(
@@ -153,36 +253,7 @@ export async function postNativeResumeStream(
       signal,
     },
   )
-  if (!res.ok || !res.body) {
-    let detail = `${res.status}`
-    try {
-      detail = (await res.json()).error ?? detail
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail)
-  }
-
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buf = ''
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-    let idx: number
-    while ((idx = buf.indexOf('\n\n')) >= 0) {
-      const chunk = buf.slice(0, idx)
-      buf = buf.slice(idx + 2)
-      const line = chunk.split('\n').find((l) => l.startsWith('data:'))
-      if (!line) continue
-      try {
-        onMessage(JSON.parse(line.slice(5).trim()) as StreamMessage)
-      } catch {
-        /* 跳过坏帧 */
-      }
-    }
-  }
+  await readSse<StreamMessage>(res, onMessage)
 }
 
 export async function postGroupMessageStream(
@@ -206,34 +277,5 @@ export async function postGroupMessageStream(
     body: JSON.stringify(body),
     signal,
   })
-  if (!res.ok || !res.body) {
-    let detail = `${res.status}`
-    try {
-      detail = (await res.json()).error ?? detail
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail)
-  }
-
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buf = ''
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-    let idx: number
-    while ((idx = buf.indexOf('\n\n')) >= 0) {
-      const chunk = buf.slice(0, idx)
-      buf = buf.slice(idx + 2)
-      const line = chunk.split('\n').find((l) => l.startsWith('data:'))
-      if (!line) continue
-      try {
-        onMessage(JSON.parse(line.slice(5).trim()) as GroupStreamMessage)
-      } catch {
-        /* 跳过坏帧 */
-      }
-    }
-  }
+  await readSse<GroupStreamMessage>(res, onMessage)
 }

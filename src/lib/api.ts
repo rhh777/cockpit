@@ -18,6 +18,23 @@ export function fetchSessions(): Promise<SessionSummaryDTO[]> {
   return getJson('/api/sessions')
 }
 
+export interface ActiveRunDTO {
+  runId: string
+  kind: 'followup' | 'native-resume' | 'group-member'
+  status: 'running' | 'completed' | 'failed' | 'aborted' | 'interrupted'
+  source?: string
+  sessionId?: string
+  groupThreadId?: string
+  turnId: string
+  agent: string
+  startedAt: string
+}
+
+export async function fetchRunningRuns(): Promise<ActiveRunDTO[]> {
+  const json = await getJson<{ runs?: ActiveRunDTO[] }>('/api/runs?status=running')
+  return Array.isArray(json.runs) ? json.runs : []
+}
+
 export function fetchSessionDetail(source: string, id: string): Promise<SessionDetailDTO> {
   return getJson(`/api/sessions/${encodeURIComponent(source)}/${encodeURIComponent(id)}`)
 }
