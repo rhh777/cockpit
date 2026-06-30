@@ -15,6 +15,7 @@ type IconName =
   | 'file-text'
   | 'paperclip'
   | 'image'
+  | 'arrow-up'
   | 'arrow-up-right'
   | 'claude'
   | 'codex'
@@ -128,6 +129,13 @@ export function Icon({ name, size = 14, className }: { name: IconName; size?: nu
           <rect x="4" y="5" width="16" height="14" rx="2" />
           <circle cx="9" cy="10" r="1.5" />
           <path d="m7 17 4.5-4.5 3 3L16 14l3 3" />
+        </svg>
+      )
+    case 'arrow-up':
+      return (
+        <svg {...common}>
+          <path d="M12 19V5" />
+          <path d="m6 11 6-6 6 6" />
         </svg>
       )
     case 'arrow-up-right':
