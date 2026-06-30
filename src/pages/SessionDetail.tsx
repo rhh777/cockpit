@@ -734,32 +734,36 @@ export function SessionDetail() {
           keyword={keyword}
           onKeyword={setKeyword}
         />
-        <EventTimeline
-          events={partitioned.main}
-          filter={filter}
-          keyword={keyword}
-          streaming={streams.length > 0}
-          onViewTrace={setActiveTrace}
-        />
-        {sendError && <div className="banner warn">发送失败:{sendError}</div>}
-        <StreamingStatus
-          streams={groupMode ? streams : streams.filter((s) => s.agent === sessionAgentOf(source))}
-          events={events}
-        />
-        <FollowupComposer
-          key={`${source}:${id}:composer`}
-          hasActiveStreams={streams.length > 0}
-          sessionAgent={sessionAgentOf(source)}
-          nativeAvailable={!groupMode && canNativeResume(source)}
-          groupMode={groupMode}
-          onSend={(t, a, options, attachments) =>
-            groupMode
-              ? handleGroupSend(t, a, options as CliSelectionByAgent | undefined, attachments)
-              : handleSend(t, a, undefined, options as CliSelection | undefined)
-          }
-          onNativeSend={handleNativeSend}
-          onCancelAll={handleCancelAll}
-        />
+        <div className="conversation-area">
+          <EventTimeline
+            events={partitioned.main}
+            filter={filter}
+            keyword={keyword}
+            streaming={streams.length > 0}
+            onViewTrace={setActiveTrace}
+          />
+          {sendError && <div className="banner warn conversation-banner">发送失败:{sendError}</div>}
+          <div className="conversation-bottom">
+            <StreamingStatus
+              streams={groupMode ? streams : streams.filter((s) => s.agent === sessionAgentOf(source))}
+              events={events}
+            />
+            <FollowupComposer
+              key={`${source}:${id}:composer`}
+              hasActiveStreams={streams.length > 0}
+              sessionAgent={sessionAgentOf(source)}
+              nativeAvailable={!groupMode && canNativeResume(source)}
+              groupMode={groupMode}
+              onSend={(t, a, options, attachments) =>
+                groupMode
+                  ? handleGroupSend(t, a, options as CliSelectionByAgent | undefined, attachments)
+                  : handleSend(t, a, undefined, options as CliSelection | undefined)
+              }
+              onNativeSend={handleNativeSend}
+              onCancelAll={handleCancelAll}
+            />
+          </div>
+        </div>
       </div>
       {hasReview && (
         <Splitter side="right" onDragStart={onReviewDrag} />
