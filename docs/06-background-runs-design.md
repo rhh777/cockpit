@@ -44,6 +44,13 @@ Agent Run
 - 完成后重新读取原生 session。
 - 原生 JSONL 仍只由官方 CLI 子进程写入。
 
+### Native continuation
+
+- 从 handoff 启动 Codex app-server / CLI 等原生延续任务。
+- app-server 的 `thread/start` + `turn/start` 必须复用 RunRegistry。
+- 中间事件写入 run log 或 native shadow,同时通过 attachable SSE fan-out。
+- 完成后保存 native thread id / NativeLink,但不把 group thread 绑定成原生事实源。
+
 ## 非目标
 
 - 不保证应用退出后任务继续运行。
@@ -55,7 +62,7 @@ Agent Run
 ## 核心模型
 
 ```ts
-type RunKind = 'followup' | 'native-resume' | 'group-member'
+type RunKind = 'followup' | 'native-resume' | 'native-continuation' | 'group-member'
 type RunStatus = 'running' | 'completed' | 'failed' | 'aborted' | 'interrupted'
 
 interface RunRecord {
@@ -65,6 +72,9 @@ interface RunRecord {
   source?: Source
   sessionId?: string
   groupThreadId?: string
+  handoffId?: string
+  nativeProvider?: 'codex' | 'claude'
+  nativeThreadId?: string
   turnId: string
   agent: AgentName
   startedAt: string
@@ -89,6 +99,7 @@ POST   /api/runs/:runId/cancel
 GET    /api/runs/:runId/stream
 GET    /api/sessions/:source/:id/runs?status=running
 GET    /api/group-threads/:id/runs?status=running
+GET    /api/handoffs/:handoffId/runs?status=running
 ```
 
 启动 run 可以复用现有 message endpoints,也可以新增显式 start endpoints:
@@ -97,6 +108,7 @@ GET    /api/group-threads/:id/runs?status=running
 POST /api/sessions/:source/:id/runs
 POST /api/group-threads/:id/runs
 POST /api/native/:source/:id/runs
+POST /api/handoffs/:handoffId/open-native
 ```
 
 推荐新增 start endpoints,让“启动任务”和“订阅任务”语义分离。
@@ -106,11 +118,13 @@ POST /api/native/:source/:id/runs
 ```txt
 ~/.cockpit/runs/index.jsonl
 ~/.cockpit/runs/native-shadow/<source>/<id>/<runId>.jsonl
+~/.cockpit/runs/native-continuation/<handoffId>/<runId>.jsonl
 ```
 
 - `index.jsonl` 记录 run 元数据和终态。
 - follow-up/group events 继续写原有 thread/transcript。
 - native shadow 只用于运行中展示和失败审计,不混入最终 timeline。
+- native continuation log 只用于 Cockpit 运行中展示和失败审计;原生 thread 后续历史仍由原生工具维护。
 
 服务启动时扫描 `status=running` 的旧记录,统一降级为 `interrupted`。
 
@@ -169,6 +183,13 @@ POST /api/native/:source/:id/runs
 - 完成后重读原生 session。
 - shadow 不作为原生事实源。
 
+### 6. Native continuation
+
+- `POST /api/handoffs/:handoffId/open-native` 在 `method='app-server'` 且 `mode='start-turn'` 时创建 `native-continuation` run。
+- app-server worker 使用 RunRegistry 的 fan-out / attach / cancel / terminal CAS。
+- worker 成功拿到原生 thread id 后更新 handoff 的 NativeLink。
+- 失败时保留 run log 和 NativeLink error,允许用户降级到 deep link 或 manual prompt。
+
 ## 风险
 
 | 风险 | 处理 |
@@ -176,6 +197,7 @@ POST /api/native/:source/:id/runs
 | delta 事件重连后丢失 | 先接受;后续可加 run ring buffer |
 | 服务端重启 | running 降级 interrupted |
 | native shadow 与原生历史重复 | shadow 只用于运行中/失败展示 |
+| native continuation 和 NativeOpenService 各自实现流式 | NativeOpenService 只启动 worker,流式统一走 RunRegistry |
 | 多 run 并发写同一 thread | 继续依赖 append queue + `turnId/runId` |
 | cancel 与完成竞态 | terminal CAS,只写一个终态 |
 
@@ -188,3 +210,5 @@ POST /api/native/:source/:id/runs
 - follow-up 切走后继续运行,切回可 attach。
 - 群聊单个 agent 失败不影响另一个 agent。
 - native resume 完成后以原生 session 重读结果为准。
+- native continuation 断开订阅后继续运行,切回 handoff 可 attach。
+- native continuation cancel 通过 RunRegistry abort app-server worker。

@@ -10,6 +10,8 @@ import { sessionRegistry } from '../registry/session-registry'
 import { parseMentions } from '../util/mentions'
 import { cleanTitle } from '../util/title'
 import { runRegistry } from '../runs/run-registry'
+import { loadSessionDetail } from '../sessions-service'
+import type { Source } from '../loaders/types'
 
 type RunStatus = 'running' | 'completed' | 'failed' | 'aborted'
 
@@ -187,6 +189,69 @@ function overallStatus(statuses: RunStatus[]): 'completed' | 'partial' | 'failed
   if (completed === statuses.length) return 'completed'
   if (completed > 0) return 'partial'
   return 'failed'
+}
+
+async function handleFromSession(req: IncomingMessage, res: ServerResponse) {
+  const body = (await readBody(req)) as {
+    source?: Source
+    sessionId?: string
+    agents?: AgentName[]
+    title?: string
+    includeRecentEvents?: number
+  }
+  if (typeof body.source !== 'string' || typeof body.sessionId !== 'string') {
+    sendJson(res, 400, { error: 'source and sessionId required' })
+    return
+  }
+  const filePath = await sessionRegistry.resolve(body.source, body.sessionId)
+  if (!filePath) {
+    sendJson(res, 404, { error: 'source session not found' })
+    return
+  }
+  const detail = await loadSessionDetail(body.source, body.sessionId, filePath)
+  if (!detail) {
+    sendJson(res, 404, { error: 'source session load failed' })
+    return
+  }
+  const state = await groupThreadStore.create({
+    title: body.title?.trim() || detail.summary.title,
+    cwd: detail.summary.cwd,
+    agents: Array.isArray(body.agents) ? body.agents : undefined,
+  })
+
+  const includeN = Math.max(0, Math.min(body.includeRecentEvents ?? 20, 200))
+  if (includeN > 0) {
+    const filtered = detail.events.filter(
+      (e) => e.event.type === 'user_text' || e.event.type === 'assistant_text',
+    )
+    const recent = filtered.slice(-includeN)
+    for (const env of recent) {
+      await groupThreadStore.appendEvent(state.id, {
+        origin: 'cockpit',
+        source: 'cockpit',
+        sourceEventId: `import:${body.source}:${body.sessionId}:${env.sourceEventId ?? randomUUID()}`,
+        event: env.event,
+      })
+    }
+    await groupThreadStore.appendEvent(state.id, {
+      origin: 'cockpit',
+      source: 'cockpit',
+      sourceEventId: `import-meta:${randomUUID()}`,
+      event: {
+        type: 'meta',
+        key: 'imported_from',
+        value: {
+          source: body.source,
+          sessionId: body.sessionId,
+          count: recent.length,
+          totalAvailable: filtered.length,
+        },
+        ts: new Date().toISOString(),
+      },
+    })
+  }
+  sessionRegistry.invalidate()
+  sendJson(res, 201, { groupThreadId: state.id })
 }
 
 async function handleCreate(req: IncomingMessage, res: ServerResponse) {
@@ -428,6 +493,11 @@ export async function handleGroupThreadsRoute(
 
   if (req.method === 'POST' && parts.length === 2) {
     await handleCreate(req, res)
+    return true
+  }
+
+  if (req.method === 'POST' && parts.length === 3 && parts[2] === 'from-session') {
+    await handleFromSession(req, res)
     return true
   }
 

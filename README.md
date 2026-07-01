@@ -30,6 +30,7 @@ See `docs/01-architecture.md §十四` for the detailed capability map.
 - `docs/04-ui-design.md` — UI visual and interaction guidelines
 - `docs/05-group-chat-design.md` — group chat mode, @mention dispatch, shared summaries
 - `docs/06-background-runs-design.md` — background run design, not implemented yet
+- `docs/07-native-continuation-and-handoff.md` — native continuation, deep links, and handoff bundles
 
 ## Quick Start
 

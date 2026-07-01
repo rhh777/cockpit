@@ -3,6 +3,7 @@ import { handleAttachmentsRoute } from './routes/attachments'
 import { handleNativeRoute } from './routes/native'
 import { handleNativeDialogRoute } from './routes/native-dialog'
 import { handleGroupThreadsRoute } from './routes/group-threads'
+import { handleHandoffsRoute } from './routes/handoffs'
 import { handleRunsRoute } from './routes/runs'
 import { handleSessionsRoute } from './routes/sessions'
 import { handleSettingsRoute } from './routes/settings'
@@ -28,6 +29,7 @@ export function cockpitApi() {
       if (await handleNativeDialogRoute(req, res, url)) return
       if (await handleRunsRoute(req, res, url)) return
       if (await handleNativeRoute(req, res, url)) return
+      if (await handleHandoffsRoute(req, res, url)) return
       if (await handleGroupThreadsRoute(req, res, url)) return
       if (await handleThreadsRoute(req, res, url)) return
       if (await handleSettingsRoute(req, res, url)) return

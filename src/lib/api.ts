@@ -83,6 +83,115 @@ export async function revealSession(
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
 }
 
+export type HandoffTarget = 'codex' | 'claude' | 'both'
+export type NativeProvider = 'codex' | 'claude'
+export type NativeOpenMethod = 'deeplink' | 'app-server' | 'cli' | 'manual'
+export type NativeLinkLevel = 'none' | 'linked' | 'mirrored'
+
+export interface HandoffSourceRefDTO {
+  kind: 'native-session' | 'cockpit-followup' | 'group-thread'
+  source?: string
+  sessionId?: string
+  groupThreadId?: string
+}
+
+export interface NativeLinkDTO {
+  id: string
+  provider: NativeProvider
+  handoffId: string
+  createdAt: string
+  method: NativeOpenMethod
+  linkLevel: NativeLinkLevel
+  nativeThreadId?: string
+  url?: string
+  cwd?: string | null
+  status: 'created' | 'opened' | 'failed'
+  error?: string
+}
+
+export interface HandoffManifestDTO {
+  handoffId: string
+  source: HandoffSourceRefDTO
+  createdAt: string
+  cwd: string | null
+  title: string
+  snapshotMode: 'snapshot'
+  sourceSnapshot: {
+    sourceUpdatedAt: string | null
+    sourceEventCount: number | null
+    summaryRevision?: number
+    fileMtimeMs?: number
+  }
+  files: {
+    canonical: {
+      summary: string
+      transcript: string
+      decisions: string
+      taskState: string
+      fileRefs: string
+    }
+    entries: { codex: string; claude: string }
+  }
+  nativeLinks: NativeLinkDTO[]
+}
+
+export interface HandoffDetailDTO extends HandoffManifestDTO {
+  freshness: { status: 'fresh' | 'stale' | 'unknown'; staleSince?: string; reason?: string }
+}
+
+export interface OpenNativeResponse {
+  nativeLink: NativeLinkDTO
+  fallbackPrompt?: string
+}
+
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`${res.status} ${res.statusText}${detail ? `: ${detail}` : ''}`)
+  }
+  return (await res.json()) as T
+}
+
+export function createHandoff(body: {
+  source: HandoffSourceRefDTO
+  target?: HandoffTarget
+  currentRequest?: string
+  transcriptMode?: 'full' | 'recent' | 'summary-only'
+}): Promise<HandoffManifestDTO> {
+  return postJson('/api/handoffs', body)
+}
+
+export function fetchHandoff(id: string): Promise<HandoffDetailDTO> {
+  return getJson(`/api/handoffs/${encodeURIComponent(id)}`)
+}
+
+export function openNativeHandoff(
+  handoffId: string,
+  body: { provider: NativeProvider; method?: NativeOpenMethod | 'auto' },
+): Promise<OpenNativeResponse> {
+  return postJson(`/api/handoffs/${encodeURIComponent(handoffId)}/open-native`, body)
+}
+
+export async function revealHandoff(id: string): Promise<void> {
+  const res = await fetch(`/api/handoffs/${encodeURIComponent(id)}/reveal`, { method: 'POST' })
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+}
+
+export function groupFromSession(body: {
+  source: string
+  sessionId: string
+  agents?: string[]
+  title?: string
+  includeRecentEvents?: number
+}): Promise<{ groupThreadId: string }> {
+  return postJson('/api/group-threads/from-session', body)
+}
+
 export interface ChangesResult {
   changed: boolean
   total: number

@@ -29,6 +29,7 @@ This file gives guidance to anyone working in this repository (Claude Code or ot
 - `docs/04-ui-design.md` — UI 视觉/交互规范。
 - `docs/05-group-chat-design.md` — 群聊模式(transcript.jsonl + summary.md,@mention 并行调度)。
 - `docs/06-background-runs-design.md` — 后台运行(未实现)。
+- `docs/07-native-continuation-and-handoff.md` — 原生会话延续、deep link 与 handoff bundle。
 
 文档记录的是已定决策。
 
@@ -67,6 +68,7 @@ pnpm electron:build    # 打 macOS dmg
 |---|---|
 | 单 session follow-up | `~/.cockpit/threads/<src>/<id>/followups.jsonl` |
 | 群聊 | `~/.cockpit/group-threads/<id>/{transcript.jsonl, summary.md, state.json, attachments/}` |
+| Handoff | `~/.cockpit/handoffs/<id>/{manifest.json, *.md}` |
 | discovery 缓存 | `~/.cockpit/cache/`(可删可重建) |
 
 群聊附件(图片)落 `group-threads/<id>/attachments/`,**不进原生 CLI 目录**;`file`/`directory` 附件只校验存在性,不复制。

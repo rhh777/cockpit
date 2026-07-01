@@ -84,6 +84,7 @@
 | 方向 | 说明 |
 |---|---|
 | 后台运行与重连 | agent run 脱离页面生命周期,切换 session 后继续跑并可重新 attach |
+| 原生 Handoff | 从原生 session 或群聊生成 context bundle,并用 deep link / app-server / CLI 在 Claude 或 Codex 中继续 |
 | 写权限与审批层 | 允许 follow-up agent 修改文件,但必须有明确审批、diff 展示和回滚边界 |
 | 产物/补丁管理 | 把 patch、报告、导出文件等从普通 markdown 回复中结构化管理 |
 | 全文搜索 | 跨 Claude/Codex/cockpit 会话搜索标题、正文、工具调用和路径 |

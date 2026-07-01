@@ -25,6 +25,7 @@ import { Splitter } from '../components/Splitter'
 import { TraceDrawer } from '../components/TraceDrawer'
 import { Icon } from '../components/Icon'
 import { AgentIcon } from '../components/AgentIcon'
+import { SessionActionsMenu } from '../components/SessionActionsMenu'
 import { useResizable } from '../hooks/useResizable'
 import {
   PREFERENCES_CHANGED_EVENT,
@@ -724,6 +725,14 @@ export function SessionDetail() {
             >
               <Icon name="folder" size={13} />
             </button>
+            {source && id && (
+              <SessionActionsMenu
+                source={source}
+                sessionId={id}
+                isGroup={groupMode}
+                cwd={s.cwd}
+              />
+            )}
           </div>
         </div>
         <WarningsBanner warnings={detail.warnings} />
