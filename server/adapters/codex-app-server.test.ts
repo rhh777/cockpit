@@ -1,0 +1,87 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { translateNotification } from './codex-app-server'
+
+test('translateNotification: item/completed agentMessage -> assistant_text', () => {
+  const events = translateNotification(
+    'item/completed',
+    { item: { type: 'agentMessage', id: 'a1', text: 'hello' } },
+    'thread_1',
+  )
+  assert.equal(events.length, 1)
+  assert.equal(events[0].type, 'assistant_text')
+  if (events[0].type === 'assistant_text') {
+    assert.equal(events[0].text, 'hello')
+    assert.equal(events[0].agent, 'codex')
+  }
+})
+
+test('translateNotification: item/agentMessage/delta -> assistant_text delta', () => {
+  const events = translateNotification(
+    'item/agentMessage/delta',
+    { threadId: 't', turnId: 'u', itemId: 'i', delta: 'chunk' },
+    't',
+  )
+  assert.equal(events.length, 1)
+  assert.equal(events[0].type, 'assistant_text')
+  if (events[0].type === 'assistant_text') {
+    assert.equal(events[0].delta, true)
+    assert.equal(events[0].text, 'chunk')
+  }
+})
+
+test('translateNotification: item/started commandExecution -> tool_use', () => {
+  const events = translateNotification(
+    'item/started',
+    { item: { type: 'commandExecution', id: 'c1', command: 'ls' } },
+    't',
+  )
+  assert.equal(events.length, 1)
+  assert.equal(events[0].type, 'tool_use')
+  if (events[0].type === 'tool_use') {
+    assert.equal(events[0].name, 'shell')
+    assert.deepEqual(events[0].input, { command: 'ls' })
+  }
+})
+
+test('translateNotification: item/completed commandExecution -> tool_use + tool_result', () => {
+  const events = translateNotification(
+    'item/completed',
+    {
+      item: {
+        type: 'commandExecution',
+        id: 'c1',
+        command: 'ls',
+        status: 'completed',
+        aggregatedOutput: 'a\nb',
+        exitCode: 0,
+      },
+    },
+    't',
+  )
+  assert.equal(events.length, 2)
+  assert.equal(events[0].type, 'tool_use')
+  assert.equal(events[1].type, 'tool_result')
+  if (events[1].type === 'tool_result') {
+    assert.equal(events[1].isError, false)
+    assert.equal(events[1].output, 'a\nb')
+  }
+})
+
+test('translateNotification: turn/completed with tokenUsage -> usage', () => {
+  const events = translateNotification(
+    'turn/completed',
+    { threadId: 't', turn: { id: 'u', tokenUsage: { inputTokens: 5, outputTokens: 3 } } },
+    't',
+  )
+  assert.equal(events.length, 1)
+  assert.equal(events[0].type, 'usage')
+  if (events[0].type === 'usage') {
+    assert.equal(events[0].inputTokens, 5)
+    assert.equal(events[0].outputTokens, 3)
+  }
+})
+
+test('translateNotification: unknown method -> []', () => {
+  assert.deepEqual(translateNotification('some/random', {}, 't'), [])
+})

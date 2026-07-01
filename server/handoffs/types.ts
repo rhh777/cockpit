@@ -20,6 +20,14 @@ export interface HandoffSourceSnapshot {
   fileMtimeMs?: number
 }
 
+export interface HandoffStats {
+  transcriptMode: TranscriptMode
+  transcriptTruncated: boolean
+  eventsIncluded: number
+  eventsTotal: number
+  approxTokens: number
+}
+
 export interface HandoffManifest {
   handoffId: string
   source: {
@@ -32,7 +40,10 @@ export interface HandoffManifest {
   cwd: string | null
   title: string
   snapshotMode: 'snapshot'
+  predecessorId?: string
+  inheritedTarget?: HandoffTarget
   sourceSnapshot: HandoffSourceSnapshot
+  stats?: HandoffStats
   files: {
     canonical: {
       summary: string
@@ -89,6 +100,7 @@ export interface BuiltContext {
   title: string
   cwd: string | null
   snapshot: HandoffSourceSnapshot
+  stats: HandoffStats
   canonical: {
     summary: string
     transcript: string

@@ -22,6 +22,13 @@ test('HandoffStore: 创建后落盘 manifest + 所有 markdown 文件', async ()
       title: 'T',
       cwd: '/x',
       snapshot: { sourceUpdatedAt: '2025-01-01T00:00:00Z', sourceEventCount: 1 },
+      stats: {
+        transcriptMode: 'full',
+        transcriptTruncated: false,
+        eventsIncluded: 0,
+        eventsTotal: 0,
+        approxTokens: 0,
+      },
       canonical: {
         summary: '# S',
         transcript: '# T',

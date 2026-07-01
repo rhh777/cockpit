@@ -4,7 +4,7 @@ import readline from 'node:readline'
 import type { NormalizedEvent } from '../loaders/types'
 import { serializeForAgent } from './serialize'
 import type { AgentRunInput, NativeResumeInput, ReviewAgent } from './types'
-import { commandExists } from './cli-utils'
+import { resolveCodexCommand } from './codex-command'
 
 // `codex exec --json` 输出的是 codex-sdk ThreadEvent JSONL(不是 rollout 会话格式),
 // 顶层 {type:'item.started'|'item.completed'|'item.updated', item:{type:...}}。
@@ -18,30 +18,6 @@ const TOOL_ITEM_TYPES = new Set([
 ])
 
 const CODEX_TRANSIENT_RETRY_ATTEMPTS = 2
-const CODEX_COMMAND_CANDIDATES = [
-  process.env.CODEX_BIN,
-  process.env.HOME ? `${process.env.HOME}/.codex/plugins/.plugin-appserver/codex` : undefined,
-  '/Applications/work/Codex.app/Contents/Resources/codex',
-  'codex',
-].filter((v): v is string => !!v)
-
-// 缓存成功的解析结果(并并发去重)。失败不缓存:用户在 GUI 启动初期(PATH 尚未修好
-// 或 plugin 未装)触发一次检测返回 null 后,若缓存会导致后续即使装好也永久显示"未检测到"。
-let resolvedCodexCommand: Promise<string | null> | null = null
-
-async function resolveCodexCommand(): Promise<string | null> {
-  if (resolvedCodexCommand) return resolvedCodexCommand
-  const p = (async () => {
-    for (const candidate of CODEX_COMMAND_CANDIDATES) {
-      if (await commandExists(candidate, ['--version'])) return candidate
-    }
-    return null
-  })()
-  resolvedCodexCommand = p
-  const found = await p
-  if (!found) resolvedCodexCommand = null // 失败不缓存,下次重试
-  return found
-}
 
 function isRetryableCodexError(message: string): boolean {
   const m = message.toLowerCase()

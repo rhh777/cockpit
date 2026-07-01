@@ -20,7 +20,7 @@ export function fetchSessions(): Promise<SessionSummaryDTO[]> {
 
 export interface ActiveRunDTO {
   runId: string
-  kind: 'followup' | 'native-resume' | 'group-member'
+  kind: 'followup' | 'native-resume' | 'group-member' | 'native-continuation'
   status: 'running' | 'completed' | 'failed' | 'aborted' | 'interrupted'
   source?: string
   sessionId?: string
@@ -109,6 +109,14 @@ export interface NativeLinkDTO {
   error?: string
 }
 
+export interface HandoffStatsDTO {
+  transcriptMode: 'full' | 'recent' | 'summary-only'
+  transcriptTruncated: boolean
+  eventsIncluded: number
+  eventsTotal: number
+  approxTokens: number
+}
+
 export interface HandoffManifestDTO {
   handoffId: string
   source: HandoffSourceRefDTO
@@ -116,12 +124,15 @@ export interface HandoffManifestDTO {
   cwd: string | null
   title: string
   snapshotMode: 'snapshot'
+  predecessorId?: string
+  inheritedTarget?: HandoffTarget
   sourceSnapshot: {
     sourceUpdatedAt: string | null
     sourceEventCount: number | null
     summaryRevision?: number
     fileMtimeMs?: number
   }
+  stats?: HandoffStatsDTO
   files: {
     canonical: {
       summary: string
@@ -177,6 +188,43 @@ export function openNativeHandoff(
   return postJson(`/api/handoffs/${encodeURIComponent(handoffId)}/open-native`, body)
 }
 
+export function refreshHandoff(id: string): Promise<HandoffManifestDTO> {
+  return postJson(`/api/handoffs/${encodeURIComponent(id)}/refresh`, {})
+}
+
+export interface MirrorResultDTO {
+  ok: boolean
+  linkLevel: NativeLinkLevel
+  mirrorFile?: string
+  error?: string
+  itemCount?: number
+}
+
+export async function mirrorNativeLink(handoffId: string, linkId: string): Promise<MirrorResultDTO> {
+  const res = await fetch(
+    `/api/handoffs/${encodeURIComponent(handoffId)}/native-links/${encodeURIComponent(linkId)}/mirror`,
+    { method: 'POST' },
+  )
+  return (await res.json()) as MirrorResultDTO
+}
+
+export interface HandoffCapabilitiesDTO {
+  codex: ProviderCapabilitiesDTO
+  claude: ProviderCapabilitiesDTO
+}
+export interface ProviderCapabilitiesDTO {
+  provider: 'codex' | 'claude'
+  cliAvailable: boolean
+  supportsDeeplink: boolean
+  supportsAppServer: boolean
+  supportsCli: boolean
+  supportsManual: boolean
+}
+
+export function fetchHandoffCapabilities(): Promise<HandoffCapabilitiesDTO> {
+  return getJson('/api/handoffs/capabilities')
+}
+
 export async function revealHandoff(id: string): Promise<void> {
   const res = await fetch(`/api/handoffs/${encodeURIComponent(id)}/reveal`, { method: 'POST' })
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
@@ -187,7 +235,7 @@ export function groupFromSession(body: {
   sessionId: string
   agents?: string[]
   title?: string
-  includeRecentEvents?: number
+  includeRecentEvents?: number | 'all'
 }): Promise<{ groupThreadId: string }> {
   return postJson('/api/group-threads/from-session', body)
 }

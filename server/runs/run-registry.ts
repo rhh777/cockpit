@@ -9,6 +9,7 @@ import { groupThreadStore } from '../store/group-thread-store'
 import type { RunRecord, RunStatus } from './run-store'
 import { runStore } from './run-store'
 import { nativeShadowStore } from './native-shadow-store'
+import { CodexAppServer, translateNotification } from '../adapters/codex-app-server'
 
 export type RunStreamMessage =
   | { kind: 'meta'; turnId: string; runId: string; native?: boolean }
@@ -59,6 +60,12 @@ interface NativeStartInput {
   sessionId: string
   filePath: string
   text: string
+}
+
+interface NativeContinuationInput {
+  handoffId: string
+  cwd: string | null
+  prompt: string
 }
 
 interface Subscriber {
@@ -410,6 +417,68 @@ class RunRegistry {
     return { record, userEnvelope }
   }
 
+  // Codex app-server continuation:
+  // 1) spawn `codex app-server --stdio` + initialize + thread/start(等待 threadId)
+  // 2) 拿到 threadId 后立即返回,调用方(handoffs 路由)可持久化 NativeLink
+  // 3) 后台内继续跑 turn/start,把 ServerNotification 翻译成 NormalizedEvent 灌到 run.stream
+  async startCodexContinuation(input: NativeContinuationInput): Promise<{
+    record: RunRecord
+    threadId: string
+  }> {
+    await this.init()
+    const turnId = `native_cont_turn_${randomUUID()}`
+    const runId = `native_cont_run_${randomUUID()}`
+    const startedAt = new Date().toISOString()
+
+    const server = new CodexAppServer()
+    await server.spawn()
+    const loopP = server.readLoop().catch(() => {})
+
+    // initialize
+    try {
+      await server.request('initialize', {
+        clientInfo: { name: 'cockpit', title: 'Cockpit', version: '0.0.1' },
+        capabilities: null,
+      })
+    } catch (e) {
+      server.kill()
+      throw new Error(`codex app-server initialize 失败: ${(e as Error).message}`)
+    }
+
+    // thread/start,拿 threadId
+    let threadId: string | null = null
+    try {
+      const res = (await server.request('thread/start', {
+        cwd: input.cwd ?? undefined,
+      })) as { thread?: { id?: string } }
+      threadId = res?.thread?.id ?? null
+    } catch (e) {
+      server.kill()
+      throw new Error(`codex app-server thread/start 失败: ${(e as Error).message}`)
+    }
+    if (!threadId) {
+      server.kill()
+      throw new Error('codex app-server 未返回 threadId')
+    }
+
+    const record: RunRecord = {
+      runId,
+      kind: 'native-continuation',
+      status: 'running',
+      turnId,
+      agent: 'codex',
+      startedAt,
+    }
+    await runStore.append(record)
+
+    const handle = new RunHandle(record)
+    handle.write({ kind: 'meta', turnId, runId, native: true })
+    this.runs.set(runId, handle)
+
+    void this.executeCodexContinuation(handle, server, loopP, threadId, input)
+    return { record, threadId }
+  }
+
   attach(runId: string, res: ServerResponse): (() => void) | null {
     const handle = this.runs.get(runId)
     if (!handle) return null
@@ -543,6 +612,76 @@ class RunRegistry {
         })
       }
     } finally {
+      setTimeout(() => {
+        if (this.runs.get(runId) === handle) this.runs.delete(runId)
+      }, 5 * 60 * 1000).unref?.()
+    }
+  }
+
+  private async executeCodexContinuation(
+    handle: RunHandle,
+    server: CodexAppServer,
+    loopP: Promise<void>,
+    threadId: string,
+    input: NativeContinuationInput,
+  ) {
+    const { runId, turnId } = handle.record
+    let turnDone = false
+    let turnErr: string | null = null
+    const done = new Promise<void>((resolve) => {
+      server.onNotification = (n) => {
+        const events = translateNotification(n.method, n.params, threadId)
+        for (const ev of events) {
+          const envelope: EventEnvelope = {
+            origin: 'native',
+            source: 'codex',
+            sourceEventId: `native:${runId}:${randomUUID()}`,
+            turnId,
+            runId,
+            event: ev,
+          }
+          handle.write({ kind: 'event', envelope })
+        }
+        if (n.method === 'turn/completed') {
+          turnDone = true
+          resolve()
+        } else if (n.method === 'error') {
+          const message = (n.params as any)?.error?.message ?? 'app-server error'
+          turnErr = String(message)
+          resolve()
+        }
+      }
+    })
+
+    // abort:kill 子进程
+    const onAbort = () => server.kill()
+    handle.controller.signal.addEventListener('abort', onAbort, { once: true })
+
+    try {
+      // 发送 turn。cwd 覆盖只用于必要时;默认沿用 thread cwd。
+      await server.request('turn/start', {
+        threadId,
+        input: [{ type: 'text', text: input.prompt, text_elements: [] }],
+        ...(input.cwd ? { cwd: input.cwd } : {}),
+      })
+      await done
+      if (turnErr) throw new Error(turnErr)
+      if (!turnDone) throw new Error('turn interrupted')
+
+      if (await handle.finish('completed')) {
+        handle.write({ kind: 'done', turnId, status: 'completed' })
+      }
+    } catch (err) {
+      const aborted = handle.controller.signal.aborted
+      const status = aborted ? 'aborted' : 'failed'
+      const message = aborted ? 'aborted' : String((err as Error)?.message ?? err)
+      if (await handle.finish(status, aborted ? undefined : message)) {
+        handle.write({ kind: aborted ? 'aborted' : 'error', turnId, status, message })
+      }
+    } finally {
+      handle.controller.signal.removeEventListener('abort', onAbort)
+      server.kill()
+      await loopP.catch(() => {})
       setTimeout(() => {
         if (this.runs.get(runId) === handle) this.runs.delete(runId)
       }, 5 * 60 * 1000).unref?.()

@@ -5,7 +5,7 @@ import { COCKPIT_ROOT } from '../config'
 import { readJsonlLines } from '../util/jsonl'
 import type { AgentName, Source } from '../loaders/types'
 
-export type RunKind = 'followup' | 'native-resume' | 'group-member'
+export type RunKind = 'followup' | 'native-resume' | 'group-member' | 'native-continuation'
 export type RunStatus = 'running' | 'completed' | 'failed' | 'aborted' | 'interrupted'
 
 export interface RunRecord {

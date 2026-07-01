@@ -430,6 +430,10 @@ interface CreateGroupFromSessionResponse {
 ```txt
 POST /api/handoffs
 GET  /api/handoffs/:handoffId
+GET  /api/handoffs/capabilities                       # Phase 3
+POST /api/handoffs/:handoffId/refresh                 # Phase 3
+POST /api/handoffs/:handoffId/native-links/:linkId/mirror  # Phase 4
+POST /api/handoffs/:handoffId/reveal
 ```
 
 ```ts
@@ -690,7 +694,7 @@ claude --resume <session>
 
 ## 推荐阶段
 
-### Phase 1: 文件 handoff + deep link
+### Phase 1: 文件 handoff + deep link ✅
 
 - 实现 HandoffStore。
 - 实现 handoff snapshot 和 stale 检测。
@@ -706,26 +710,42 @@ Phase 1 **不做**:
 - LLM-driven summary / decisions 抽取。
 - `Refresh handoff` UI(stale 状态先在 detail 接口里返回,但不提供刷新入口)。
 
-### Phase 2: Codex app-server linked thread
+### Phase 2: Codex app-server linked thread ✅
 
-- 启动/连接 `codex app-server`。
-- 通过 RunRegistry 创建 `native-continuation` run。
-- 在 run 内执行 `thread/start` + `turn/start`。
-- 保存 `nativeThreadId`。
-- 支持 `codex://threads/<id>` 再打开。
+已实现:
 
-### Phase 3: richer native continuation
+- `server/adapters/codex-app-server.ts`:spawn `codex app-server --stdio`,newline-delimited JSON-RPC 2.0 客户端,`translateNotification` 把 ServerNotification 翻译成 `NormalizedEvent`。
+- `RunRegistry.startCodexContinuation`:同步 `initialize` + `thread/start` 拿 `threadId` 后返回;后台跑 `turn/start`,事件走 run stream。RunKind 加了 `'native-continuation'`。
+- `POST /api/handoffs/:id/open-native` 支持 `method='app-server'`,成功写 NativeLink `{ method:'app-server', linkLevel:'linked', nativeThreadId, runId, url:'codex://threads/<id>' }`;失败返 502,不自动降级(auto 场景由 UI 决定重试哪种)。
+- 前端菜单增加「和 Codex 继续(深集成)」入口;linked 结果显示 Thread ID + `codex://threads/<id>` 打开按钮。
 
-- Claude 能力检测增强。
-- native link 状态可视化。
-- 显式 `Refresh handoff`,默认生成新的 handoff snapshot。
-- 可选 transcript 截断策略和 token 估算。
+### Phase 3: richer native continuation ✅
 
-### Phase 4: mirrored sync exploration
+已实现:
 
-- 仅在 provider 官方 API/协议稳定支持时实现。
-- 必须保持 Cockpit thread 为群聊事实源。
-- mirrored sync 失败时自动降级为 linked/deeplink。
+- Claude/Codex 能力检测:`GET /api/handoffs/capabilities` 返回每个 provider 的 `cliAvailable / supportsDeeplink / supportsAppServer / supportsCli / supportsManual`。Claude 默认不启 deeplink(URL scheme 在跨版本不稳定)。
+- `POST /api/handoffs/:handoffId/refresh`:从同一 `sourceRef` 重新抽取 canonical + entries,写入 **新 handoffId**。旧 handoff 的 `nativeLinks` 保留在旧 manifest 上,新 handoff 从空开始。新 manifest 用 `predecessorId` 记录来源,`inheritedTarget` 继承创建目标。
+- Manifest 增加 `stats: HandoffStats { transcriptMode, transcriptTruncated, eventsIncluded, eventsTotal, approxTokens }`。`approxTokens` 是粗略估算(char/4);不精确,供 UI 显示预算参考。
+- 前端在 handoff 结果弹窗渲染 `Native links` 列表(方法/等级/thread id/打开按钮)以及 `Bundle` 概要(events + tokens)。
+
+`transcriptMode='recent'` 保留最近 `RECENT_LIMIT=30` 条 non-meta 事件,并在正文顶部注明 `_(N of M events shown, mode=recent)_`。`transcriptMode='summary-only'` 完全省略 transcript,用于 token 预算最紧的情况。
+
+### Phase 4: mirrored sync exploration ✅ (scaffold)
+
+Phase 4 目前仍是探索,实现范围只覆盖 **Codex** 上的 **一次性** thread 快照,不做长驻同步。
+
+- 端点:`POST /api/handoffs/:handoffId/native-links/:linkId/mirror`。
+- 要求:目标 nativeLink 必须是 `provider='codex' && method='app-server' && nativeThreadId != null`。
+- 动作:spawn 一次 `codex app-server`,`initialize` + `thread/read includeTurns=true`,把返回的 turns/items 序列化落到 `~/.cockpit/handoffs/<handoffId>/mirror.<linkId>.md`,把 `nativeLink.linkLevel` 升级到 `'mirrored'`。
+- 失败:如果目标此前是 `mirrored`,降回 `'linked'`(即 provider 断了不再同步,但保留 linked 入口);否则不动。永远不会覆盖 handoff canonical bundle。
+- 前端 `Native links` 行提供「同步 (Phase 4)」按钮,反复点可重新抓取。
+- Claude 侧暂不做镜像:Anthropic 未暴露稳定的本地读接口。
+
+Phase 4 显式保留 docs 头部的非目标约束:
+
+- Cockpit group thread 仍是群聊事实源;`mirror.<linkId>.md` 只是本地快照,不参与 UI 消费的 `NormalizedEvent` 流。
+- 不做增量 diff:每次全量重写,失败可无损重试。
+- 不假设 provider 协议向前兼容;协议变化时把 mirror 端点关掉,前端还能用 linked/deeplink。
 
 ## 测试
 

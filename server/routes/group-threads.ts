@@ -197,7 +197,7 @@ async function handleFromSession(req: IncomingMessage, res: ServerResponse) {
     sessionId?: string
     agents?: AgentName[]
     title?: string
-    includeRecentEvents?: number
+    includeRecentEvents?: number | 'all'
   }
   if (typeof body.source !== 'string' || typeof body.sessionId !== 'string') {
     sendJson(res, 400, { error: 'source and sessionId required' })
@@ -219,12 +219,15 @@ async function handleFromSession(req: IncomingMessage, res: ServerResponse) {
     agents: Array.isArray(body.agents) ? body.agents : undefined,
   })
 
-  const includeN = Math.max(0, Math.min(body.includeRecentEvents ?? 20, 200))
+  const includeAll = body.includeRecentEvents === 'all'
+  const includeN = includeAll
+    ? Number.POSITIVE_INFINITY
+    : Math.max(0, Math.min((body.includeRecentEvents as number) ?? 20, 5000))
   if (includeN > 0) {
     const filtered = detail.events.filter(
       (e) => e.event.type === 'user_text' || e.event.type === 'assistant_text',
     )
-    const recent = filtered.slice(-includeN)
+    const recent = includeAll ? filtered : filtered.slice(-includeN)
     for (const env of recent) {
       await groupThreadStore.appendEvent(state.id, {
         origin: 'cockpit',

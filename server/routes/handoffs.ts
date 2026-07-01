@@ -1,16 +1,20 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { buildContext, currentSourceSnapshot } from '../handoffs/context-builder'
 import { buildCodexDeeplink } from '../handoffs/codex-deeplink'
+import { detectHandoffCapabilities } from '../handoffs/capabilities'
+import { mirrorCodexThread } from '../handoffs/mirror-codex'
 import { handoffDir, handoffStore } from '../store/handoff-store'
 import { revealInFileManager } from '../util/reveal'
 import type {
   CreateHandoffInput,
   HandoffSourceRef,
+  HandoffTarget,
   NativeLink,
   NativeOpenMethod,
   NativeProvider,
 } from '../handoffs/types'
 import { randomUUID } from 'node:crypto'
+import { runRegistry } from '../runs/run-registry'
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status
@@ -66,7 +70,37 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse) {
     sendJson(res, 404, { error: String((e as Error)?.message ?? e) })
     return
   }
-  const manifest = await handoffStore.create({ sourceRef, context })
+  const manifest = await handoffStore.create({ sourceRef, context, inheritedTarget: target })
+  sendJson(res, 201, manifest)
+}
+
+// docs/07 Phase 3:刷新 handoff = 从同一 sourceRef 重新抽取,创建新 handoffId。
+// 不改旧 handoff,不搬旧 nativeLinks(那些指向旧 snapshot)。
+async function handleRefresh(res: ServerResponse, id: string) {
+  const prev = await handoffStore.readManifest(id)
+  if (!prev) {
+    sendJson(res, 404, { error: 'handoff not found' })
+    return
+  }
+  const ref = manifestToRef(prev)
+  if (!ref) {
+    sendJson(res, 400, { error: 'predecessor has no resolvable source' })
+    return
+  }
+  const inheritedTarget: HandoffTarget = prev.inheritedTarget ?? 'both'
+  let context
+  try {
+    context = await buildContext({ source: ref, target: inheritedTarget })
+  } catch (e) {
+    sendJson(res, 400, { error: String((e as Error)?.message ?? e) })
+    return
+  }
+  const manifest = await handoffStore.create({
+    sourceRef: ref,
+    context,
+    predecessorId: id,
+    inheritedTarget,
+  })
   sendJson(res, 201, manifest)
 }
 
@@ -109,12 +143,43 @@ async function handleOpenNative(req: IncomingMessage, res: ServerResponse, id: s
     return
   }
 
-  // Phase 1: 仅 codex deeplink + claude manual。其它方法返回 501。
   if (body.provider === 'codex') {
     const requested = body.method ?? 'auto'
-    if (requested !== 'auto' && requested !== 'deeplink') {
-      sendJson(res, 501, { error: `codex method '${requested}' not implemented in Phase 1` })
+    if (requested !== 'auto' && requested !== 'deeplink' && requested !== 'app-server') {
+      sendJson(res, 501, { error: `codex method '${requested}' not implemented` })
       return
+    }
+    // Phase 2: 用户显式选 app-server(或未来 auto 场景),尝试深集成。
+    // 失败降级到 deeplink。
+    if (requested === 'app-server') {
+      try {
+        const prompt = await readFile(manifest.files.entries.codex)
+        const started = await runRegistry.startCodexContinuation({
+          handoffId: id,
+          cwd: manifest.cwd,
+          prompt: prompt || `Continue from Cockpit handoff ${id}.`,
+        })
+        const link: NativeLink = {
+          id: `nl_${randomUUID()}`,
+          provider: 'codex',
+          handoffId: id,
+          createdAt: new Date().toISOString(),
+          method: 'app-server',
+          linkLevel: 'linked',
+          nativeThreadId: started.threadId,
+          runId: started.record.runId,
+          url: `codex://threads/${encodeURIComponent(started.threadId)}`,
+          cwd: manifest.cwd,
+          status: 'created',
+        }
+        const next = await handoffStore.appendNativeLink(id, link)
+        sendJson(res, 200, { nativeLink: next?.nativeLinks.at(-1) ?? link })
+        return
+      } catch (e) {
+        // 显式 app-server 失败:返回 502,前端可选择降级。auto 场景才自动降级。
+        sendJson(res, 502, { error: String((e as Error)?.message ?? e) })
+        return
+      }
     }
     const built = buildCodexDeeplink(manifest)
     const link: NativeLink = {
@@ -181,6 +246,10 @@ export async function handleHandoffsRoute(
     await handleCreate(req, res)
     return true
   }
+  if (req.method === 'GET' && parts.length === 3 && parts[2] === 'capabilities') {
+    sendJson(res, 200, await detectHandoffCapabilities())
+    return true
+  }
   const id = parts[2] ? decodeURIComponent(parts[2]) : ''
   if (req.method === 'GET' && parts.length === 3) {
     await handleGet(res, id)
@@ -188,6 +257,22 @@ export async function handleHandoffsRoute(
   }
   if (req.method === 'POST' && parts.length === 4 && parts[3] === 'open-native') {
     await handleOpenNative(req, res, id)
+    return true
+  }
+  if (req.method === 'POST' && parts.length === 4 && parts[3] === 'refresh') {
+    await handleRefresh(res, id)
+    return true
+  }
+  // POST /api/handoffs/:id/native-links/:linkId/mirror
+  if (
+    req.method === 'POST' &&
+    parts.length === 6 &&
+    parts[3] === 'native-links' &&
+    parts[5] === 'mirror'
+  ) {
+    const linkId = decodeURIComponent(parts[4])
+    const result = await mirrorCodexThread(id, linkId)
+    sendJson(res, result.ok ? 200 : 502, result)
     return true
   }
   if (req.method === 'POST' && parts.length === 4 && parts[3] === 'reveal') {

@@ -9,6 +9,7 @@ import type {
   HandoffManifest,
   HandoffSourceRef,
   HandoffSourceSnapshot,
+  HandoffTarget,
   NativeLink,
 } from '../handoffs/types'
 
@@ -52,6 +53,8 @@ export const handoffStore = {
   async create(input: {
     sourceRef: HandoffSourceRef
     context: BuiltContext
+    predecessorId?: string
+    inheritedTarget?: HandoffTarget
   }): Promise<HandoffManifest> {
     const id = randomUUID()
     const dir = handoffDir(id)
@@ -74,7 +77,10 @@ export const handoffStore = {
       cwd: input.context.cwd,
       title: input.context.title,
       snapshotMode: 'snapshot',
+      ...(input.predecessorId ? { predecessorId: input.predecessorId } : {}),
+      ...(input.inheritedTarget ? { inheritedTarget: input.inheritedTarget } : {}),
       sourceSnapshot: input.context.snapshot,
+      stats: input.context.stats,
       files: {
         canonical: {
           summary: path.join(dir, CANONICAL.summary),
@@ -108,6 +114,15 @@ export const handoffStore = {
     const manifest = await this.readManifest(id)
     if (!manifest) return null
     const next: HandoffManifest = { ...manifest, nativeLinks: [...manifest.nativeLinks, link] }
+    await fsp.writeFile(handoffManifestFile(id), JSON.stringify(next, null, 2) + '\n', 'utf8')
+    return next
+  },
+
+  async updateNativeLink(id: string, linkId: string, patch: Partial<NativeLink>): Promise<HandoffManifest | null> {
+    const manifest = await this.readManifest(id)
+    if (!manifest) return null
+    const links = manifest.nativeLinks.map((l) => (l.id === linkId ? { ...l, ...patch, id: l.id } : l))
+    const next: HandoffManifest = { ...manifest, nativeLinks: links }
     await fsp.writeFile(handoffManifestFile(id), JSON.stringify(next, null, 2) + '\n', 'utf8')
     return next
   },

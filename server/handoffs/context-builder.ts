@@ -28,9 +28,10 @@ export async function buildContext(input: CreateHandoffInput): Promise<BuiltCont
   const resolved = await resolveSource(input.source)
   const mode: TranscriptMode = input.transcriptMode ?? 'full'
 
+  const transcriptResult = buildTranscriptWithStats(resolved.events, mode)
   const canonical = {
     summary: redactSecrets(buildSummary(resolved, input.currentRequest)).text,
-    transcript: redactSecrets(buildTranscript(resolved.events, mode)).text,
+    transcript: redactSecrets(transcriptResult.text).text,
     decisions: buildPlaceholder('Decisions'),
     taskState: buildPlaceholder('Task State'),
     fileRefs: redactSecrets(buildFileRefs(resolved)).text,
@@ -47,13 +48,29 @@ export async function buildContext(input: CreateHandoffInput): Promise<BuiltCont
     }),
   }
 
+  const approxTokens = approxTokenCount(
+    canonical.summary + canonical.transcript + canonical.decisions + canonical.taskState + canonical.fileRefs,
+  )
+
   return {
     title: resolved.title,
     cwd: resolved.cwd,
     snapshot: resolved.snapshot,
+    stats: {
+      transcriptMode: mode,
+      transcriptTruncated: transcriptResult.truncated,
+      eventsIncluded: transcriptResult.included,
+      eventsTotal: transcriptResult.total,
+      approxTokens,
+    },
     canonical,
     entries,
   }
+}
+
+// docs/07 Phase 3 — 粗略 token 估算(GPT/Claude 都在 3~4 char/tok 量级,取 4)。
+function approxTokenCount(text: string): number {
+  return Math.ceil(text.length / 4)
 }
 
 async function resolveSource(ref: HandoffSourceRef): Promise<ResolvedSource> {
@@ -134,25 +151,36 @@ function buildSummary(src: ResolvedSource, currentRequest?: string): string {
 }
 
 function buildTranscript(events: EventEnvelope[], mode: TranscriptMode): string {
+  return buildTranscriptWithStats(events, mode).text
+}
+
+interface TranscriptResult {
+  text: string
+  included: number
+  total: number
+  truncated: boolean
+}
+
+function buildTranscriptWithStats(events: EventEnvelope[], mode: TranscriptMode): TranscriptResult {
   if (mode === 'summary-only') {
-    return '# Transcript\n\n_(omitted: summary-only mode)_\n'
+    return { text: '# Transcript\n\n_(omitted: summary-only mode)_\n', included: 0, total: events.length, truncated: true }
   }
   const filtered = events.filter(
     (e) => e.event.type !== 'meta' && e.event.type !== 'usage' && e.event.type !== 'followup_boundary',
   )
   const slice = mode === 'recent' ? filtered.slice(-RECENT_LIMIT) : filtered
-  const truncated = mode !== 'recent' && filtered.length > 0 && slice.length < filtered.length
+  const truncated = filtered.length > 0 && slice.length < filtered.length
 
   const lines: string[] = ['# Transcript', '']
-  if (truncated || mode === 'recent') {
-    lines.push(`_(${slice.length} of ${filtered.length} events shown)_`, '')
+  if (truncated) {
+    lines.push(`_(${slice.length} of ${filtered.length} events shown, mode=${mode})_`, '')
   }
   const toolInputById = new Map<string, unknown>()
   for (const env of slice) {
     lines.push(...renderEvent(env.event, toolInputById))
     lines.push('')
   }
-  return lines.join('\n')
+  return { text: lines.join('\n'), included: slice.length, total: filtered.length, truncated }
 }
 
 function renderEvent(e: NormalizedEvent, toolInputById: Map<string, unknown>): string[] {

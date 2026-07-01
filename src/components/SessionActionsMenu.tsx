@@ -5,7 +5,9 @@ import {
   createHandoff,
   fetchHandoff,
   groupFromSession,
+  mirrorNativeLink,
   openNativeHandoff,
+  refreshHandoff,
   revealHandoff,
   type HandoffDetailDTO,
   type HandoffManifestDTO,
@@ -20,7 +22,9 @@ interface Props {
   cwd?: string | null
 }
 
-type BusyKind = 'to-group' | 'codex' | 'claude' | 'handoff' | null
+type BusyKind = 'to-group' | 'codex' | 'codex-app-server' | 'claude' | 'handoff' | null
+
+type GroupScope = 'all' | number
 
 interface HandoffResult {
   manifest: HandoffManifestDTO
@@ -41,6 +45,7 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
   const [busy, setBusy] = useState<BusyKind>(null)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<HandoffResult | null>(null)
+  const [groupChooserOpen, setGroupChooserOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -53,14 +58,16 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
   }, [open])
 
   const runAction = useCallback(
-    async (kind: Exclude<BusyKind, null>) => {
+    async (kind: Exclude<BusyKind, null>, opts?: { groupScope?: GroupScope }) => {
       setError(null)
       setBusy(kind)
       setOpen(false)
       try {
         if (kind === 'to-group') {
           if (isGroup) throw new Error('已经是群聊')
-          const { groupThreadId } = await groupFromSession({ source, sessionId })
+          const scope = opts?.groupScope ?? 'all'
+          const includeRecentEvents = scope === 'all' ? 'all' : scope * 2
+          const { groupThreadId } = await groupFromSession({ source, sessionId, includeRecentEvents })
           navigate(`/cockpit/${encodeURIComponent(groupThreadId)}`)
           return
         }
@@ -70,11 +77,18 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
           setResult({ manifest })
           return
         }
-        const provider = kind === 'codex' ? 'codex' : 'claude'
+        const provider: 'codex' | 'claude' = kind === 'claude' ? 'claude' : 'codex'
+        const method = kind === 'codex-app-server' ? 'app-server' : undefined
         const manifest = await createHandoff({ source: ref, target: provider })
-        const opened = await openNativeHandoff(manifest.handoffId, { provider })
+        const opened = await openNativeHandoff(manifest.handoffId, { provider, method })
         setResult({ manifest, provider, nativeLink: opened.nativeLink, fallbackPrompt: opened.fallbackPrompt })
-        if (provider === 'codex' && opened.nativeLink.url && opened.nativeLink.status === 'created') {
+        // 只有 deeplink 才自动打开;app-server linked 让用户选是否打开 codex://threads/<id>。
+        if (
+          provider === 'codex' &&
+          opened.nativeLink.method === 'deeplink' &&
+          opened.nativeLink.url &&
+          opened.nativeLink.status === 'created'
+        ) {
           window.location.href = opened.nativeLink.url
         }
       } catch (e) {
@@ -85,8 +99,6 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
     },
     [source, sessionId, isGroup, navigate],
   )
-
-  const groupLabel = isGroup ? '已是群聊' : '转为群聊'
 
   return (
     <div className="session-actions-wrap" ref={menuRef}>
@@ -101,11 +113,21 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
       </button>
       {open && (
         <div className="session-actions-menu" role="menu">
-          <button role="menuitem" disabled={isGroup} onClick={() => runAction('to-group')}>
-            {groupLabel}
+          <button
+            role="menuitem"
+            disabled={isGroup}
+            onClick={() => {
+              setOpen(false)
+              setGroupChooserOpen(true)
+            }}
+          >
+            {isGroup ? '已是群聊' : '转为群聊…'}
           </button>
           <button role="menuitem" onClick={() => runAction('codex')}>
             和 Codex 继续
+          </button>
+          <button role="menuitem" onClick={() => runAction('codex-app-server')}>
+            和 Codex 继续(深集成)
           </button>
           <button role="menuitem" onClick={() => runAction('claude')}>
             和 Claude 继续
@@ -131,6 +153,147 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
           onClose={() => setResult(null)}
         />
       )}
+      {groupChooserOpen && (
+        <GroupChooserDialog
+          onCancel={() => setGroupChooserOpen(false)}
+          onConfirm={(scope) => {
+            setGroupChooserOpen(false)
+            void runAction('to-group', { groupScope: scope })
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function GroupChooserDialog({
+  onCancel,
+  onConfirm,
+}: {
+  onCancel: () => void
+  onConfirm: (scope: GroupScope) => void
+}) {
+  const [mode, setMode] = useState<'all' | 'recent'>('all')
+  const [turns, setTurns] = useState(10)
+
+  const submit = () => {
+    if (mode === 'all') return onConfirm('all')
+    const n = Math.max(1, Math.min(Math.floor(turns) || 1, 2000))
+    onConfirm(n)
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <span className="modal-title">转为群聊</span>
+          <button className="modal-close" onClick={onCancel} aria-label="关闭">×</button>
+        </div>
+        <div className="modal-body">
+          <p className="modal-hint">
+            将本会话导入新群聊。只带 user / assistant 文本消息,不搬 tool_call / tool_result(工具事件绑定具体 agent,跨 agent 会被误读)。要完整 trace 请用「生成 Handoff」。
+          </p>
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              cursor: 'pointer',
+              fontSize: 13,
+            }}
+          >
+            <input
+              type="radio"
+              name="group-scope"
+              checked={mode === 'all'}
+              onChange={() => setMode('all')}
+            />
+            <span>全部对话(推荐)</span>
+          </label>
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              cursor: 'pointer',
+              fontSize: 13,
+            }}
+          >
+            <input
+              type="radio"
+              name="group-scope"
+              checked={mode === 'recent'}
+              onChange={() => setMode('recent')}
+            />
+            <span>最近</span>
+            <input
+              type="number"
+              min={1}
+              max={2000}
+              value={turns}
+              onChange={(e) => {
+                setMode('recent')
+                setTurns(Number(e.target.value))
+              }}
+              onFocus={() => setMode('recent')}
+              style={{
+                width: 72,
+                height: 26,
+                padding: '0 6px',
+                borderRadius: 6,
+                border: '0.5px solid var(--color-border)',
+                background: 'var(--color-background-secondary)',
+                color: 'var(--color-text-primary)',
+                fontSize: 12,
+              }}
+            />
+            <span>轮对话</span>
+          </label>
+          <div className="modal-actions">
+            <button className="modal-btn" onClick={onCancel}>取消</button>
+            <button className="modal-btn primary" onClick={submit}>确定</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function NativeLinkRow({ handoffId, link }: { handoffId: string; link: NativeLinkDTO }) {
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+  const [level, setLevel] = useState(link.linkLevel)
+  const canMirror = link.provider === 'codex' && link.method === 'app-server' && !!link.nativeThreadId
+  const runMirror = async () => {
+    setBusy(true)
+    setMsg(null)
+    try {
+      const r = await mirrorNativeLink(handoffId, link.id)
+      setLevel(r.linkLevel)
+      setMsg(r.ok ? `mirrored · ${r.itemCount ?? 0} items` : `mirror failed: ${r.error ?? 'unknown'}`)
+    } catch (e) {
+      setMsg(String((e as Error)?.message ?? e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, flexWrap: 'wrap' }}>
+      <span className={`freshness-badge freshness-${link.status === 'failed' ? 'stale' : 'fresh'}`}>
+        {link.provider}/{link.method}/{level}
+      </span>
+      {link.nativeThreadId && <code className="modal-value">{link.nativeThreadId}</code>}
+      {link.url && (
+        <a className="modal-btn" href={link.url}>
+          打开
+        </a>
+      )}
+      {canMirror && (
+        <button className="modal-btn" onClick={runMirror} disabled={busy}>
+          {busy ? '同步中…' : level === 'mirrored' ? '重新同步' : '同步 (Phase 4)'}
+        </button>
+      )}
+      {msg && <span className="modal-hint">{msg}</span>}
     </div>
   )
 }
@@ -167,6 +330,20 @@ function HandoffResultDialog({
       await revealHandoff(result.manifest.handoffId)
     } catch (e) {
       setRevealError(String((e as Error)?.message ?? e))
+    }
+  }
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshedTo, setRefreshedTo] = useState<string | null>(null)
+  const doRefresh = async () => {
+    setRefreshing(true)
+    try {
+      const next = await refreshHandoff(result.manifest.handoffId)
+      setRefreshedTo(next.handoffId)
+      setFreshness({ status: 'fresh' })
+    } catch (e) {
+      setRevealError(String((e as Error)?.message ?? e))
+    } finally {
+      setRefreshing(false)
     }
   }
   const promptText = result.fallbackPrompt ?? ''
@@ -207,9 +384,37 @@ function HandoffResultDialog({
               <button className="modal-btn" onClick={checkFreshness} disabled={checking}>
                 {checking ? '检查中…' : '重新检查'}
               </button>
+              <button className="modal-btn" onClick={doRefresh} disabled={refreshing}>
+                {refreshing ? '刷新中…' : '刷新 Handoff'}
+              </button>
               <button className="modal-btn" onClick={reveal}>在 Finder 中打开</button>
             </div>
           </div>
+          {refreshedTo && (
+            <div className="modal-hint">
+              新 Handoff:<code>{refreshedTo}</code>(旧 handoff / native link 保留)
+            </div>
+          )}
+          {manifest.stats && (
+            <div className="modal-row">
+              <span className="modal-label">Bundle</span>
+              <span className="modal-value">
+                {manifest.stats.eventsIncluded}/{manifest.stats.eventsTotal} events
+                {manifest.stats.transcriptTruncated ? ` · truncated (${manifest.stats.transcriptMode})` : ''} · ~
+                {manifest.stats.approxTokens.toLocaleString()} tokens
+              </span>
+            </div>
+          )}
+          {manifest.nativeLinks.length > 0 && (
+            <div className="modal-row">
+              <span className="modal-label">Native links</span>
+              <div className="modal-freshness" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+                {manifest.nativeLinks.map((nl) => (
+                  <NativeLinkRow key={nl.id} handoffId={manifest.handoffId} link={nl} />
+                ))}
+              </div>
+            </div>
+          )}
           {revealError && <div className="modal-hint">{revealError}</div>}
           {cwd && (
             <div className="modal-row">
@@ -226,7 +431,27 @@ function HandoffResultDialog({
             </code>
           </div>
 
-          {result.provider === 'codex' && deeplinkUrl && !overBudget && (
+          {result.provider === 'codex' && result.nativeLink?.method === 'app-server' && result.nativeLink.nativeThreadId && (
+            <div className="modal-section">
+              <div className="modal-row">
+                <span className="modal-label">Thread ID</span>
+                <code className="modal-value">{result.nativeLink.nativeThreadId}</code>
+              </div>
+              <p className="modal-hint">
+                已通过 codex app-server 创建 thread 并发送 handoff prompt。Cockpit 将在后台流式接收本轮事件。
+              </p>
+              <div className="modal-actions">
+                {result.nativeLink.url && (
+                  <a className="modal-btn primary" href={result.nativeLink.url}>在 Codex Desktop 打开</a>
+                )}
+                {result.nativeLink.url && (
+                  <button className="modal-btn" onClick={() => copy(result.nativeLink!.url!)}>复制 URL</button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {result.provider === 'codex' && deeplinkUrl && result.nativeLink?.method === 'deeplink' && !overBudget && (
             <div className="modal-section">
               <p className="modal-hint">已尝试在 Codex Desktop 中打开新会话。若未响应,可手动打开:</p>
               <div className="modal-actions">
