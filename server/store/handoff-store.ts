@@ -55,8 +55,10 @@ export const handoffStore = {
     context: BuiltContext
     predecessorId?: string
     inheritedTarget?: HandoffTarget
+    // 调用方可预分配 id,以便 buildContext 把 handoff 目录绝对路径写进 entry。
+    id?: string
   }): Promise<HandoffManifest> {
-    const id = randomUUID()
+    const id = input.id ?? randomUUID()
     const dir = handoffDir(id)
     await fsp.mkdir(dir, { recursive: true })
 

@@ -58,19 +58,23 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse) {
   }
   const target = body.target === 'codex' || body.target === 'claude' || body.target === 'both' ? body.target : 'both'
 
+  const id = randomUUID()
   let context
   try {
-    context = await buildContext({
-      source: sourceRef,
-      target,
-      currentRequest: typeof body.currentRequest === 'string' ? body.currentRequest : undefined,
-      transcriptMode: body.transcriptMode,
-    })
+    context = await buildContext(
+      {
+        source: sourceRef,
+        target,
+        currentRequest: typeof body.currentRequest === 'string' ? body.currentRequest : undefined,
+        transcriptMode: body.transcriptMode,
+      },
+      { handoffDir: handoffDir(id) },
+    )
   } catch (e) {
     sendJson(res, 404, { error: String((e as Error)?.message ?? e) })
     return
   }
-  const manifest = await handoffStore.create({ sourceRef, context, inheritedTarget: target })
+  const manifest = await handoffStore.create({ id, sourceRef, context, inheritedTarget: target })
   sendJson(res, 201, manifest)
 }
 
@@ -88,14 +92,19 @@ async function handleRefresh(res: ServerResponse, id: string) {
     return
   }
   const inheritedTarget: HandoffTarget = prev.inheritedTarget ?? 'both'
+  const newId = randomUUID()
   let context
   try {
-    context = await buildContext({ source: ref, target: inheritedTarget })
+    context = await buildContext(
+      { source: ref, target: inheritedTarget },
+      { handoffDir: handoffDir(newId) },
+    )
   } catch (e) {
     sendJson(res, 400, { error: String((e as Error)?.message ?? e) })
     return
   }
   const manifest = await handoffStore.create({
+    id: newId,
     sourceRef: ref,
     context,
     predecessorId: id,

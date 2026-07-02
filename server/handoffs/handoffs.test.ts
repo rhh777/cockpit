@@ -172,3 +172,30 @@ test('buildTranscript: tool_result 经 sensitive filter (敏感路径整体屏�
   assert.match(transcript, /已屏蔽敏感内容/)
   assert.doesNotMatch(transcript, /secret123/)
 })
+
+test('buildCodexEntry: 带绝对 handoff 目录,续作 agent 能定位文件', () => {
+  const entry = _internal.buildCodexEntry({
+    cwd: '/repo',
+    handoffDir: '/Users/x/.cockpit/handoffs/abc',
+    currentRequest: 'fix the bug',
+  })
+  // 关键回归:必须给出 handoff 目录绝对路径,否则新会话找不到 summary.md
+  assert.match(entry, /\/Users\/x\/\.cockpit\/handoffs\/abc\/summary\.md/)
+  assert.match(entry, /fix the bug/)
+  // 空占位文件不再列入必读清单
+  assert.doesNotMatch(entry, /Read these first:[\s\S]*task_state\.md[\s\S]*decisions\.md[\s\S]*Optional/)
+})
+
+test('buildCodexEntry: 无 currentRequest 时给出兜底指令,不是裸 (none)', () => {
+  const entry = _internal.buildCodexEntry({ cwd: null, handoffDir: '/h', currentRequest: '' })
+  assert.match(entry, /confirm the next step with the user/)
+})
+
+test('buildClaudeEntry: 带绝对 handoff 目录', () => {
+  const entry = _internal.buildClaudeEntry({
+    summary: '# S',
+    handoffDir: '/h/x',
+    currentRequest: '',
+  })
+  assert.match(entry, /\/h\/x\/transcript\.md/)
+})

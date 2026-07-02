@@ -24,9 +24,14 @@ interface ResolvedSource {
   snapshot: HandoffSourceSnapshot
 }
 
-export async function buildContext(input: CreateHandoffInput): Promise<BuiltContext> {
+export async function buildContext(
+  input: CreateHandoffInput,
+  opts?: { handoffDir?: string },
+): Promise<BuiltContext> {
   const resolved = await resolveSource(input.source)
   const mode: TranscriptMode = input.transcriptMode ?? 'full'
+  // 续作 agent 打开的是全新会话,cwd 与 handoff 目录都要显式给出,否则找不到落盘的 md。
+  const handoffDir = opts?.handoffDir ?? null
 
   const transcriptResult = buildTranscriptWithStats(resolved.events, mode)
   const canonical = {
@@ -40,10 +45,12 @@ export async function buildContext(input: CreateHandoffInput): Promise<BuiltCont
   const entries = {
     codex: buildCodexEntry({
       cwd: resolved.cwd,
+      handoffDir,
       currentRequest: input.currentRequest ?? '',
     }),
     claude: buildClaudeEntry({
       summary: canonical.summary,
+      handoffDir,
       currentRequest: input.currentRequest ?? '',
     }),
   }
@@ -253,20 +260,32 @@ function buildPlaceholder(heading: string): string {
   return [`# ${heading}`, '', '<!-- TODO: human edit -->', ''].join('\n')
 }
 
-function buildCodexEntry(opts: { cwd: string | null; currentRequest: string }): string {
+// 用绝对路径 join 一个 handoff 目录下的文件名;dir 未知时退回裸文件名。
+function handoffPath(dir: string | null, file: string): string {
+  return dir ? `${dir.replace(/\/+$/, '')}/${file}` : file
+}
+
+function buildCodexEntry(opts: {
+  cwd: string | null
+  handoffDir: string | null
+  currentRequest: string
+}): string {
+  const dir = opts.handoffDir
   return [
     '# Continue In Codex',
     '',
     'You are continuing from a Cockpit handoff.',
     '',
-    'Read these files (in the handoff directory) first:',
+    dir
+      ? `The handoff files are in \`${dir}\`. Read these first:`
+      : 'Read these files in the handoff directory first:',
     '',
-    '1. `summary.md`',
-    '2. `task_state.md`',
-    '3. `file_refs.md`',
-    '4. `decisions.md`',
+    `1. \`${handoffPath(dir, 'summary.md')}\` — goal, current state, next steps`,
+    `2. \`${handoffPath(dir, 'file_refs.md')}\` — files touched and recent commands`,
     '',
-    'Only read `transcript.md` if the summary is insufficient.',
+    'Optional, only if you need more detail:',
+    `- \`${handoffPath(dir, 'transcript.md')}\` — full turn-by-turn trace`,
+    `- \`${handoffPath(dir, 'task_state.md')}\` and \`${handoffPath(dir, 'decisions.md')}\` — human notes (may be empty templates)`,
     '',
     '## Workspace',
     '',
@@ -274,12 +293,18 @@ function buildCodexEntry(opts: { cwd: string | null; currentRequest: string }): 
     '',
     '## Current Request',
     '',
-    opts.currentRequest || '_(none)_',
+    opts.currentRequest ||
+      '_(none provided — read summary.md, then summarize the current state and confirm the next step with the user before making changes)_',
     '',
   ].join('\n')
 }
 
-function buildClaudeEntry(opts: { summary: string; currentRequest: string }): string {
+function buildClaudeEntry(opts: {
+  summary: string
+  handoffDir: string | null
+  currentRequest: string
+}): string {
+  const dir = opts.handoffDir
   return [
     '# Continue In Claude',
     '',
@@ -289,11 +314,14 @@ function buildClaudeEntry(opts: { summary: string; currentRequest: string }): st
     '',
     '## Current Request',
     '',
-    opts.currentRequest || '_(none)_',
+    opts.currentRequest ||
+      '_(none provided — summarize the current state and confirm the next step with the user before making changes)_',
     '',
     '## Optional Local Files',
     '',
-    'If you can access local files, also read `transcript.md` and `file_refs.md` in the handoff directory.',
+    dir
+      ? `If you can access local files, also read \`${handoffPath(dir, 'transcript.md')}\` and \`${handoffPath(dir, 'file_refs.md')}\`.`
+      : 'If you can access local files, also read `transcript.md` and `file_refs.md` in the handoff directory.',
     '',
   ].join('\n')
 }
@@ -304,4 +332,4 @@ function truncate(text: string, limit: number): string {
   return text.slice(0, limit) + `\n... (${text.length - limit} chars elided)`
 }
 
-export const _internal = { buildSummary, buildTranscript, buildFileRefs }
+export const _internal = { buildSummary, buildTranscript, buildFileRefs, buildCodexEntry, buildClaudeEntry }
