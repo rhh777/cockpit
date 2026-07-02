@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { ToolPair } from '../lib/timeline'
 import { parseApplyPatch, shortPath } from '../lib/apply-patch'
+import { prettyToolName } from '../lib/timeline'
 import { PatchDiffView } from './PatchDiffView'
 
 // tool_result output 里如果带 markdown 图片(stringifyToolResult 给 Claude image 片段生成的
@@ -62,7 +63,7 @@ export function ToolCallCard({ pair, readOnly }: { pair: ToolPair; readOnly?: bo
     <div className="collapsible">
       <div className="collapsible-head" onClick={() => setOpen((v) => !v)}>
         <span>{open ? '▾' : '▸'}</span>
-        <span className="tool-name">{use.name}</span>
+        <span className="tool-name" title={use.name}>{prettyToolName(use.name)}</span>
         <span className="arg">{arg}</span>
         {result?.isError && <span className="badge codex" style={{ marginLeft: 4 }}>error</span>}
         {readOnly && <span className="readonly">🔒 read-only</span>}

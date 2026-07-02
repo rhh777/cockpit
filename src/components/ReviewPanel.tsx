@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { AgentName, EventEnvelope } from '../lib/types'
-import { buildTimeline, clusterRows, summarizeToolNames, type TraceGroup, type ToolPair } from '../lib/timeline'
+import { buildTimeline, clusterRows, foldGroupsIntoAssistant, summarizeToolNames, type TraceGroup, type ToolPair } from '../lib/timeline'
 import { EventItem } from './EventItem'
 import { Icon } from './Icon'
 import { AgentIcon, agentLabel } from './AgentIcon'
@@ -190,8 +190,8 @@ function ReviewThreadView({
   onReveal?: () => void
 }) {
   const rows = useMemo<
-    Array<{ envelope: EventEnvelope; pair?: ToolPair; group?: TraceGroup }>
-  >(() => clusterRows(buildTimeline(thread.events).rows), [thread.events])
+    Array<{ envelope: EventEnvelope; pair?: ToolPair; group?: TraceGroup; precedingGroup?: TraceGroup }>
+  >(() => foldGroupsIntoAssistant(clusterRows(buildTimeline(thread.events).rows)), [thread.events])
   const latestAssistantIndex = useMemo(() => {
     for (let i = rows.length - 1; i >= 0; i--) {
       if (!rows[i].group && rows[i].envelope.event.type === 'assistant_text') return i
@@ -245,6 +245,8 @@ function ReviewThreadView({
                 key={i}
                 envelope={r.envelope}
                 pair={r.pair}
+                precedingGroup={r.precedingGroup}
+                onViewTrace={onViewTrace}
                 actionVisibility={i === latestAssistantIndex ? 'visible' : 'hover'}
               />
             )
@@ -328,13 +330,14 @@ function ReviewReplyComposer({
     <div className="review-reply">
       <div className="composer-controls">
         <span className={`native-agent-pill agent-${agent}`}><AgentIcon agent={agent} size={16} /> {label}</span>
-        <span className="readonly-indicator" title={`只发给 ${label},不影响主 timeline`}>
-          只读旁路
+        <span className="send-mode-item static" title={`只发给 ${label},不影响主 timeline`}>
+          <Icon name="arrow-up-right" size={12} />
+          <span>只读旁路</span>
         </span>
       </div>
-      <div className="composer-input-wrap">
+      <div className="composer-input-wrap group-composer-shell">
         <textarea
-          className="review-reply-input"
+          className="review-reply-input composer-input"
           placeholder={
             disabled ? `等待 ${label} 回复…` : `继续追问 ${label} 的 review 结论…(Cmd+Enter)`
           }
@@ -350,7 +353,8 @@ function ReviewReplyComposer({
             }
           }}
         />
-        <div className="composer-send-overlay">
+        <div className="composer-action-bar">
+          <div className="composer-action-left" />
           <button
             className={`send-btn primary-action ${streaming ? 'is-canceling' : 'is-ready'}`}
             onClick={streaming ? onCancel : send}

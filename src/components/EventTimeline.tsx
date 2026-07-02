@@ -1,31 +1,31 @@
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { EventEnvelope } from '../lib/types'
-import { buildTimeline, rowMatchesFilter, clusterRows, summarizeToolNames, type FilterKind, type TraceGroup, type ToolPair } from '../lib/timeline'
+import { buildTimeline, rowMatchesFilter, clusterRows, foldGroupsIntoAssistant, summarizeToolNames, type FilterKind, type TraceGroup, type ToolPair } from '../lib/timeline'
 import { EventItem } from './EventItem'
 import { Icon } from './Icon'
+import { useStickToBottom } from '../hooks/useStickToBottom'
+import { JumpToBottom } from './JumpToBottom'
 
 // 灰白分段 + 虚拟化(docs/05 §4.3,不变量:timeline 必虚拟化)。
 export function EventTimeline({
   events,
   filter,
   keyword,
-  streaming = false,
   onViewTrace,
 }: {
   events: EventEnvelope[]
   filter: FilterKind
   keyword: string
-  streaming?: boolean
   onViewTrace?: (group: TraceGroup) => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   // 用 session 标识(首条事件 id)而不是布尔 flag,避免 StrictMode 第二次 mount 被跳过。
   const lastSessionKey = useRef<string>('')
 
-  const rows = useMemo<Array<{ envelope: EventEnvelope; pair?: ToolPair; group?: TraceGroup }>>(() => {
+  const rows = useMemo<Array<{ envelope: EventEnvelope; pair?: ToolPair; group?: TraceGroup; precedingGroup?: TraceGroup }>>(() => {
     const model = buildTimeline(events)
-    if (filter === 'all' && !keyword.trim()) return clusterRows(model.rows)
+    if (filter === 'all' && !keyword.trim()) return foldGroupsIntoAssistant(clusterRows(model.rows))
     return model.rows.filter(
       (r) => r.envelope.event.type === 'followup_boundary' || rowMatchesFilter(r, filter, keyword),
     )
@@ -75,24 +75,16 @@ export function EventTimeline({
     step()
   }, [firstKey, rows.length])
 
-  // streaming 时跟随:新事件追加 → 自动滚到底(若用户已经在底部附近)。
-  const lastLenRef = useRef(rows.length)
-  useEffect(() => {
-    if (!streaming) {
-      lastLenRef.current = rows.length
-      return
-    }
-    if (rows.length > lastLenRef.current) {
-      const el = scrollRef.current
-      const nearBottom =
-        !el || el.scrollHeight - el.scrollTop - el.clientHeight < 200
-      if (nearBottom) virtualizer.scrollToIndex(rows.length - 1, { align: 'end' })
-      lastLenRef.current = rows.length
-    }
-  }, [rows.length, streaming, virtualizer])
+  // 任何实时追加(cockpit follow-up 或外部原生 agent 写入)都跟随:
+  // 停在底部附近 → 自动滚到底;否则浮出「新消息」按钮,不打断阅读。
+  const scrollToEnd = useCallback(() => {
+    if (rows.length > 0) virtualizer.scrollToIndex(rows.length - 1, { align: 'end' })
+  }, [rows.length, virtualizer])
+  const { atBottom, hasNew, onScroll, jumpToBottom } = useStickToBottom(scrollRef, rows.length, scrollToEnd)
 
   return (
-    <div className="timeline" ref={scrollRef}>
+    <div className="timeline-wrap">
+      <div className="timeline" ref={scrollRef} onScroll={onScroll}>
       <div className="timeline-inner" style={{ height: virtualizer.getTotalSize() }}>
         {virtualizer.getVirtualItems().map((vi) => {
           const row = rows[vi.index]
@@ -145,6 +137,8 @@ export function EventTimeline({
                 <EventItem
                   envelope={row.envelope}
                   pair={row.pair}
+                  precedingGroup={row.precedingGroup}
+                  onViewTrace={onViewTrace}
                   actionVisibility={vi.index === latestAssistantIndex ? 'visible' : 'hover'}
                 />
               )}
@@ -152,6 +146,8 @@ export function EventTimeline({
           )
         })}
       </div>
+      </div>
+      <JumpToBottom visible={!atBottom} hasNew={hasNew} onClick={jumpToBottom} />
     </div>
   )
 }

@@ -16,6 +16,7 @@ import { sourceLabel, displayTitle } from '../lib/display'
 import { buildTimeline, summarizeTools, type FilterKind, type TraceGroup } from '../lib/timeline'
 import type { AgentName, ChatAttachment, EventEnvelope, Source } from '../lib/types'
 import { EventTimeline } from '../components/EventTimeline'
+import { NarrativeTimeline } from '../components/NarrativeTimeline'
 import { ToolActivityBar } from '../components/ToolActivityBar'
 import { WarningsBanner } from '../components/WarningsBanner'
 import { FollowupComposer } from '../components/FollowupComposer'
@@ -23,6 +24,7 @@ import { StreamingStatus, type ActiveStream } from '../components/StreamingStatu
 import { ReviewPanel, type ReviewThread } from '../components/ReviewPanel'
 import { Splitter } from '../components/Splitter'
 import { TraceDrawer } from '../components/TraceDrawer'
+import { FilesHeatmapDrawer } from '../components/FilesHeatmapDrawer'
 import { Icon } from '../components/Icon'
 import { AgentIcon } from '../components/AgentIcon'
 import { SessionActionsMenu } from '../components/SessionActionsMenu'
@@ -505,6 +507,7 @@ export function SessionDetail() {
       agents: AgentName[],
       parentTurnId?: string,
       cli?: { model?: string; effort?: string },
+      attachments?: AttachmentDraft[],
     ) => {
       if (!source || !id || agents.length === 0) return
       setSendError(null)
@@ -524,6 +527,7 @@ export function SessionDetail() {
             parentTurnId,
             model: cli?.model,
             effort: cli?.effort,
+            attachments,
           })
           .then(({ run, userEnvelope }) => {
             appendEnvelopes([userEnvelope])
@@ -569,10 +573,10 @@ export function SessionDetail() {
   )
 
   const handleNativeSend = useCallback(
-    (text: string) => {
+    (text: string, attachments?: AttachmentDraft[]) => {
       if (!source || !id || !canNativeResume(source)) return
       setSendError(null)
-      startNativeResumeRun(source, id, { text })
+      startNativeResumeRun(source, id, { text, attachments })
         .then(({ run, userEnvelope }) => {
           appendEnvelopes([userEnvelope])
           attachNativeRun(run)
@@ -653,10 +657,10 @@ export function SessionDetail() {
     return { main, threads, rootOf }
   }, [events, source, clientChainHints])
 
-  const activity = useMemo(
-    () => summarizeTools(buildTimeline(partitioned.main).pairs, partitioned.main),
-    [partitioned.main],
-  )
+  const pairs = useMemo(() => buildTimeline(partitioned.main).pairs, [partitioned.main])
+  const activity = useMemo(() => summarizeTools(pairs, partitioned.main), [pairs, partitioned.main])
+  const [showFiles, setShowFiles] = useState(false)
+  const [viewMode, setViewMode] = useState<'narrative' | 'detail'>('narrative')
 
   if (loading)
     return (
@@ -742,15 +746,24 @@ export function SessionDetail() {
           onFilter={setFilter}
           keyword={keyword}
           onKeyword={setKeyword}
+          onShowFiles={() => setShowFiles(true)}
+          viewMode={viewMode}
+          onViewMode={setViewMode}
         />
         <div className="conversation-area">
-          <EventTimeline
-            events={partitioned.main}
-            filter={filter}
-            keyword={keyword}
-            streaming={streams.length > 0}
-            onViewTrace={setActiveTrace}
-          />
+          {viewMode === 'narrative' && filter === 'all' && !keyword.trim() ? (
+            <NarrativeTimeline
+              events={partitioned.main}
+              onViewTrace={setActiveTrace}
+            />
+          ) : (
+            <EventTimeline
+              events={partitioned.main}
+              filter={filter}
+              keyword={keyword}
+              onViewTrace={setActiveTrace}
+            />
+          )}
           {sendError && <div className="banner warn conversation-banner">发送失败:{sendError}</div>}
           <div className="conversation-bottom">
             <StreamingStatus
@@ -766,7 +779,7 @@ export function SessionDetail() {
               onSend={(t, a, options, attachments) =>
                 groupMode
                   ? handleGroupSend(t, a, options as CliSelectionByAgent | undefined, attachments)
-                  : handleSend(t, a, undefined, options as CliSelection | undefined)
+                  : handleSend(t, a, undefined, options as CliSelection | undefined, attachments)
               }
               onNativeSend={handleNativeSend}
               onCancelAll={handleCancelAll}
@@ -798,6 +811,12 @@ export function SessionDetail() {
       <TraceDrawer
         group={activeTrace}
         onClose={() => setActiveTrace(null)}
+      />
+      <FilesHeatmapDrawer
+        pairs={pairs}
+        cwd={s.cwd ?? undefined}
+        open={showFiles}
+        onClose={() => setShowFiles(false)}
       />
     </div>
   )

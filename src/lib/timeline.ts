@@ -1,4 +1,5 @@
 import type { EventEnvelope, NormalizedEvent } from './types'
+import { parseApplyPatch } from './apply-patch'
 
 // 噪音事件:对用户没有阅读价值,直接从 timeline 剔除(不进虚拟列表槽位)。
 //   - Claude:JSONL 顶层 type 在 normalizeClaudeLine 兜底成 meta(mode/permission-mode/file-history-snapshot/summary/system)
@@ -173,7 +174,322 @@ export function summarizeTools(pairs: ToolPair[], events: EventEnvelope[] = []):
   }
 }
 
+// 文件热力:按 tool_use 触碰的文件路径聚合。
+// 用于「AI 到底看/改了我的哪些文件」的鸟瞰视角。
+export interface FileTouch {
+  toolName: string
+  envelope: EventEnvelope
+  isError: boolean
+  agent?: string
+  kind: 'read' | 'write' | 'other'
+  adds?: number
+  dels?: number
+}
+export interface FileHeatEntry {
+  path: string
+  count: number
+  reads: number
+  writes: number
+  errors: number
+  adds: number
+  dels: number
+  touches: FileTouch[]
+  // 语义标签(比原始 count 更能指导 review):
+  blindWrite: boolean // 有过写但之前从未读过该文件 → AI 盲改
+  struggle: boolean   // 反复挣扎:写次数 ≥ 5 或有 error
+  readOnly: boolean   // 只读没改
+}
+
+const READ_TOOL_NAMES = new Set([
+  'Read', 'View', 'read_file', 'Grep', 'Glob', 'NotebookRead',
+])
+const WRITE_TOOL_NAMES = new Set([
+  'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'apply_patch', 'write_file',
+])
+
+function pushTouch(map: Map<string, FileHeatEntry>, path: string, touch: FileTouch) {
+  let e = map.get(path)
+  if (!e) {
+    e = {
+      path, count: 0, reads: 0, writes: 0, errors: 0, adds: 0, dels: 0, touches: [],
+      blindWrite: false, struggle: false, readOnly: false,
+    }
+    map.set(path, e)
+  }
+  e.count++
+  if (touch.kind === 'read') e.reads++
+  if (touch.kind === 'write') e.writes++
+  if (touch.isError) e.errors++
+  if (touch.adds) e.adds += touch.adds
+  if (touch.dels) e.dels += touch.dels
+  e.touches.push(touch)
+}
+
+function computeSemanticFlags(e: FileHeatEntry): void {
+  // 顺序判定 blindWrite:touches 是按事件顺序 push 的,遇到首次写之前如果没读过 → 盲改。
+  let sawRead = false
+  let sawBlindWrite = false
+  for (const t of e.touches) {
+    if (t.kind === 'read') sawRead = true
+    else if (t.kind === 'write' && !sawRead) { sawBlindWrite = true; break }
+  }
+  e.blindWrite = sawBlindWrite
+  e.struggle = e.writes >= 5 || e.errors > 0
+  e.readOnly = e.writes === 0 && e.reads > 0
+}
+
+// 语义风险分:blindWrite > struggle > 其它。同分再按 count。
+function riskRank(e: FileHeatEntry): number {
+  let r = 0
+  if (e.blindWrite) r += 100
+  if (e.struggle) r += 50
+  if (e.errors > 0) r += 20
+  if (e.writes > 0) r += 10
+  return r
+}
+
+export function computeFileHeatmap(pairs: ToolPair[]): FileHeatEntry[] {
+  const map = new Map<string, FileHeatEntry>()
+  for (const p of pairs) {
+    const toolName = p.use.name
+    const isError = Boolean(p.result?.isError)
+    const agent = (p.use as { agent?: string }).agent
+    const envelope = p.useEnvelope
+    const kind: FileTouch['kind'] = READ_TOOL_NAMES.has(toolName)
+      ? 'read'
+      : WRITE_TOOL_NAMES.has(toolName)
+      ? 'write'
+      : 'other'
+
+    if (toolName === 'apply_patch') {
+      const files = parseApplyPatch(p.use.input)
+      if (files && files.length > 0) {
+        for (const f of files) {
+          pushTouch(map, f.path, {
+            toolName,
+            envelope,
+            isError,
+            agent,
+            kind: 'write',
+            adds: f.adds,
+            dels: f.dels,
+          })
+        }
+        continue
+      }
+    }
+    const path = extractFile(p.use.input)
+    if (!path) continue
+    pushTouch(map, path, { toolName, envelope, isError, agent, kind })
+  }
+  const entries = [...map.values()]
+  for (const e of entries) computeSemanticFlags(e)
+  return entries.sort((a, b) => {
+    const dr = riskRank(b) - riskRank(a)
+    if (dr !== 0) return dr
+    return b.count - a.count || a.path.localeCompare(b.path)
+  })
+}
+
 export type FilterKind = 'all' | 'tools' | 'errors' | 'thinking'
+
+// ── 视图 A · 叙事线 ─────────────────────────────────────
+// 把 timeline 从"每条事件一行"折成"每 turn 一行":一句话说 AI 做了什么。
+// 详细展示由展开/TraceDrawer 承担。
+export interface TurnMetrics {
+  reads: number       // 次数
+  writes: number      // 次数
+  readFiles: number   // 去重文件数
+  writeFiles: number  // 去重文件数
+  bashCount: number
+  thinkingCount: number
+  adds: number
+  dels: number
+  errors: number
+  hasTest: boolean
+  hasPatch: boolean
+  events: number
+  files: string[]     // 去重
+}
+
+export type NarrativeRow =
+  | { kind: 'user'; key: string; envelope: EventEnvelope; text: string; ts?: string }
+  | { kind: 'boundary'; key: string; envelope: EventEnvelope }
+  | {
+      kind: 'assistant'
+      key: string
+      turnId?: string
+      agent?: string
+      events: Array<{ envelope: EventEnvelope; pair?: ToolPair }>
+      metrics: TurnMetrics
+      verb: string
+      object: string
+      preview?: string     // 第一句 assistant_text,浅色副行
+      firstEnvelope: EventEnvelope
+      durationMs?: number
+    }
+
+function isTestCmd(cmd: string): boolean {
+  return /\b(pytest|jest|vitest|npm\s+test|pnpm\s+test|yarn\s+test|tsc|typecheck|go\s+test|cargo\s+test|mocha)\b/i.test(cmd)
+}
+function isBuildCmd(cmd: string): boolean {
+  return /\b(build|compile|webpack|rollup|vite\s+build|next\s+build)\b/i.test(cmd)
+}
+function extractBashCmd(input: unknown): string {
+  if (input && typeof input === 'object') {
+    const o = input as Record<string, unknown>
+    for (const k of ['command', 'cmd']) if (typeof o[k] === 'string') return o[k] as string
+  }
+  return ''
+}
+function firstSentence(text: string): string {
+  const s = text.trim().replace(/^#+\s*/, '')
+  const m = s.match(/^([^.。!?\n]{4,120})[.。!?\n]/)
+  return (m ? m[1] : s.slice(0, 120)).trim()
+}
+
+// 主动词规则:优先级从高到低。返回的 object 已经能用作行内摘要。
+function verbFor(m: TurnMetrics, preview: string | undefined): { verb: string; object: string } {
+  const diffChunk = m.adds || m.dels ? ` +${m.adds} −${m.dels}` : ''
+  if (m.hasTest) return { verb: '跑测试', object: m.errors ? '有错' : '通过' }
+  if (m.writeFiles > 0 && m.readFiles > 0) {
+    return { verb: '读改', object: `读 ${m.readFiles},改 ${m.writeFiles} 文件${diffChunk}` }
+  }
+  if (m.writeFiles > 0) {
+    return { verb: '改', object: `${m.writeFiles} 个文件${diffChunk}` }
+  }
+  if (m.readFiles >= 4) return { verb: '分析', object: `${m.readFiles} 个文件` }
+  if (m.readFiles > 0) return { verb: '查阅', object: `${m.readFiles} 个文件` }
+  if (m.bashCount > 0) return { verb: '跑命令', object: `${m.bashCount} 条` }
+  if (m.thinkingCount > 0 && !preview) return { verb: '思考', object: `${m.thinkingCount} 步` }
+  return { verb: '回复', object: preview ?? '' }
+}
+
+// 从一批 assistant turn 内的 events 抽取 metrics。
+function collectMetrics(rows: Array<{ envelope: EventEnvelope; pair?: ToolPair }>): {
+  metrics: TurnMetrics
+  preview?: string
+} {
+  const m: TurnMetrics = {
+    reads: 0, writes: 0, readFiles: 0, writeFiles: 0,
+    bashCount: 0, thinkingCount: 0, adds: 0, dels: 0, errors: 0,
+    hasTest: false, hasPatch: false, events: rows.length, files: [],
+  }
+  const readSet = new Set<string>()
+  const writeSet = new Set<string>()
+  let preview: string | undefined
+  for (const r of rows) {
+    const ev = r.envelope.event
+    if (ev.type === 'thinking') { m.thinkingCount++; continue }
+    if (ev.type === 'assistant_text' && !preview && ev.text.trim()) preview = firstSentence(ev.text)
+    if (ev.type !== 'tool_use') continue
+    const name = ev.name
+    if (r.pair?.result?.isError) m.errors++
+    if (name === 'Bash' || name === 'shell') {
+      m.bashCount++
+      const cmd = extractBashCmd(ev.input)
+      if (isTestCmd(cmd)) m.hasTest = true
+      if (isBuildCmd(cmd)) m.hasTest = m.hasTest // no-op, could add hasBuild
+      continue
+    }
+    if (name === 'apply_patch') {
+      m.hasPatch = true
+      const files = parseApplyPatch(ev.input) ?? []
+      for (const f of files) {
+        writeSet.add(f.path)
+        m.writes++
+        m.adds += f.adds
+        m.dels += f.dels
+      }
+      continue
+    }
+    const path = extractFile(ev.input)
+    if (READ_TOOL_NAMES.has(name)) { m.reads++; if (path) readSet.add(path); continue }
+    if (WRITE_TOOL_NAMES.has(name)) { m.writes++; if (path) writeSet.add(path); continue }
+  }
+  m.readFiles = readSet.size
+  m.writeFiles = writeSet.size
+  m.files = [...new Set([...readSet, ...writeSet])]
+  return { metrics: m, preview }
+}
+
+// 按 turn 折叠 rows(未 clusterRows/未 fold 之前的 buildTimeline.rows):
+//   - user_text → user 行
+//   - followup_boundary → boundary
+//   - 其它按 (turnId + agent) 聚成一个 assistant 行
+// 顺序严格保留 append 顺序(不变量 3)。
+export function buildTurns(
+  rows: Array<{ envelope: EventEnvelope; pair?: ToolPair }>,
+): NarrativeRow[] {
+  const out: NarrativeRow[] = []
+  let bucket: Array<{ envelope: EventEnvelope; pair?: ToolPair }> = []
+  let bucketKey: string | null = null
+  let bucketFirst: EventEnvelope | null = null
+  let bucketTs: string | undefined
+
+  const flush = () => {
+    if (!bucket.length || !bucketFirst) return
+    const { metrics, preview } = collectMetrics(bucket)
+    const { verb, object } = verbFor(metrics, preview)
+    const ev0 = bucketFirst.event
+    const agent = ('agent' in ev0 && ev0.agent) ? ev0.agent : undefined
+    const lastTs = bucket[bucket.length - 1].envelope.event.ts
+    const durationMs = bucketTs && lastTs ? Math.max(0, new Date(lastTs).getTime() - new Date(bucketTs).getTime()) : undefined
+    out.push({
+      kind: 'assistant',
+      key: `a:${bucketKey}:${bucketFirst.sourceEventId ?? out.length}`,
+      turnId: bucketFirst.turnId,
+      agent,
+      events: bucket,
+      metrics,
+      verb,
+      object,
+      preview,
+      firstEnvelope: bucketFirst,
+      durationMs,
+    })
+    bucket = []
+    bucketKey = null
+    bucketFirst = null
+    bucketTs = undefined
+  }
+
+  for (const row of rows) {
+    const env = row.envelope
+    const ev = env.event
+    if (ev.type === 'user_text') {
+      flush()
+      out.push({
+        kind: 'user',
+        key: `u:${env.sourceEventId ?? out.length}`,
+        envelope: env,
+        text: ev.text,
+        ts: ev.ts,
+      })
+      continue
+    }
+    if (ev.type === 'followup_boundary') {
+      flush()
+      out.push({ kind: 'boundary', key: `b:${env.sourceEventId ?? out.length}`, envelope: env })
+      continue
+    }
+    const agent = ('agent' in ev && ev.agent) ? ev.agent : ''
+    const key = `${env.turnId ?? ''}:${agent}`
+    if (bucketKey === null) {
+      bucketKey = key
+      bucketFirst = env
+      bucketTs = ev.ts
+    } else if (bucketKey !== key) {
+      flush()
+      bucketKey = key
+      bucketFirst = env
+      bucketTs = ev.ts
+    }
+    bucket.push(row)
+  }
+  flush()
+  return out
+}
 
 export interface TraceGroup {
   type: 'trace_group'
@@ -231,6 +547,42 @@ export function clusterRows(
   return result
 }
 
+// 把「trace group → 紧邻其后的 assistant_text」折叠成一行:
+// group 不再独占一行,而是作为 assistant bubble 上的 precedingGroup 展示。
+// 只在无 filter/keyword 的默认视图里用,避免筛选态时丢事件。
+export function foldGroupsIntoAssistant(
+  rows: Array<{ envelope: EventEnvelope; pair?: ToolPair; group?: TraceGroup }>,
+): Array<{ envelope: EventEnvelope; pair?: ToolPair; group?: TraceGroup; precedingGroup?: TraceGroup }> {
+  const out: Array<{
+    envelope: EventEnvelope
+    pair?: ToolPair
+    group?: TraceGroup
+    precedingGroup?: TraceGroup
+  }> = []
+  let pending: TraceGroup | null = null
+  for (const row of rows) {
+    if (row.group) {
+      pending = row.group
+      continue
+    }
+    const ev = row.envelope.event
+    if (ev.type === 'assistant_text' && pending) {
+      out.push({ ...row, precedingGroup: pending })
+      pending = null
+      continue
+    }
+    if (pending) {
+      // group 后跟着的不是 assistant(比如 user_text / usage / boundary),
+      // 说明这一轮还没出正文,保留 pill 独立展示。
+      out.push({ envelope: pending.events[0].envelope, group: pending })
+      pending = null
+    }
+    out.push(row)
+  }
+  if (pending) out.push({ envelope: pending.events[0].envelope, group: pending })
+  return out
+}
+
 export function rowMatchesFilter(
   row: TimelineModel['rows'][number],
   kind: FilterKind,
@@ -250,7 +602,19 @@ export function rowMatchesFilter(
   return true
 }
 
+// MCP 工具原生名太啰嗦:`mcp__Claude_Preview__preview_resize` → `preview_resize`。
+// 非 MCP 工具保持原名。极端长的名也截断兜底。
+export function prettyToolName(name: string): string {
+  if (!name) return name
+  if (name.startsWith('mcp__')) {
+    const parts = name.split('__').filter(Boolean)
+    if (parts.length >= 3) return parts.slice(2).join('__')
+  }
+  return name.length > 32 ? name.slice(0, 30) + '…' : name
+}
+
 // 把群组里的工具调用合并成简短分类标签:相邻同名合并为「Edit ×3」,最多展示 4 个,余下汇总成 「+N」。
+// 名字统一走 prettyToolName,避免 mcp__ 前缀撑破 UI。
 export function summarizeToolNames(group: TraceGroup): string[] {
   const names: string[] = []
   for (const row of group.events) {
@@ -265,7 +629,8 @@ export function summarizeToolNames(group: TraceGroup): string[] {
     let j = i + 1
     while (j < names.length && names[j] === names[i]) j++
     const count = j - i
-    merged.push(count > 1 ? `${names[i]} ×${count}` : names[i])
+    const pretty = prettyToolName(names[i])
+    merged.push(count > 1 ? `${pretty} ×${count}` : pretty)
     i = j
   }
   if (merged.length <= 4) return merged

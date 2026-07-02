@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { EventEnvelope } from '../lib/types'
-import type { ToolPair } from '../lib/timeline'
+import { prettyToolName, summarizeToolNames, type ToolPair, type TraceGroup } from '../lib/timeline'
 import { agentAvatarClass } from '../lib/display'
 import { Markdown } from './Markdown'
 import { ToolCallCard } from './ToolCallCard'
@@ -92,10 +92,14 @@ function parseUserText(raw: string): UserTextKind {
 export function EventItem({
   envelope,
   pair,
+  precedingGroup,
+  onViewTrace,
   actionVisibility = 'hover',
 }: {
   envelope: EventEnvelope
   pair?: ToolPair
+  precedingGroup?: TraceGroup
+  onViewTrace?: (group: TraceGroup) => void
   actionVisibility?: 'visible' | 'hover'
 }) {
   const ev = envelope.event
@@ -145,10 +149,16 @@ export function EventItem({
             <div className="bubble-body">
               <Markdown text={ev.text} />
             </div>
-            <AgentMessageActions
-              agent={agentName}
-              text={ev.text}
-              visibility={actionVisibility}
+            <BubbleFooter
+              precedingGroup={precedingGroup}
+              onViewTrace={onViewTrace}
+              actions={
+                <AgentMessageActions
+                  agent={agentName}
+                  text={ev.text}
+                  visibility={actionVisibility}
+                />
+              }
             />
           </div>
         </div>
@@ -172,7 +182,7 @@ export function EventItem({
               <ToolCallCard pair={pair} readOnly={envelope.source === 'codex'} />
             ) : (
               <div className="tool-pending">
-                <span className="tool-name">{ev.name}</span>
+                <span className="tool-name" title={ev.name}>{prettyToolName(ev.name)}</span>
                 <span className="tool-pending-hint">等待结果…</span>
               </div>
             )}
@@ -247,6 +257,47 @@ function AttachmentReferences({
           </div>
         </div>
       ))}
+    </div>
+  )
+}
+
+// 把 trace chip 与消息动作放到 bubble 底部一条,chip 靠左、动作靠右。
+function BubbleFooter({
+  precedingGroup,
+  onViewTrace,
+  actions,
+}: {
+  precedingGroup?: TraceGroup
+  onViewTrace?: (group: TraceGroup) => void
+  actions: ReactNode
+}) {
+  if (!precedingGroup) return <>{actions}</>
+  const toolNames = summarizeToolNames(precedingGroup)
+  return (
+    <div className="bubble-footer">
+      <button
+        className="bubble-trace-chip"
+        onClick={() => onViewTrace?.(precedingGroup)}
+        title="查看本轮的思考与工具执行细节"
+      >
+        {precedingGroup.thinkingCount > 0 && (
+          <span className="bubble-trace-stat" title={`${precedingGroup.thinkingCount} 次思考`}>
+            <Icon name="bulb" size={11} />
+            {precedingGroup.thinkingCount > 1 && precedingGroup.thinkingCount}
+          </span>
+        )}
+        {toolNames.map((name, idx) => (
+          <span key={idx} className="bubble-trace-tool">
+            <Icon name="wrench" size={10} /> {name}
+          </span>
+        ))}
+        {precedingGroup.errorCount > 0 && (
+          <span className="bubble-trace-stat danger">
+            <Icon name="close" size={11} /> {precedingGroup.errorCount}
+          </span>
+        )}
+      </button>
+      {actions}
     </div>
   )
 }
