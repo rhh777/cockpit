@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import fs from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import path from 'node:path'
 import type { AgentName, ChatAttachment, EventEnvelope, NormalizedEvent } from '../loaders/types'
 import { resolveAgent } from '../adapters/registry'
 import { filterToolResult, redactSecrets } from '../adapters/sensitive'
 import { groupAttachmentsDir, groupThreadStore } from '../store/group-thread-store'
+import { normalizeAttachments, renderAttachmentLines, type AttachmentDraft } from '../util/attachments'
 import { sessionRegistry } from '../registry/session-registry'
 import { parseMentions } from '../util/mentions'
 import { cleanTitle } from '../util/title'
@@ -29,17 +28,6 @@ interface ActiveGroupTurn {
 }
 
 const activeTurns = new Map<string, ActiveGroupTurn>()
-const IMAGE_MIME_EXT: Record<string, string> = {
-  'image/png': '.png',
-  'image/jpeg': '.jpg',
-  'image/webp': '.webp',
-  'image/gif': '.gif',
-}
-
-type AttachmentDraft =
-  | { kind: 'file'; path?: string; name?: string }
-  | { kind: 'directory'; path?: string; name?: string }
-  | { kind: 'imageData'; dataUrl?: string; name?: string; mimeType?: string }
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status
@@ -79,59 +67,6 @@ function agentName(agent: AgentName | undefined): string {
   return agent === 'codex' ? 'Codex' : agent === 'claude' ? 'Claude' : String(agent)
 }
 
-function attachmentName(filePath: string, fallback = 'attachment'): string {
-  return path.basename(filePath) || fallback
-}
-
-function renderAttachmentLines(attachments?: ChatAttachment[]): string[] {
-  if (!attachments?.length) return []
-  return [
-    '[Attachments]',
-    ...attachments.map((a) => {
-      const label = a.kind === 'directory' ? 'directory' : a.kind === 'image' ? `image ${a.mimeType}` : 'file'
-      return `- ${label}: ${a.name} -> ${a.path}`
-    }),
-  ]
-}
-
-async function normalizeAttachments(id: string, drafts: AttachmentDraft[] | undefined): Promise<ChatAttachment[]> {
-  if (!Array.isArray(drafts) || drafts.length === 0) return []
-  const out: ChatAttachment[] = []
-  for (const draft of drafts.slice(0, 12)) {
-    if (draft?.kind === 'file' || draft?.kind === 'directory') {
-      if (typeof draft.path !== 'string' || !draft.path.trim()) continue
-      const resolved = path.resolve(draft.path)
-      let st
-      try {
-        st = await fs.stat(resolved)
-      } catch {
-        continue
-      }
-      if (draft.kind === 'file' && !st.isFile()) continue
-      if (draft.kind === 'directory' && !st.isDirectory()) continue
-      out.push({
-        kind: draft.kind,
-        path: resolved,
-        name: typeof draft.name === 'string' && draft.name.trim() ? draft.name.trim() : attachmentName(resolved),
-      })
-    } else if (draft?.kind === 'imageData') {
-      const mimeType = typeof draft.mimeType === 'string' ? draft.mimeType : ''
-      const ext = IMAGE_MIME_EXT[mimeType]
-      const dataUrl = typeof draft.dataUrl === 'string' ? draft.dataUrl : ''
-      const marker = `data:${mimeType};base64,`
-      if (!ext || !dataUrl.startsWith(marker)) continue
-      const bytes = Buffer.from(dataUrl.slice(marker.length), 'base64')
-      if (bytes.length === 0 || bytes.length > 20 * 1024 * 1024) continue
-      const dir = groupAttachmentsDir(id)
-      await fs.mkdir(dir, { recursive: true })
-      const safeName = (draft.name?.trim() || `screenshot-${Date.now()}${ext}`).replace(/[^\w.\- ]+/g, '_')
-      const filePath = path.join(dir, `${randomUUID()}-${safeName.endsWith(ext) ? safeName : `${safeName}${ext}`}`)
-      await fs.writeFile(filePath, bytes)
-      out.push({ kind: 'image', path: filePath, name: path.basename(filePath), mimeType })
-    }
-  }
-  return out
-}
 
 function projectContext(
   events: EventEnvelope[],
@@ -283,7 +218,7 @@ async function handlePostMessage(req: IncomingMessage, res: ServerResponse, id: 
     attachments?: AttachmentDraft[]
   }
   const text = (body.text ?? '').trim()
-  const attachments = await normalizeAttachments(id, body.attachments)
+  const attachments = await normalizeAttachments(groupAttachmentsDir(id), body.attachments)
   if (!text && attachments.length === 0) {
     sendJson(res, 400, { error: 'empty message' })
     return
@@ -454,7 +389,7 @@ async function handleStartRun(req: IncomingMessage, res: ServerResponse, id: str
     attachments?: AttachmentDraft[]
   }
   const text = (body.text ?? '').trim()
-  const attachments = await normalizeAttachments(id, body.attachments)
+  const attachments = await normalizeAttachments(groupAttachmentsDir(id), body.attachments)
   if (!text && attachments.length === 0) {
     sendJson(res, 400, { error: 'empty message' })
     return

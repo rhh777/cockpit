@@ -9,3 +9,7 @@ export function threadDir(source: Source, id: string): string {
 export function followupsFile(source: Source, id: string): string {
   return path.join(threadDir(source, id), 'followups.jsonl')
 }
+
+export function threadAttachmentsDir(source: Source, id: string): string {
+  return path.join(threadDir(source, id), 'attachments')
+}

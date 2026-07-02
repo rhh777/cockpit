@@ -2,6 +2,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { AgentName, Source } from '../loaders/types'
 import { resolveSafe } from './resolve'
 import { runRegistry } from '../runs/run-registry'
+import { normalizeAttachments, type AttachmentDraft } from '../util/attachments'
+import { threadAttachmentsDir } from '../store/paths'
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status
@@ -44,9 +46,11 @@ async function handleStartFollowup(req: IncomingMessage, res: ServerResponse, so
     parentTurnId?: string
     model?: string
     effort?: string
+    attachments?: AttachmentDraft[]
   }
   const text = (body.text ?? '').trim()
-  if (!text) {
+  const attachments = await normalizeAttachments(threadAttachmentsDir(source, id), body.attachments)
+  if (!text && attachments.length === 0) {
     sendJson(res, 400, { error: 'empty message' })
     return
   }
@@ -61,6 +65,7 @@ async function handleStartFollowup(req: IncomingMessage, res: ServerResponse, so
     parentTurnId: body.parentTurnId?.trim() || undefined,
     model: body.model?.trim() || undefined,
     effort: body.effort?.trim() || undefined,
+    attachments: attachments.length ? attachments : undefined,
   })
   sendJson(res, 202, {
     run: started.record,
@@ -74,14 +79,21 @@ async function handleStartNative(req: IncomingMessage, res: ServerResponse, sour
     sendJson(res, 404, { error: 'session not found' })
     return
   }
-  const body = (await readBody(req)) as { text?: string }
+  const body = (await readBody(req)) as { text?: string; attachments?: AttachmentDraft[] }
   const text = (body.text ?? '').trim()
-  if (!text) {
+  const attachments = await normalizeAttachments(threadAttachmentsDir(source, id), body.attachments)
+  if (!text && attachments.length === 0) {
     sendJson(res, 400, { error: 'empty message' })
     return
   }
   try {
-    const started = await runRegistry.startNativeResume({ source, sessionId: id, filePath, text })
+    const started = await runRegistry.startNativeResume({
+      source,
+      sessionId: id,
+      filePath,
+      text,
+      attachments: attachments.length ? attachments : undefined,
+    })
     sendJson(res, 202, {
       run: started.record,
       userEnvelope: started.userEnvelope,

@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import path from 'node:path'
-import { COCKPIT_GROUP_THREADS_ROOT } from '../config'
+import { COCKPIT_GROUP_THREADS_ROOT, COCKPIT_THREADS_ROOT } from '../config'
 
 const IMAGE_TYPES: Record<string, string> = {
   '.png': 'image/png',
@@ -18,10 +18,14 @@ function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body))
 }
 
-function isWithinGroupAttachments(filePath: string): boolean {
+// 群聊落 group-threads/<id>/attachments,单会话 follow-up 落 threads/<src>/<id>/attachments。
+// 两者都要求路径位于对应根目录下且包含 /attachments/ 段。
+function isWithinAttachments(filePath: string): boolean {
   const resolved = path.resolve(filePath)
-  const root = path.resolve(COCKPIT_GROUP_THREADS_ROOT)
-  return resolved.startsWith(root + path.sep) && resolved.includes(`${path.sep}attachments${path.sep}`)
+  if (!resolved.includes(`${path.sep}attachments${path.sep}`)) return false
+  return [COCKPIT_GROUP_THREADS_ROOT, COCKPIT_THREADS_ROOT].some((r) =>
+    resolved.startsWith(path.resolve(r) + path.sep),
+  )
 }
 
 export async function handleAttachmentsRoute(
@@ -43,7 +47,7 @@ export async function handleAttachmentsRoute(
 
   const filePath = path.resolve(rawPath)
   const mime = IMAGE_TYPES[path.extname(filePath).toLowerCase()]
-  if (!mime || !isWithinGroupAttachments(filePath)) {
+  if (!mime || !isWithinAttachments(filePath)) {
     sendJson(res, 403, { error: 'forbidden' })
     return true
   }

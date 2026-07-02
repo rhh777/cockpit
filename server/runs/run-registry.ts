@@ -44,6 +44,7 @@ interface FollowupStartInput {
   parentTurnId?: string
   model?: string
   effort?: string
+  attachments?: ChatAttachment[]
 }
 
 interface GroupTurnStartInput {
@@ -60,6 +61,7 @@ interface NativeStartInput {
   sessionId: string
   filePath: string
   text: string
+  attachments?: ChatAttachment[]
 }
 
 interface NativeContinuationInput {
@@ -176,6 +178,14 @@ function renderAttachmentLines(attachments?: ChatAttachment[]): string[] {
   ]
 }
 
+// 单会话 follow-up / native 续写没有 group 的 context preview,附件引用行直接拼到当前请求文本里,
+// CLI 凭路径读取(图片已落 attachments 目录,file/directory 是原路径)。
+function withAttachments(text: string, attachments?: ChatAttachment[]): string {
+  const lines = renderAttachmentLines(attachments)
+  if (lines.length === 0) return text
+  return [text, '', ...lines].join('\n')
+}
+
 function projectGroupContext(
   events: EventEnvelope[],
   summary: string,
@@ -286,6 +296,7 @@ class RunRegistry {
         ts: startedAt,
         targetAgent: input.targetAgent,
         parentTurnId: input.parentTurnId,
+        ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       },
     }
     await threadStore.appendEvent(input.source, input.sessionId, userEnvelope)
@@ -407,7 +418,13 @@ class RunRegistry {
       sourceEventId: `native:${runId}:user`,
       turnId,
       runId,
-      event: { type: 'user_text', text: input.text, ts: startedAt, targetAgent: agentName },
+      event: {
+        type: 'user_text',
+        text: input.text,
+        ts: startedAt,
+        targetAgent: agentName,
+        ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+      },
     }
     await nativeShadowStore.append(input.source, input.sessionId, runId, userEnvelope)
     handle.write({ kind: 'meta', turnId, runId, native: true })
@@ -511,7 +528,7 @@ class RunRegistry {
       const detail = await loadSessionDetail(input.source, input.sessionId, input.filePath)
       const toolInputById = new Map<string, unknown>()
       for await (const raw of agent.run({
-        text: input.text,
+        text: withAttachments(input.text, input.attachments),
         contextEvents: detail?.events ?? [],
         targetAgent: input.targetAgent,
         cwd: detail?.summary.cwd ?? null,
@@ -694,7 +711,7 @@ class RunRegistry {
     try {
       const toolInputById = new Map<string, unknown>()
       for await (const raw of agent.resumeNative!({
-        text: input.text,
+        text: withAttachments(input.text, input.attachments),
         source: input.source,
         sessionId: input.sessionId,
         filePath: input.filePath,

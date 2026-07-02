@@ -10,6 +10,11 @@ export type StreamMessage =
 
 import type { ChatAttachment } from './types'
 
+/** 发送前的附件草稿:本地 file/directory 只带路径,粘贴图片带 base64 dataUrl。 */
+export type ChatAttachmentDraft =
+  | Pick<ChatAttachment, 'kind' | 'path' | 'name'>
+  | { kind: 'imageData'; dataUrl: string; name: string; mimeType: string }
+
 export type GroupStreamMessage =
   | {
       kind: 'meta'
@@ -40,6 +45,8 @@ export interface SendFollowupBody {
   model?: string
   /** 推理强度。claude:--effort {low,medium,high,xhigh,max};codex:model_reasoning_effort 同名 + xhigh。 */
   effort?: string
+  /** 本轮附件(与群聊一致):图片落 threads/<src>/<id>/attachments,file/directory 只引用路径。 */
+  attachments?: ChatAttachmentDraft[]
 }
 
 export interface RunRecord {
@@ -139,7 +146,7 @@ export async function cancelRun(runId: string): Promise<void> {
 export async function startNativeResumeRun(
   source: string,
   id: string,
-  body: { text: string },
+  body: { text: string; attachments?: ChatAttachmentDraft[] },
 ): Promise<{ run: RunRecord; userEnvelope: EventEnvelope }> {
   const res = await fetch(`/api/native/${encodeURIComponent(source)}/${encodeURIComponent(id)}/runs`, {
     method: 'POST',
@@ -165,10 +172,7 @@ export async function startGroupRun(
     targetAgents?: string[]
     useTools?: boolean
     cliByAgent?: Partial<Record<string, { model?: string; effort?: string }>>
-    attachments?: Array<
-      | Pick<ChatAttachment, 'kind' | 'path' | 'name'>
-      | { kind: 'imageData'; dataUrl: string; name: string; mimeType: string }
-    >
+    attachments?: ChatAttachmentDraft[]
   },
 ): Promise<{
   groupTurnId: string
@@ -263,10 +267,7 @@ export async function postGroupMessageStream(
     targetAgents?: string[]
     useTools?: boolean
     cliByAgent?: Partial<Record<string, { model?: string; effort?: string }>>
-    attachments?: Array<
-      | Pick<ChatAttachment, 'kind' | 'path' | 'name'>
-      | { kind: 'imageData'; dataUrl: string; name: string; mimeType: string }
-    >
+    attachments?: ChatAttachmentDraft[]
   },
   onMessage: (msg: GroupStreamMessage) => void,
   signal: AbortSignal,

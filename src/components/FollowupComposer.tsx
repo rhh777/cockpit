@@ -114,7 +114,7 @@ export function FollowupComposer({
     options?: CliSelection | CliSelectionByAgent,
     attachments?: AttachmentDraft[],
   ) => void
-  onNativeSend: (text: string) => void
+  onNativeSend: (text: string, attachments?: AttachmentDraft[]) => void
   onCancelAll: () => void
 }) {
   const [text, setText] = useState('')
@@ -198,14 +198,15 @@ export function FollowupComposer({
   const send = () => {
     const t = text.trim()
     if (!t && attachments.length === 0) return
+    const outgoing = attachments.length ? attachments : undefined
     if (usingNative) {
-      onNativeSend(t)
+      onNativeSend(t, outgoing)
     } else {
       if (!usingMentions && !groupMode) setDefaultAgent(agent)
       // 单 agent 场景按当前 agent 偏好透传;@mentions 多目标下让 caller 走默认,避免一个
       // 模型设置被错配到另一个 agent。
       const options = groupMode ? cliByAgent : !usingMentions ? cliByAgent[agent] : undefined
-      onSend(t, targets, options, groupMode ? attachments : undefined)
+      onSend(t, targets, options, outgoing)
     }
     setText('')
     setAttachments([])
@@ -474,8 +475,8 @@ export function FollowupComposer({
         )}
       </div>
       <div className="composer-input-area">
-        <div className={`composer-input-wrap ${groupMode ? 'group-composer-shell' : ''}`}>
-        {groupMode && attachments.length > 0 && (
+        <div className="composer-input-wrap group-composer-shell">
+        {attachments.length > 0 && (
           <div className="attachment-tray" aria-label="附件">
             {attachments.map((a, index) => (
               <span key={`${a.kind}-${index}-${a.name}`} className={`attachment-chip ${a.kind === 'imageData' ? 'has-preview' : ''}`}>
@@ -492,7 +493,7 @@ export function FollowupComposer({
             ))}
           </div>
         )}
-        {groupMode && attachmentError && <div className="attachment-error">{attachmentError}</div>}
+        {attachmentError && <div className="attachment-error">{attachmentError}</div>}
         <textarea
           ref={textareaRef}
           className="composer-input"
@@ -509,7 +510,6 @@ export function FollowupComposer({
             refreshMentionMenu(e.target.value, e.target.selectionStart)
           }}
           onPaste={(e) => {
-            if (!groupMode) return
             if (attachPastedImages(e.clipboardData.items)) e.preventDefault()
           }}
           onClick={() => refreshMentionMenu()}
@@ -571,63 +571,43 @@ export function FollowupComposer({
             <span>已添加 @{mentionConfirm}</span>
           </div>
         )}
-        {groupMode ? (
-          <div className="composer-action-bar">
-            <div className="composer-action-left">
-              {groupMode && !hasActiveStreams && (
-                <div className="attachment-menu-wrap" ref={attachmentMenuRef}>
-                  <button
-                    className="composer-attach-btn"
-                    onClick={() => setAttachmentMenuOpen((v) => !v)}
-                    title="添加附件"
-                    aria-label="添加附件"
-                    aria-expanded={attachmentMenuOpen}
-                  >
-                    <Icon name="paperclip" size={16} />
-                  </button>
-                  {attachmentMenuOpen && (
-                    <div className="attachment-menu">
-                      <button onMouseDown={(e) => e.preventDefault()} onClick={pickFiles}>
-                        <Icon name="file-text" size={13} />
-                        <span>文件</span>
-                      </button>
-                      <button onMouseDown={(e) => e.preventDefault()} onClick={pickDirectory}>
-                        <Icon name="folder" size={13} />
-                        <span>文件夹</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-            <button
-              className={`send-btn primary-action ${hasActiveStreams ? 'is-canceling' : 'is-ready'}`}
-              onClick={hasActiveStreams ? onCancelAll : send}
-              disabled={!hasActiveStreams && !text.trim() && attachments.length === 0}
-              title={hasActiveStreams ? '取消当前所有正在生成的回复' : `${sendTitle}; Enter 发送, Alt+Enter 换行`}
-              aria-label={hasActiveStreams ? '取消生成' : '发送'}
-            >
-              {hasActiveStreams ? (
-                <>
-                  <span className="send-pulse" aria-hidden />
-                  <Icon name="close" size={14} />
-                </>
-              ) : (
-                <Icon name="arrow-up" size={18} />
-              )}
-            </button>
-          </div>
-        ) : (
-          <div className="composer-send-overlay">
-            {!groupMode && !usingNative && !hasActiveStreams && (
+        <div className="composer-action-bar">
+          <div className="composer-action-left">
+            {!hasActiveStreams && (
+              <div className="attachment-menu-wrap" ref={attachmentMenuRef}>
+                <button
+                  className="composer-attach-btn"
+                  onClick={() => setAttachmentMenuOpen((v) => !v)}
+                  title="添加附件"
+                  aria-label="添加附件"
+                  aria-expanded={attachmentMenuOpen}
+                >
+                  <Icon name="paperclip" size={16} />
+                </button>
+                {attachmentMenuOpen && (
+                  <div className="attachment-menu">
+                    <button onMouseDown={(e) => e.preventDefault()} onClick={pickFiles}>
+                      <Icon name="file-text" size={13} />
+                      <span>文件</span>
+                    </button>
+                    <button onMouseDown={(e) => e.preventDefault()} onClick={pickDirectory}>
+                      <Icon name="folder" size={13} />
+                      <span>文件夹</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            {!hasActiveStreams && !usingNative && (
               <div className="advanced-menu-wrap" ref={advancedMenuRef}>
                 <button
-                  className="advanced-action-btn"
+                  className="composer-attach-btn"
                   onClick={() => setAdvancedMenuOpen((v) => !v)}
                   title="高级"
                   aria-label="高级"
+                  aria-expanded={advancedMenuOpen}
                 >
-                  <Icon name="more-horizontal" size={15} />
+                  <Icon name="more-horizontal" size={16} />
                 </button>
                 {advancedMenuOpen && (
                   <div className="advanced-menu">
@@ -639,24 +619,24 @@ export function FollowupComposer({
                 )}
               </div>
             )}
-            <button
-              className={`send-btn primary-action ${hasActiveStreams ? 'is-canceling' : 'is-ready'}`}
-              onClick={hasActiveStreams ? onCancelAll : send}
-              disabled={!hasActiveStreams && !text.trim() && attachments.length === 0}
-              title={hasActiveStreams ? '取消当前所有正在生成的回复' : `${sendTitle}; Enter 发送, Alt+Enter 换行`}
-              aria-label={hasActiveStreams ? '取消生成' : '发送'}
-            >
-              {hasActiveStreams ? (
-                <>
-                  <span className="send-pulse" aria-hidden />
-                  <Icon name="close" size={14} />
-                </>
-              ) : (
-                <Icon name="send" size={14} />
-              )}
-            </button>
           </div>
-        )}
+          <button
+            className={`send-btn primary-action ${hasActiveStreams ? 'is-canceling' : 'is-ready'}`}
+            onClick={hasActiveStreams ? onCancelAll : send}
+            disabled={!hasActiveStreams && !text.trim() && attachments.length === 0}
+            title={hasActiveStreams ? '取消当前所有正在生成的回复' : `${sendTitle}; Enter 发送, Alt+Enter 换行`}
+            aria-label={hasActiveStreams ? '取消生成' : '发送'}
+          >
+            {hasActiveStreams ? (
+              <>
+                <span className="send-pulse" aria-hidden />
+                <Icon name="close" size={14} />
+              </>
+            ) : (
+              <Icon name="send" size={14} />
+            )}
+          </button>
+        </div>
       </div>
       </div>
     </div>
