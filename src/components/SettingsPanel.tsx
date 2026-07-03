@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { SettingsDiagnostics } from '../lib/api'
 import { fetchSettingsDiagnostics } from '../lib/api'
+import { AGENT_OPTIONS, labelForAgent } from '../lib/agents'
 import type { AgentName } from '../lib/types'
 import { AgentIcon } from './AgentIcon'
 import { Icon } from './Icon'
@@ -40,6 +41,18 @@ const MODEL_OPTIONS: Record<AgentName, { value: string; label: string }[]> = {
     { value: 'gpt-5.5', label: 'GPT-5.5' },
     { value: 'gpt-5.4-mini', label: 'GPT-5.4-Mini' },
   ],
+  opencode: [
+    { value: '', label: 'CLI 默认' },
+    { value: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet' },
+    { value: 'openai/gpt-5.5', label: 'GPT-5.5' },
+    { value: 'qwen/qwen3-coder-plus', label: 'Qwen Coder' },
+  ],
+  cursor: [
+    { value: '', label: 'CLI 默认' },
+    { value: 'auto', label: 'Auto' },
+    { value: 'gpt-5.5', label: 'GPT-5.5' },
+    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet' },
+  ],
 }
 
 const EFFORT_OPTIONS: Record<AgentName, { value: string; label: string }[]> = {
@@ -57,6 +70,16 @@ const EFFORT_OPTIONS: Record<AgentName, { value: string; label: string }[]> = {
     { value: 'medium', label: '中' },
     { value: 'high', label: '高' },
     { value: 'xhigh', label: '超高' },
+  ],
+  opencode: [
+    { value: '', label: 'CLI 默认' },
+    { value: 'low', label: '低' },
+    { value: 'medium', label: '中' },
+    { value: 'high', label: '高' },
+    { value: 'max', label: '极致' },
+  ],
+  cursor: [
+    { value: '', label: 'CLI 默认' },
   ],
 }
 
@@ -192,10 +215,12 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       ? [
           ['Claude projects', diagnostics?.roots.claudeProjects],
         ]
-      : [
+      : defaultAgent === 'codex'
+      ? [
           ['Codex sessions', diagnostics?.roots.codexSessions],
           ['Codex index', diagnostics?.roots.codexIndex],
         ]
+      : []
 
   return (
     <div className="settings-overlay" onMouseDown={onClose}>
@@ -214,21 +239,21 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
           <section className="settings-section">
             <h2>Agent</h2>
             <div className="settings-segment">
-              {(['claude', 'codex'] as AgentName[]).map((agent) => (
+              {AGENT_OPTIONS.map(({ value: agent, label }) => (
                 <button
                   key={agent}
                   className={`settings-segment-item agent-${agent} ${defaultAgent === agent ? 'active' : ''}`}
                   onClick={() => pickAgent(agent)}
                 >
                   <AgentIcon agent={agent} size={16} />
-                  {agent === 'claude' ? 'Claude' : 'Codex'}
+                  {label}
                 </button>
               ))}
             </div>
             <div className="settings-agent-block">
               <div className="settings-agent-title">
                 <AgentIcon agent={defaultAgent} size={16} />
-                {defaultAgent === 'claude' ? 'Claude CLI' : 'Codex CLI'}
+                {labelForAgent(defaultAgent)} CLI
                 {selectedStatus && (
                   <strong className={`settings-inline-status ${selectedStatus.available ? 'ok' : 'bad'}`}>
                     {selectedStatus.available ? t('common.available') : t('common.unavailable')}
@@ -257,7 +282,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                 {diagLoading ? (
                   <div className="settings-progress">
                     <span className="settings-progress-bar" />
-                    <span>{t('settings.detectingCli', { agent: defaultAgent === 'claude' ? 'Claude' : 'Codex' })}</span>
+                    <span>{t('settings.detectingCli', { agent: labelForAgent(defaultAgent) })}</span>
                   </div>
                 ) : diagError ? (
                   <div className="settings-error">{t('settings.diagnosticsFailed', { error: diagError })}</div>
@@ -270,14 +295,16 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                       </strong>
                     </div>
                     {selectedStatus?.error && <div className="settings-error">{selectedStatus.error}</div>}
-                    <div className="settings-paths compact">
-                      {agentPaths.map(([key, value]) => (
+                    {agentPaths.length > 0 && (
+                      <div className="settings-paths compact">
+                        {agentPaths.map(([key, value]) => (
                         <div key={key} className="settings-path-line">
                           <span>{key}</span>
                           <code title={value}>{value ?? t('common.detecting')}</code>
                         </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    )}
                   </>
                 )}
               </div>

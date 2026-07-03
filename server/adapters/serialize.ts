@@ -28,6 +28,8 @@ function clip(s: string, n: number): string {
 function agentSpeaker(agent?: AgentName): string {
   if (agent === 'claude') return '[Claude said]'
   if (agent === 'codex') return '[Codex said]'
+  if (agent === 'opencode') return '[OpenCode said]'
+  if (agent === 'cursor') return '[Cursor said]'
   return '[Assistant said]'
 }
 

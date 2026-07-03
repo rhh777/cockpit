@@ -6,7 +6,7 @@ import {
   COCKPIT_ROOT,
   COCKPIT_THREADS_ROOT,
 } from '../config'
-import { resolveAgent } from '../adapters/registry'
+import { listAgents, resolveAgent } from '../adapters/registry'
 import type { AgentName } from '../loaders/types'
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
@@ -42,7 +42,7 @@ export async function handleSettingsRoute(
       codexSessions: CODEX_SESSIONS_ROOT,
       codexIndex: CODEX_SESSION_INDEX,
     },
-    agents: await Promise.all([agentStatus('claude'), agentStatus('codex')]),
+    agents: await Promise.all(listAgents().map((a) => agentStatus(a.name))),
   })
   return true
 }

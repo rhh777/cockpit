@@ -11,6 +11,7 @@ import {
 } from '../lib/api'
 import { displayTitle, relativeTime } from '../lib/display'
 import { AgentIcon } from '../components/AgentIcon'
+import { labelForAgent } from '../lib/agents'
 import { Icon } from '../components/Icon'
 import { useI18n, type MessageKey, type ResolvedLocale } from '../lib/i18n'
 
@@ -310,7 +311,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
 
   const viewItems: { key: ViewMode; label: string; icon?: Parameters<typeof Icon>[0]['name'] }[] = [
     { key: 'all', label: t('sessions.all'), icon: 'folder' },
-    { key: 'cockpit', label: t('sessions.groupChat'), icon: 'users' },
+    { key: 'cockpit', label: t('sessions.groupChat') },
     { key: 'claude-code', label: 'Claude' },
     { key: 'codex', label: 'Codex' },
   ]
@@ -327,7 +328,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
     const activeAgents = [...new Set(activeRuns.map((r) => r.agent))]
     const runningLabel =
       activeAgents.length === 1
-        ? `${activeAgents[0] === 'claude' ? 'Claude' : activeAgents[0] === 'codex' ? 'Codex' : activeAgents[0]} 回答中`
+        ? `${labelForAgent(activeAgents[0])} 回答中`
         : `${activeAgents.length} 个 agent 回答中`
     return (
       <div
@@ -481,9 +482,11 @@ export function SessionList({ style }: { style?: CSSProperties }) {
             key={item.key}
             className={`project-view-item ${viewMode === item.key ? 'active' : ''}`}
             onClick={() => setViewMode(item.key)}
+            title={item.label}
+            aria-label={item.label}
+            aria-pressed={viewMode === item.key}
           >
-            {item.icon ? <Icon name={item.icon} size={13} /> : <AgentIcon source={item.key} size={14} />}
-            <span>{item.label}</span>
+            {item.icon ? <Icon name={item.icon} size={18} /> : <AgentIcon source={item.key} size={22} />}
           </button>
         ))}
       </div>
@@ -525,7 +528,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
 
         {projects.length > 0 && (
           <div className="project-list-head project-group-mode-head">
-            <span className="project-list-head-main">
+            <span className="project-list-head-main project-group-mode-label">
               <span>{t('sessions.grouping')}</span>
             </span>
             <div className="project-group-mode-switch" role="group" aria-label={t('sessions.groupingLabel')}>

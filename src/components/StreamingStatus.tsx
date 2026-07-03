@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { AgentName, EventEnvelope } from '../lib/types'
+import { labelForAgent } from '../lib/agents'
 
 export interface ActiveStream {
   clientId: string
@@ -51,7 +52,7 @@ export function StreamingStatus({
         const act = latestActivityForTurn(events, s.turnId)
         const headline = act ? act.text : '正在连接 agent…'
         const icon = act?.icon ?? '⏳'
-        const agentLabel = s.agent === 'claude' ? 'Claude' : s.agent === 'codex' ? 'Codex' : s.agent
+        const agentLabel = labelForAgent(s.agent)
         const elapsed = Math.max(0, Math.floor((Date.now() - s.startedAt) / 1000))
         return (
           <div key={s.clientId} className="streaming-status" data-agent={s.agent}>

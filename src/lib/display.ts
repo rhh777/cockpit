@@ -92,5 +92,7 @@ export function displayTitle(raw: string, maxLen = 60, locale?: ResolvedLocale):
 export function agentAvatarClass(agent?: string): { cls: string; letter: string } {
   if (agent === 'claude') return { cls: 'claude', letter: 'C' }
   if (agent === 'codex') return { cls: 'codex', letter: 'X' }
+  if (agent === 'opencode') return { cls: 'opencode', letter: 'O' }
+  if (agent === 'cursor') return { cls: 'cursor', letter: 'Cu' }
   return { cls: 'claude', letter: 'A' }
 }

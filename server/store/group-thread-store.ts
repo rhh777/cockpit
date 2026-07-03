@@ -130,7 +130,9 @@ export const groupThreadStore = {
   async create(input: { title?: string; cwd?: string | null; agents?: AgentName[] } = {}) {
     const id = randomUUID()
     const now = new Date().toISOString()
-    const agents = input.agents?.length ? [...new Set(input.agents)] : (['claude', 'codex'] as AgentName[])
+    const agents = input.agents?.length
+      ? [...new Set(input.agents)]
+      : (['claude', 'codex', 'opencode', 'cursor'] as AgentName[])
     const state: GroupThreadState = {
       id,
       kind: 'group-chat',

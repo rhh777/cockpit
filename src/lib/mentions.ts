@@ -1,6 +1,6 @@
 import type { AgentName } from './types'
 
-const MENTION_RE = /@(claude|codex)\b/gi
+const MENTION_RE = /@(claude|codex|opencode|cursor)\b/gi
 
 function stripInlineCode(line: string): string {
   return line.replace(/`[^`]*`/g, ' ')

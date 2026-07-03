@@ -54,7 +54,7 @@ export function setThemePreference(theme: ThemePreference) {
 
 export function readDefaultAgent(): AgentName {
   const v = localStorage.getItem(STORAGE_KEYS.lastAgent)
-  return v === 'codex' ? 'codex' : 'claude'
+  return v === 'claude' || v === 'codex' || v === 'opencode' || v === 'cursor' ? v : 'claude'
 }
 
 export function setDefaultAgent(agent: AgentName) {

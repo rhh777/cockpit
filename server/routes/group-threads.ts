@@ -64,7 +64,11 @@ function wrap(ev: NormalizedEvent, turnId: string, runId?: string): EventEnvelop
 }
 
 function agentName(agent: AgentName | undefined): string {
-  return agent === 'codex' ? 'Codex' : agent === 'claude' ? 'Claude' : String(agent)
+  if (agent === 'claude') return 'Claude'
+  if (agent === 'codex') return 'Codex'
+  if (agent === 'opencode') return 'OpenCode'
+  if (agent === 'cursor') return 'Cursor'
+  return String(agent)
 }
 
 

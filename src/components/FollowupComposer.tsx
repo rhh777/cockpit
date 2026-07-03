@@ -8,13 +8,9 @@ import {
   setDefaultAgent,
 } from '../lib/preferences'
 import { parseMentions } from '../lib/mentions'
+import { AGENT_OPTIONS, labelForAgent } from '../lib/agents'
 
 export type SendMode = 'followup' | 'native'
-
-const AGENTS: { value: AgentName; label: string }[] = [
-  { value: 'claude', label: 'Claude' },
-  { value: 'codex', label: 'Codex' },
-]
 
 function mentionDraft(text: string, caret: number): { start: number; query: string } | null {
   const before = text.slice(0, caret)
@@ -84,6 +80,44 @@ const CLI_GROUPS: Record<AgentName, CliGroup[]> = {
       ],
     },
   ],
+  opencode: [
+    {
+      key: 'model',
+      label: '模型',
+      flag: '--model',
+      options: [
+        { value: '', label: 'Default', hint: 'OpenCode 默认' },
+        { value: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet' },
+        { value: 'openai/gpt-5.5', label: 'GPT-5.5' },
+        { value: 'qwen/qwen3-coder-plus', label: 'Qwen Coder' },
+      ],
+    },
+    {
+      key: 'effort',
+      label: '变体',
+      flag: '--variant',
+      options: [
+        { value: '', label: 'Default', hint: 'OpenCode 默认' },
+        { value: 'low', label: '低' },
+        { value: 'medium', label: '中' },
+        { value: 'high', label: '高' },
+        { value: 'max', label: '极致' },
+      ],
+    },
+  ],
+  cursor: [
+    {
+      key: 'model',
+      label: '模型',
+      flag: '--model',
+      options: [
+        { value: '', label: 'Default', hint: 'Cursor 默认' },
+        { value: 'auto', label: 'Auto' },
+        { value: 'gpt-5.5', label: 'GPT-5.5' },
+        { value: 'claude-sonnet-4-6', label: 'Claude Sonnet' },
+      ],
+    },
+  ],
 }
 
 const REVIEW_TEMPLATE =
@@ -125,6 +159,8 @@ export function FollowupComposer({
   const [cliByAgent, setCliByAgent] = useState<Record<AgentName, CliSelection>>({
     claude: {},
     codex: {},
+    opencode: {},
+    cursor: {},
   })
   const [modelMenuOpen, setModelMenuOpen] = useState<AgentName | null>(null)
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false)
@@ -168,7 +204,7 @@ export function FollowupComposer({
   const usingMentions = !usingNative && mentions.length > 0
   const mentionOptions = useMemo(() => {
     if (!mentionMenu) return []
-    return AGENTS.filter((a) => a.value.toLowerCase().startsWith(mentionMenu.query))
+    return AGENT_OPTIONS.filter((a) => a.value.toLowerCase().startsWith(mentionMenu.query))
   }, [mentionMenu])
 
   useEffect(() => {
@@ -187,7 +223,7 @@ export function FollowupComposer({
   }
 
   const pickReviewTemplate = () => {
-    const reviewAgent = sessionAgent === 'claude' ? 'codex' : 'claude'
+    const reviewAgent = sessionAgent === 'codex' ? 'claude' : 'codex'
     setMode('followup')
     setAgent(reviewAgent)
     setModelMenuOpen(null)
@@ -336,26 +372,26 @@ export function FollowupComposer({
   const groups = CLI_GROUPS[agent]
   // 按钮 label:把每个 group 的当前选项串成 "GPT-5.5 · 中";全 Default 时显示 "Default"。
   const triggerLabel = (targetAgent: AgentName) => {
-    const parts = CLI_GROUPS[targetAgent].map((g) => {
-      const v = cliByAgent[targetAgent][g.key] ?? ''
+    const parts = (CLI_GROUPS[targetAgent] ?? []).map((g) => {
+      const v = cliByAgent[targetAgent]?.[g.key] ?? ''
       return g.options.find((o) => o.value === v)?.label ?? 'Default'
     })
     return parts.every((p) => p === 'Default') ? 'Default' : parts.join(' · ')
   }
 
   const renderModelPicker = (targetAgent: AgentName, withAgent = false) => {
-    const targetGroups = CLI_GROUPS[targetAgent]
-    const targetSel = cliByAgent[targetAgent]
+    const targetGroups = CLI_GROUPS[targetAgent] ?? []
+    const targetSel = cliByAgent[targetAgent] ?? {}
     return (
       <div className={`model-picker ${withAgent ? 'group-model-picker' : ''}`}>
         <button
           className="model-picker-btn"
           onClick={() => setModelMenuOpen((v) => (v === targetAgent ? null : targetAgent))}
-          title={`${targetAgent === 'claude' ? 'Claude' : 'Codex'} CLI 参数`}
+          title={`${labelForAgent(targetAgent)} CLI 参数`}
         >
           <Icon name="settings" size={12} />
           {withAgent && <AgentIcon agent={targetAgent} size={16} />}
-          {withAgent && <span className="model-picker-agent">{targetAgent === 'claude' ? 'Claude' : 'Codex'}</span>}
+          {withAgent && <span className="model-picker-agent">{labelForAgent(targetAgent)}</span>}
           <span>{triggerLabel(targetAgent)}</span>
           <span className="model-picker-caret">▾</span>
         </button>
@@ -387,15 +423,15 @@ export function FollowupComposer({
     )
   }
 
-  const agentLabel = sessionAgent === 'codex' ? 'Codex' : 'Claude'
+  const agentLabel = labelForAgent(sessionAgent)
 
   const sendTitle = usingNative
     ? `通过本机 ${agentLabel} CLI 续写原生 session`
     : groupMode && targets.length === 0
-    ? '只记录到群聊;输入行首 @claude 或 @codex 可唤醒成员'
+    ? '只记录到群聊;输入 @ 可选择成员回答'
     : usingMentions
-    ? `并行发送给 ${targets.join('、')}`
-    : `通过本机 ${agent} CLI 运行,只读权限`
+    ? `并行发送给 ${targets.map(labelForAgent).join('、')}`
+    : `通过本机 ${labelForAgent(agent)} CLI 运行,只读权限`
 
   return (
     <div className="composer">
@@ -436,7 +472,7 @@ export function FollowupComposer({
 
           {groupMode ? (
             <div className="group-model-settings" ref={modelMenuRef}>
-              {AGENTS.map((a) => (
+              {AGENT_OPTIONS.map((a) => (
                 <div key={a.value}>{renderModelPicker(a.value, true)}</div>
               ))}
             </div>
@@ -454,7 +490,7 @@ export function FollowupComposer({
             </div>
           ) : (
             <div className="segmented-control">
-              {AGENTS.map((a) => (
+              {AGENT_OPTIONS.map((a) => (
                 <button
                   key={a.value}
                   className={`segmented-item ${agent === a.value ? 'active' : ''} agent-${a.value}`}
@@ -502,7 +538,7 @@ export function FollowupComposer({
               ? '群聊消息;输入 @ 可选择成员回答…'
               : usingNative
               ? `回到原 ${agentLabel} 会话继续发送…`
-              : '继续追问,或 @claude / @codex 同时让多个 agent 回答…'
+              : '继续追问,或输入 @ 选择多个 agent 同时回答…'
           }
           value={text}
           onChange={(e) => {

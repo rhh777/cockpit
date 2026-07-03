@@ -266,7 +266,7 @@ export interface SettingsDiagnostics {
     codexSessions: string
     codexIndex: string
   }
-  agents: { name: 'claude' | 'codex'; available: boolean; error?: string }[]
+  agents: { name: string; available: boolean; error?: string }[]
 }
 
 export function fetchSettingsDiagnostics(): Promise<SettingsDiagnostics> {

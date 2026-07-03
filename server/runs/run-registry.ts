@@ -164,7 +164,11 @@ function sessionAgentOf(source: string): 'claude' | 'codex' | null {
 }
 
 function agentName(agent: AgentName | undefined): string {
-  return agent === 'codex' ? 'Codex' : agent === 'claude' ? 'Claude' : String(agent)
+  if (agent === 'claude') return 'Claude'
+  if (agent === 'codex') return 'Codex'
+  if (agent === 'opencode') return 'OpenCode'
+  if (agent === 'cursor') return 'Cursor'
+  return String(agent)
 }
 
 function renderAttachmentLines(attachments?: ChatAttachment[]): string[] {
