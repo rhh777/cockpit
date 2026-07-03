@@ -48,7 +48,7 @@ interface GroupTurnMeta {
 群聊事件复用 `EventEnvelope` / `NormalizedEvent`:
 
 - 用户消息:`origin='cockpit'`, `source='cockpit'`, `event.type='user_text'`
-- agent 回复:`event.type='assistant_text'`, `event.agent='claude' | 'codex'`
+- agent 回复:`event.type='assistant_text'`, `event.agent` 为被唤醒的 `AgentName`
 - 工具事件:`tool_use` / `tool_result`,通过 `runId` 归属到具体 agent
 - 轮次事件:`meta key='turn_start'` / `meta key='turn_status'`
 
@@ -72,8 +72,8 @@ interface GroupTurnMeta {
 ### 多 agent 并行
 
 ```
-@claude @codex 分别 review
-  -> parseMentions = ['claude', 'codex']
+@claude @codex @opencode @cursor 分别 review
+  -> parseMentions = ['claude', 'codex', 'opencode', 'cursor']
   -> append user_text
   -> 记录 baseEventSeq
   -> 为每个 agent 创建 run
@@ -143,7 +143,7 @@ interface GroupTurnMeta {
 
 规则保守:
 
-- 只识别消息开头或独立一行的 `@claude` / `@codex`。
+- 识别独立 `@claude` / `@codex` / `@opencode` / `@cursor`。
 - 忽略 code block、inline code、blockquote。
 - 解析结果去重,并与 thread 成员取交集。
 - 无有效目标时按静默消息处理。
@@ -185,7 +185,7 @@ type GroupSseMessage =
 ## 边界
 
 - 群聊默认只读。
-- 不把群聊同步进 `~/.claude/projects/` 或 `~/.codex/sessions/`。
+- 不把群聊同步进 `~/.claude/projects/`、`~/.codex/sessions/` 或其他 agent 原生历史。
 - 不复用用户日常原生 session 作为群聊成员记忆。
 - 不支持多轮群聊并发写同一 thread。
 - 不支持多 agent 同时写文件。

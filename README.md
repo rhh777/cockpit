@@ -31,6 +31,7 @@ See `docs/01-architecture.md §十四` for the detailed capability map.
 - `docs/05-group-chat-design.md` — group chat mode, @mention dispatch, shared summaries
 - `docs/06-background-runs-design.md` — background run design, not implemented yet
 - `docs/07-native-continuation-and-handoff.md` — native continuation, deep links, and handoff bundles
+- `docs/08-agent-adapters-design.md` — CLI agent adapter design, including OpenCode and Cursor
 
 ## Quick Start
 

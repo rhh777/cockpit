@@ -29,6 +29,7 @@ Follow-up agent 默认只读。「回到原会话」模式只通过官方 CLI �
 - `docs/05-group-chat-design.md` — 群聊模式(@mention 并行调度、shared summary)
 - `docs/06-background-runs-design.md` — 后台运行设计(未实现)
 - `docs/07-native-continuation-and-handoff.md` — 原生会话延续、deep link 与 handoff bundle
+- `docs/08-agent-adapters-design.md` — CLI agent adapter 设计(OpenCode / Cursor 等)
 
 ## 快速开始
 
