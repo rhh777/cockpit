@@ -670,18 +670,20 @@ class RunRegistry {
         permissions: input.permissions,
         model: input.model,
         effort: input.effort,
-        requestApproval: input.targetAgent === 'codex' || input.targetAgent === 'claude'
-          ? (operation, reason) =>
-              this.requestApproval(handle, {
-                operation,
-                reason,
-                source: input.source,
-                sessionId: input.sessionId,
-                agent: input.targetAgent,
-                persist: (env) => threadStore.appendEvent(input.source, input.sessionId, env),
-                stream: (env) => handle.write({ kind: 'event', envelope: env }),
-              })
-          : undefined,
+        requestApproval:
+          (input.targetAgent === 'codex' || input.targetAgent === 'claude') &&
+          input.permissions.mode !== 'full-access'
+            ? (operation, reason) =>
+                this.requestApproval(handle, {
+                  operation,
+                  reason,
+                  source: input.source,
+                  sessionId: input.sessionId,
+                  agent: input.targetAgent,
+                  persist: (env) => threadStore.appendEvent(input.source, input.sessionId, env),
+                  stream: (env) => handle.write({ kind: 'event', envelope: env }),
+                })
+            : undefined,
         signal: handle.controller.signal,
       })) {
         let ev = raw
@@ -740,18 +742,20 @@ class RunRegistry {
         permissions: input.permissions,
         model: input.cliByAgent?.[agentNameForRun]?.model,
         effort: input.cliByAgent?.[agentNameForRun]?.effort,
-        requestApproval: agentNameForRun === 'codex' || agentNameForRun === 'claude'
-          ? (operation, reason) =>
-              this.requestApproval(handle, {
-                operation,
-                reason,
-                source: 'cockpit',
-                groupThreadId: input.id,
-                agent: agentNameForRun,
-                persist: (env) => groupThreadStore.appendEvent(input.id, env),
-                stream: (env) => handle.write({ kind: 'event', groupTurnId: turnId, runId, agent: agentNameForRun, envelope: env }),
-              })
-          : undefined,
+        requestApproval:
+          (agentNameForRun === 'codex' || agentNameForRun === 'claude') &&
+          input.permissions.mode !== 'full-access'
+            ? (operation, reason) =>
+                this.requestApproval(handle, {
+                  operation,
+                  reason,
+                  source: 'cockpit',
+                  groupThreadId: input.id,
+                  agent: agentNameForRun,
+                  persist: (env) => groupThreadStore.appendEvent(input.id, env),
+                  stream: (env) => handle.write({ kind: 'event', groupTurnId: turnId, runId, agent: agentNameForRun, envelope: env }),
+                })
+            : undefined,
         signal: handle.controller.signal,
       })) {
         let ev = raw

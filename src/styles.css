@@ -2319,52 +2319,111 @@ body.resizing * {
   gap: 8px;
 }
 .approval-card {
-  padding: 10px 12px;
-  border: 0.5px solid color-mix(in srgb, var(--color-followup) 30%, var(--color-border));
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--color-followup) 8%, var(--color-background-primary));
+  --approval-accent: var(--color-followup);
+  position: relative;
+  padding: 12px 14px 12px 18px;
+  border: 0.5px solid color-mix(in srgb, var(--approval-accent) 22%, var(--color-border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--approval-accent) 5%, var(--color-background-primary));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "head    actions"
+    "target  actions"
+    "reason  reason";
+  align-items: center;
+  gap: 6px 12px;
+}
+.approval-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--approval-accent);
+}
+.approval-tone-write { --approval-accent: #d97706; }
+.approval-tone-shell { --approval-accent: #7c3aed; }
+.approval-tone-network { --approval-accent: #0ea5e9; }
+.approval-tone-read { --approval-accent: var(--color-followup); }
+
+.approval-head {
+  grid-area: head;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.approval-copy {
+  gap: 8px;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
 }
-.approval-copy strong {
-  color: var(--color-text-primary);
-  font-size: var(--compact-font-size);
+.approval-agent {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--approval-accent) 16%, transparent);
+  color: var(--approval-accent);
 }
-.approval-copy span,
-.approval-copy small {
-  color: var(--color-text-secondary);
+.approval-verb {
   font-size: var(--small-font-size);
+  color: var(--color-text-secondary);
+}
+.approval-target {
+  grid-area: target;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--small-font-size);
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-background-primary) 65%, transparent);
+  border: 0.5px solid color-mix(in srgb, var(--color-border), transparent 30%);
+  border-radius: 6px;
+  padding: 4px 8px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  min-width: 0;
+  max-height: 6em;
+  overflow-y: auto;
+}
+.approval-reason {
+  grid-area: reason;
+  font-size: var(--small-font-size);
+  color: var(--color-text-secondary);
   overflow-wrap: anywhere;
 }
 .approval-actions {
+  grid-area: actions;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  flex-shrink: 0;
+  align-self: start;
 }
 .approval-actions button {
-  height: 28px;
-  padding: 0 10px;
+  height: 30px;
+  padding: 0 12px;
   border: 0.5px solid color-mix(in srgb, var(--color-border), transparent 8%);
-  border-radius: 7px;
+  border-radius: 8px;
   background: var(--color-background-primary);
   color: var(--color-text-primary);
   cursor: pointer;
   font-size: var(--small-font-size);
-  font-weight: 700;
+  font-weight: 600;
+  transition: transform 0.05s ease;
+}
+.approval-actions button:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 5%, var(--color-background-primary));
+}
+.approval-actions button:active {
+  transform: translateY(1px);
 }
 .approval-actions button.primary {
-  border-color: color-mix(in srgb, var(--color-followup) 30%, transparent);
-  background: var(--color-followup);
-  color: white;
+  border-color: transparent;
+  background: var(--approval-accent);
+  color: #fff;
+}
+.approval-actions button.primary:hover {
+  background: color-mix(in srgb, var(--approval-accent) 88%, #000);
 }
 .attachment-action-btn,
 .advanced-action-btn {

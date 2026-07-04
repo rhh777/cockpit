@@ -59,12 +59,19 @@ function isServerRunClientId(clientId: string): boolean {
   return clientId.startsWith('run_') || clientId.startsWith('native_run_')
 }
 
-function approvalLabel(approval: ApprovalRequest): string {
+function approvalIntent(approval: ApprovalRequest): {
+  verb: string
+  target: string
+  tone: 'write' | 'shell' | 'network' | 'read'
+} {
   const op = approval.operation
-  if (op.kind === 'file_write') return `允许 ${approval.agent} 写入 ${op.path}`
-  if (op.kind === 'shell') return `允许 ${approval.agent} 执行 ${op.command}`
-  if (op.kind === 'network') return `允许 ${approval.agent} 访问 ${op.url ?? op.host ?? '网络'}`
-  return `允许 ${approval.agent} 读取 ${op.path}`
+  if (op.kind === 'file_write') {
+    const action = op.action === 'delete' ? '删除' : op.action === 'create' ? '创建' : '写入'
+    return { verb: action, target: op.path, tone: 'write' }
+  }
+  if (op.kind === 'shell') return { verb: '执行', target: op.command, tone: 'shell' }
+  if (op.kind === 'network') return { verb: '访问', target: op.url ?? op.host ?? '网络', tone: 'network' }
+  return { verb: '读取', target: op.path, tone: 'read' }
 }
 
 export function SessionDetail() {
@@ -816,19 +823,23 @@ export function SessionDetail() {
           )}
           {pendingApprovals.length > 0 && (
             <div className="approval-stack conversation-banner">
-              {pendingApprovals.map((approval) => (
-                <div key={approval.approvalId} className="approval-card">
-                  <div className="approval-copy">
-                    <strong>请求批准</strong>
-                    <span>{approvalLabel(approval)}</span>
-                    {approval.reason && <small>{approval.reason}</small>}
+              {pendingApprovals.map((approval) => {
+                const { verb, target, tone } = approvalIntent(approval)
+                return (
+                  <div key={approval.approvalId} className={`approval-card approval-tone-${tone}`}>
+                    <div className="approval-head">
+                      <span className="approval-agent">{approval.agent}</span>
+                      <span className="approval-verb">请求{verb}</span>
+                    </div>
+                    <code className="approval-target">{target}</code>
+                    {approval.reason && <div className="approval-reason">{approval.reason}</div>}
+                    <div className="approval-actions">
+                      <button onClick={() => decideApproval(approval.approvalId, 'reject')}>拒绝</button>
+                      <button className="primary" onClick={() => decideApproval(approval.approvalId, 'approve')}>允许</button>
+                    </div>
                   </div>
-                  <div className="approval-actions">
-                    <button onClick={() => decideApproval(approval.approvalId, 'reject')}>拒绝</button>
-                    <button className="primary" onClick={() => decideApproval(approval.approvalId, 'approve')}>允许</button>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
           {sendError && <div className="banner warn conversation-banner">发送失败:{sendError}</div>}

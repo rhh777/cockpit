@@ -18,6 +18,10 @@ const META_NOISE_KEYS = new Set([
   // attachment 是 Claude 注入给模型的上下文增量(mcp_instructions_delta、todo_reminder 等),
   // EventItem 也会返回 null,但若让它进入 rows 会在两次 tool_use 中间插入隐形槽位,把 trace 群组打断。
   'attachment',
+  // 审批的挂起/解决态由顶部 approval banner 单独渲染;落盘 meta 只用于审计,不占 timeline 槽位。
+  'approval_required',
+  'approval_resolved',
+  'run_permissions',
 ])
 
 export function isNoiseEvent(env: EventEnvelope): boolean {
