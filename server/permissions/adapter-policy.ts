@@ -14,15 +14,21 @@ export function codexGlobalArgsForPermissions(permissions?: RunPermissions): str
 
 export function claudePermissionArgs(permissions?: RunPermissions, useTools = true): string[] {
   if (!useTools) {
-    return ['--permission-mode', 'default', '--disallowedTools', 'Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write', 'WebFetch', 'WebSearch']
+    return [
+      '--permission-mode',
+      'default',
+      '--disallowedTools',
+      'Bash,Edit,Write,MultiEdit,WebFetch,WebSearch',
+    ]
   }
   if (permissions?.mode === 'full-access') {
-    return ['--permission-mode', 'bypassPermissions', '--dangerously-skip-permissions', '--tools', 'default']
+    return ['--permission-mode', 'bypassPermissions']
   }
   if (permissions?.mode === 'auto-safe') {
-    return ['--permission-mode', 'auto', '--tools', 'default']
+    // acceptEdits: 文件编辑自动通过,shell / MCP 等仍会走 prompt。
+    return ['--permission-mode', 'acceptEdits']
   }
-  return ['--permission-mode', 'default', '--allowedTools', 'Read', 'Grep', 'Glob']
+  return ['--permission-mode', 'default', '--allowedTools', 'Read,Grep,Glob']
 }
 
 export function cursorPermissionArgs(permissions?: RunPermissions): string[] {

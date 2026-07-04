@@ -482,6 +482,16 @@ class RunRegistry {
 
     const server = new CodexAppServer()
     await server.spawn()
+    // native-continuation 目前不接审批 UI:遇到 server-initiated request(审批弹窗等)
+    // 直接以 -32601 回错误,避免 app-server 阻塞等待。
+    server.onServerRequest = (r) => {
+      server.respond(r.id, {
+        error: {
+          code: -32601,
+          message: `Native continuation does not support server request: ${r.method}`,
+        },
+      })
+    }
     const loopP = server.readLoop().catch(() => {})
 
     // initialize
@@ -605,13 +615,18 @@ class RunRegistry {
     handle.write({ kind: 'approval_required', approval })
 
     const status = await new Promise<'approved' | 'rejected'>((resolve) => {
+      const signal = handle.controller.signal
       const onAbort = () => {
         this.approvalWaiters.delete(approval.approvalId)
         void approvalStore.expire(approval.approvalId)
         resolve('rejected')
       }
-      this.approvalWaiters.set(approval.approvalId, resolve)
-      handle.controller.signal.addEventListener('abort', onAbort, { once: true })
+      const wrappedResolve = (value: 'approved' | 'rejected') => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      }
+      this.approvalWaiters.set(approval.approvalId, wrappedResolve)
+      signal.addEventListener('abort', onAbort, { once: true })
     })
 
     const resolved = input.source === 'cockpit' || input.groupThreadId

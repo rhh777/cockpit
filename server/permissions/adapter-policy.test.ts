@@ -32,22 +32,21 @@ test('Claude permissions map to official permission modes', () => {
     '--permission-mode',
     'default',
     '--allowedTools',
-    'Read',
-    'Grep',
-    'Glob',
+    'Read,Grep,Glob',
   ])
   assert.deepEqual(claudePermissionArgs(permissionsForMode('auto-safe'), true), [
     '--permission-mode',
-    'auto',
-    '--tools',
-    'default',
+    'acceptEdits',
   ])
   assert.deepEqual(claudePermissionArgs(permissionsForMode('full-access'), true), [
     '--permission-mode',
     'bypassPermissions',
-    '--dangerously-skip-permissions',
-    '--tools',
+  ])
+  assert.deepEqual(claudePermissionArgs(permissionsForMode('ask'), false), [
+    '--permission-mode',
     'default',
+    '--disallowedTools',
+    'Bash,Edit,Write,MultiEdit,WebFetch,WebSearch',
   ])
 })
 

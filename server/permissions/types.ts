@@ -52,7 +52,7 @@ export function permissionsForMode(mode: ApprovalMode): RunPermissions {
       mode,
       allowNetwork: true,
       allowWorkspaceWrite: true,
-      allowOutsideWorkspaceWrite: false,
+      allowOutsideWorkspaceWrite: true,
       allowShell: true,
     }
   }
@@ -62,7 +62,7 @@ export function permissionsForMode(mode: ApprovalMode): RunPermissions {
       allowNetwork: true,
       allowWorkspaceWrite: true,
       allowOutsideWorkspaceWrite: false,
-      allowShell: true,
+      allowShell: false,
     }
   }
   return { ...DEFAULT_RUN_PERMISSIONS }
