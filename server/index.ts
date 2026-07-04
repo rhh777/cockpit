@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { handleApprovalsRoute } from './routes/approvals'
 import { handleAttachmentsRoute } from './routes/attachments'
 import { handleNativeRoute } from './routes/native'
 import { handleGitRoute } from './routes/git'
@@ -27,6 +28,7 @@ export function cockpitApi() {
 
     try {
       if (await handleAttachmentsRoute(req, res, url)) return
+      if (await handleApprovalsRoute(req, res, url)) return
       if (await handleNativeDialogRoute(req, res, url)) return
       if (await handleGitRoute(req, res, url)) return
       if (await handleRunsRoute(req, res, url)) return

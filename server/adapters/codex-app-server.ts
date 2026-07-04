@@ -13,6 +13,7 @@ import readline from 'node:readline'
 import { randomUUID } from 'node:crypto'
 import type { Readable, Writable } from 'node:stream'
 import type { NormalizedEvent } from '../loaders/types'
+import type { Operation } from '../permissions/types'
 import { resolveCodexCommand } from './codex-command'
 
 interface JsonRpcRequest {
@@ -38,6 +39,16 @@ export type AppServerEvent =
   | { kind: 'normalized'; event: NormalizedEvent }
   | { kind: 'turn_completed' }
   | { kind: 'turn_failed'; message: string }
+
+export type CodexApprovalResponse =
+  | { result: unknown }
+  | { error: { code: number; message: string; data?: unknown } }
+
+export interface CodexApprovalMapping {
+  operation: Operation
+  reason?: string
+  responseFor(status: 'approved' | 'rejected'): CodexApprovalResponse
+}
 
 type Pending = {
   resolve: (v: unknown) => void
@@ -129,6 +140,21 @@ export class CodexAppServer {
     })
   }
 
+  notify(method: string, params?: unknown): void {
+    if (!this.child || this.stopped) return
+    const notification = params === undefined ? { jsonrpc: '2.0', method } : { jsonrpc: '2.0', method, params }
+    this.child.stdin.write(JSON.stringify(notification) + '\n')
+  }
+
+  respond(id: number | string, response: CodexApprovalResponse): void {
+    if (!this.child || this.stopped) return
+    const msg =
+      'error' in response
+        ? { jsonrpc: '2.0', id, error: response.error }
+        : { jsonrpc: '2.0', id, result: response.result }
+    this.child.stdin.write(JSON.stringify(msg) + '\n')
+  }
+
   kill(): void {
     if (this.stopped) return
     this.stopped = true
@@ -141,6 +167,127 @@ export class CodexAppServer {
 
   get childProcess() {
     return this.child
+  }
+}
+
+function maybeString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+function firstObjectValue(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  return Object.values(value as Record<string, unknown>).find(
+    (v): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v),
+  )
+}
+
+function summarizeFileChange(change: Record<string, unknown> | undefined): 'create' | 'edit' | 'delete' {
+  if (change?.type === 'add') return 'create'
+  if (change?.type === 'delete') return 'delete'
+  return 'edit'
+}
+
+export function mapCodexApprovalRequest(method: string, params: any): CodexApprovalMapping | null {
+  switch (method) {
+    case 'item/commandExecution/requestApproval': {
+      const command = maybeString(params?.command) ?? '(unknown command)'
+      return {
+        operation: { kind: 'shell', command, cwd: maybeString(params?.cwd) ?? null },
+        reason: maybeString(params?.reason),
+        responseFor(status) {
+          return { result: { decision: status === 'approved' ? 'accept' : 'decline' } }
+        },
+      }
+    }
+    case 'item/fileChange/requestApproval': {
+      const root = maybeString(params?.grantRoot)
+      const itemId = maybeString(params?.itemId)
+      return {
+        operation: {
+          kind: 'file_write',
+          path: root ?? (itemId ? `Codex file change ${itemId}` : '(pending file change)'),
+          action: 'edit',
+        },
+        reason: maybeString(params?.reason),
+        responseFor(status) {
+          return { result: { decision: status === 'approved' ? 'accept' : 'decline' } }
+        },
+      }
+    }
+    case 'item/permissions/requestApproval': {
+      return {
+        operation: {
+          kind: 'file_write',
+          path: maybeString(params?.cwd) ?? '(permission profile)',
+          action: 'edit',
+        },
+        reason: maybeString(params?.reason) ?? 'Codex requests additional permissions for this turn.',
+        responseFor(status) {
+          if (status === 'approved') {
+            return { result: { permissions: params?.permissions ?? {}, scope: 'turn', reviewCommands: true } }
+          }
+          return { result: { permissions: {}, scope: 'turn', reviewCommands: true } }
+        },
+      }
+    }
+    case 'execCommandApproval': {
+      const command = Array.isArray(params?.command)
+        ? params.command.map((p: unknown) => String(p)).join(' ')
+        : maybeString(params?.command) ?? '(unknown command)'
+      return {
+        operation: { kind: 'shell', command, cwd: maybeString(params?.cwd) ?? null },
+        reason: maybeString(params?.reason),
+        responseFor(status) {
+          return { result: { decision: status === 'approved' ? 'approved' : 'denied' } }
+        },
+      }
+    }
+    case 'applyPatchApproval': {
+      const fileChanges = params?.fileChanges
+      const path = Object.keys(fileChanges ?? {})[0] ?? maybeString(params?.grantRoot) ?? '(patch)'
+      const change = firstObjectValue(fileChanges)
+      return {
+        operation: { kind: 'file_write', path, action: summarizeFileChange(change) },
+        reason: maybeString(params?.reason),
+        responseFor(status) {
+          return { result: { decision: status === 'approved' ? 'approved' : 'denied' } }
+        },
+      }
+    }
+    default:
+      return null
+  }
+}
+
+export function codexThreadSettings(input: {
+  mode?: 'ask' | 'auto-safe' | 'full-access'
+  cwd?: string | null
+  model?: string
+  effort?: string
+  writableRoots?: string[]
+}) {
+  const mode = input.mode ?? 'ask'
+  const approvalPolicy = mode === 'full-access' ? 'never' : 'on-request'
+  const approvalsReviewer = mode === 'auto-safe' ? 'auto_review' : 'user'
+  const sandboxPolicy =
+    mode === 'full-access'
+      ? { type: 'dangerFullAccess' }
+      : mode === 'auto-safe'
+        ? {
+            type: 'workspaceWrite',
+            writableRoots: input.writableRoots ?? [],
+            networkAccess: true,
+            excludeTmpdirEnvVar: false,
+            excludeSlashTmp: false,
+          }
+        : { type: 'readOnly', networkAccess: false }
+  return {
+    ...(input.cwd ? { cwd: input.cwd } : {}),
+    approvalPolicy,
+    approvalsReviewer,
+    sandboxPolicy,
+    ...(input.model ? { model: input.model } : {}),
+    ...(input.effort ? { effort: input.effort } : {}),
   }
 }
 
@@ -161,7 +308,13 @@ export function translateNotification(method: string, params: any, threadId: str
       if (!item) return events
       // 文本类
       if (item.type === 'agentMessage') {
-        events.push({ type: 'assistant_text', text: String(item.text ?? ''), ts, agent: 'codex' })
+        events.push({
+          type: 'assistant_text',
+          text: String(item.text ?? ''),
+          ts,
+          agent: 'codex',
+          streamId: String(item.id ?? `${threadId ?? params?.threadId ?? 'codex'}:agent`),
+        })
         return events
       }
       if (item.type === 'reasoning') {
@@ -179,7 +332,14 @@ export function translateNotification(method: string, params: any, threadId: str
     case 'item/agentMessage/delta': {
       const text = String(params?.delta ?? '')
       if (!text) return events
-      events.push({ type: 'assistant_text', text, ts, agent: 'codex', delta: true })
+      events.push({
+        type: 'assistant_text',
+        text,
+        ts,
+        agent: 'codex',
+        streamId: String(params?.itemId ?? params?.messageId ?? params?.id ?? `${threadId ?? params?.threadId ?? 'codex'}:agent`),
+        delta: true,
+      })
       return events
     }
     case 'turn/completed': {

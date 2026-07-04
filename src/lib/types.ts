@@ -11,3 +11,11 @@ export type {
   SessionSummary,
   Source,
 } from '../../server/loaders/types'
+
+export type {
+  ApprovalMode,
+  ApprovalRequest,
+  ApprovalStatus,
+  Operation,
+  RunPermissions,
+} from '../../server/permissions/types'

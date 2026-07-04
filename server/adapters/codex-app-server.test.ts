@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { translateNotification } from './codex-app-server'
+import { codexThreadSettings, mapCodexApprovalRequest, translateNotification } from './codex-app-server'
 
 test('translateNotification: item/completed agentMessage -> assistant_text', () => {
   const events = translateNotification(
@@ -13,6 +13,7 @@ test('translateNotification: item/completed agentMessage -> assistant_text', () 
   if (events[0].type === 'assistant_text') {
     assert.equal(events[0].text, 'hello')
     assert.equal(events[0].agent, 'codex')
+    assert.equal(events[0].streamId, 'a1')
   }
 })
 
@@ -27,6 +28,7 @@ test('translateNotification: item/agentMessage/delta -> assistant_text delta', (
   if (events[0].type === 'assistant_text') {
     assert.equal(events[0].delta, true)
     assert.equal(events[0].text, 'chunk')
+    assert.equal(events[0].streamId, 'i')
   }
 })
 
@@ -84,4 +86,40 @@ test('translateNotification: turn/completed with tokenUsage -> usage', () => {
 
 test('translateNotification: unknown method -> []', () => {
   assert.deepEqual(translateNotification('some/random', {}, 't'), [])
+})
+
+test('mapCodexApprovalRequest: modern command approval', () => {
+  const mapping = mapCodexApprovalRequest('item/commandExecution/requestApproval', {
+    command: 'npm test',
+    cwd: '/tmp/project',
+    reason: 'Run tests',
+  })
+  assert.ok(mapping)
+  assert.deepEqual(mapping.operation, { kind: 'shell', command: 'npm test', cwd: '/tmp/project' })
+  assert.equal(mapping.reason, 'Run tests')
+  assert.deepEqual(mapping.responseFor('approved'), { result: { decision: 'accept' } })
+  assert.deepEqual(mapping.responseFor('rejected'), { result: { decision: 'decline' } })
+})
+
+test('mapCodexApprovalRequest: legacy apply patch approval', () => {
+  const mapping = mapCodexApprovalRequest('applyPatchApproval', {
+    fileChanges: {
+      '/tmp/project/a.txt': { type: 'add', content: 'hello' },
+    },
+  })
+  assert.ok(mapping)
+  assert.deepEqual(mapping.operation, { kind: 'file_write', path: '/tmp/project/a.txt', action: 'create' })
+  assert.deepEqual(mapping.responseFor('approved'), { result: { decision: 'approved' } })
+  assert.deepEqual(mapping.responseFor('rejected'), { result: { decision: 'denied' } })
+})
+
+test('codexThreadSettings maps permission modes to app-server settings', () => {
+  assert.deepEqual(codexThreadSettings({ mode: 'ask', cwd: '/tmp/project' }), {
+    cwd: '/tmp/project',
+    approvalPolicy: 'on-request',
+    approvalsReviewer: 'user',
+    sandboxPolicy: { type: 'readOnly', networkAccess: false },
+  })
+  assert.equal(codexThreadSettings({ mode: 'auto-safe' }).approvalsReviewer, 'auto_review')
+  assert.deepEqual(codexThreadSettings({ mode: 'full-access' }).sandboxPolicy, { type: 'dangerFullAccess' })
 })

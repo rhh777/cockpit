@@ -1,4 +1,5 @@
 import type { AgentName, EventEnvelope, NormalizedEvent } from '../loaders/types'
+import type { Operation, RunPermissions } from '../permissions/types'
 
 // 新 agent 只能通过实现 ReviewAgent 扩展,不在 UI/server 硬编码二选一(不变量 9/10)。
 // 名字沿用 ReviewAgent(review 只是其中一个快捷场景)。
@@ -13,11 +14,17 @@ export interface AgentRunInput {
   cwd: string | null
   /** 默认只读;Phase 3 才放开写 */
   useTools: boolean
+  /** run 级权限档位。adapter 必须通过 Cockpit policy 使用副作用能力。 */
+  permissions?: RunPermissions
+  /** 用户已批准的额外可写目录,用于 Codex/Claude/Cursor 等 CLI 的 add-dir/workspace root 参数。 */
+  writableRoots?: string[]
   /** 可选模型覆盖。透传给 CLI 的 --model 参数(alias 或完整 ID)。空 = 用 CLI 默认。 */
   model?: string
   /** 推理强度:claude 走 `--effort <v>`,codex 走 `-c model_reasoning_effort="<v>"`。
    *  实测可用值:claude {low,medium,high,xhigh,max};codex {low,medium,high,xhigh}。 */
   effort?: string
+  /** Runtime 发起真实副作用操作时的审批回调。没有回调的 adapter 必须保持只读/安全模式。 */
+  requestApproval?: (operation: Operation, reason?: string) => Promise<'approved' | 'rejected'>
   signal: AbortSignal
 }
 

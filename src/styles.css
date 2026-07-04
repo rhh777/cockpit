@@ -2313,6 +2313,59 @@ body.resizing * {
   color: var(--color-cursor-fg);
   border-color: color-mix(in srgb, var(--color-cursor-fg) 28%, transparent);
 }
+.approval-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.approval-card {
+  padding: 10px 12px;
+  border: 0.5px solid color-mix(in srgb, var(--color-followup) 30%, var(--color-border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-followup) 8%, var(--color-background-primary));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.approval-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.approval-copy strong {
+  color: var(--color-text-primary);
+  font-size: var(--compact-font-size);
+}
+.approval-copy span,
+.approval-copy small {
+  color: var(--color-text-secondary);
+  font-size: var(--small-font-size);
+  overflow-wrap: anywhere;
+}
+.approval-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.approval-actions button {
+  height: 28px;
+  padding: 0 10px;
+  border: 0.5px solid color-mix(in srgb, var(--color-border), transparent 8%);
+  border-radius: 7px;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-size: var(--small-font-size);
+  font-weight: 700;
+}
+.approval-actions button.primary {
+  border-color: color-mix(in srgb, var(--color-followup) 30%, transparent);
+  background: var(--color-followup);
+  color: white;
+}
 .attachment-action-btn,
 .advanced-action-btn {
   width: 34px;
@@ -2327,9 +2380,101 @@ body.resizing * {
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
 }
 .attachment-menu-wrap,
-.advanced-menu-wrap {
+.advanced-menu-wrap,
+.permission-menu-wrap {
   position: relative;
   pointer-events: auto;
+}
+.permission-trigger {
+  max-width: 156px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: var(--compact-font-size);
+  font-weight: 650;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.permission-trigger > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.permission-trigger:hover,
+.permission-trigger[aria-expanded='true'] {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-text-secondary) 10%, transparent);
+}
+.permission-full-access {
+  color: color-mix(in srgb, var(--color-text-danger) 78%, var(--color-text-primary));
+}
+.permission-auto-safe {
+  color: color-mix(in srgb, var(--color-followup) 78%, var(--color-text-primary));
+}
+.permission-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  width: min(320px, calc(100vw - 32px));
+  padding: 8px;
+  border-radius: 14px;
+  border: 0.5px solid color-mix(in srgb, var(--color-border), transparent 8%);
+  background: color-mix(in srgb, var(--color-background-primary) 88%, transparent);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12), 0 1px 0 rgba(255, 255, 255, 0.35) inset;
+  backdrop-filter: blur(22px) saturate(1.5);
+  -webkit-backdrop-filter: blur(22px) saturate(1.5);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  z-index: 6;
+}
+.permission-menu-title {
+  padding: 4px 8px 6px;
+  color: var(--color-text-secondary);
+  font-size: var(--small-font-size);
+  font-weight: 700;
+}
+.permission-menu-item {
+  width: 100%;
+  min-height: 54px;
+  padding: 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--color-text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  text-align: left;
+}
+.permission-menu-item:hover,
+.permission-menu-item.active {
+  background: color-mix(in srgb, var(--color-text-primary) 7%, transparent);
+}
+.permission-menu-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.permission-menu-copy strong {
+  font-size: var(--compact-font-size);
+  line-height: 1.2;
+}
+.permission-menu-copy span {
+  color: var(--color-text-secondary);
+  font-size: var(--small-font-size);
+  line-height: 1.25;
 }
 .attachment-menu,
 .advanced-menu {

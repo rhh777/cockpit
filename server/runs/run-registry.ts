@@ -10,6 +10,8 @@ import type { RunRecord, RunStatus } from './run-store'
 import { runStore } from './run-store'
 import { nativeShadowStore } from './native-shadow-store'
 import { CodexAppServer, translateNotification } from '../adapters/codex-app-server'
+import { approvalStore } from '../approvals/approval-store'
+import type { ApprovalRequest, Operation, RunPermissions } from '../permissions/types'
 
 export type RunStreamMessage =
   | { kind: 'meta'; turnId: string; runId: string; native?: boolean }
@@ -17,6 +19,8 @@ export type RunStreamMessage =
   | { kind: 'done'; turnId: string; status: string }
   | { kind: 'aborted'; turnId: string; status: string; message?: string }
   | { kind: 'error'; turnId?: string; status?: string; message?: string }
+  | { kind: 'approval_required'; approval: ApprovalRequest }
+  | { kind: 'approval_resolved'; approvalId: string; status: 'approved' | 'rejected' }
   | {
       kind: 'meta'
       groupTurnId: string
@@ -41,6 +45,7 @@ interface FollowupStartInput {
   text: string
   targetAgent: AgentName
   useTools: boolean
+  permissions: RunPermissions
   parentTurnId?: string
   model?: string
   effort?: string
@@ -52,6 +57,7 @@ interface GroupTurnStartInput {
   text: string
   targetAgents: AgentName[]
   useTools: boolean
+  permissions: RunPermissions
   cliByAgent?: Partial<Record<AgentName, { model?: string; effort?: string }>>
   attachments?: ChatAttachment[]
 }
@@ -157,6 +163,22 @@ function wrapGroup(ev: NormalizedEvent, turnId: string, runId?: string): EventEn
   }
 }
 
+function runPermissionsMeta(source: Source, turnId: string, runId: string, permissions: RunPermissions): EventEnvelope {
+  return {
+    origin: 'cockpit',
+    source,
+    sourceEventId: `permissions:${runId}`,
+    turnId,
+    runId,
+    event: {
+      type: 'meta',
+      key: 'run_permissions',
+      value: permissions,
+      ts: new Date().toISOString(),
+    },
+  }
+}
+
 function sessionAgentOf(source: string): 'claude' | 'codex' | null {
   if (source === 'claude-code') return 'claude'
   if (source === 'codex') return 'codex'
@@ -250,6 +272,7 @@ function overallGroupStatus(statuses: RunStatus[]): 'completed' | 'partial' | 'f
 class RunRegistry {
   private runs = new Map<string, RunHandle>()
   private groupTurns = new Map<string, ActiveGroupTurn>()
+  private approvalWaiters = new Map<string, (status: 'approved' | 'rejected') => void>()
   private initialized = false
 
   async init() {
@@ -285,6 +308,7 @@ class RunRegistry {
       sessionId: input.sessionId,
       turnId,
       agent: input.targetAgent,
+      permissions: input.permissions,
       startedAt,
     }
     await runStore.append(record)
@@ -305,10 +329,13 @@ class RunRegistry {
       },
     }
     await threadStore.appendEvent(input.source, input.sessionId, userEnvelope)
+    const permissionsEnvelope = runPermissionsMeta(input.source, turnId, runId, input.permissions)
+    await threadStore.appendEvent(input.source, input.sessionId, permissionsEnvelope)
 
     const handle = new RunHandle(record)
     handle.write({ kind: 'meta', turnId, runId })
     handle.write({ kind: 'event', envelope: userEnvelope })
+    handle.write({ kind: 'event', envelope: permissionsEnvelope })
     this.runs.set(runId, handle)
     void this.executeFollowup(handle, input)
     return { record, userEnvelope }
@@ -353,6 +380,7 @@ class RunRegistry {
       groupThreadId: input.id,
       turnId: groupTurnId,
       agent,
+      permissions: input.permissions,
       startedAt: now,
     }))
     for (const record of records) await runStore.append(record)
@@ -362,7 +390,7 @@ class RunRegistry {
       {
         type: 'meta',
         key: 'turn_start',
-        value: { groupTurnId, baseEventSeq, targetAgents: input.targetAgents, runs: runsMeta },
+        value: { groupTurnId, baseEventSeq, targetAgents: input.targetAgents, runs: runsMeta, permissions: input.permissions },
         ts: now,
       },
       groupTurnId,
@@ -523,6 +551,92 @@ class RunRegistry {
     return true
   }
 
+  resolveApproval(approvalId: string, status: 'approved' | 'rejected'): boolean {
+    const waiter = this.approvalWaiters.get(approvalId)
+    if (!waiter) return false
+    this.approvalWaiters.delete(approvalId)
+    waiter(status)
+    return true
+  }
+
+  private async requestApproval(
+    handle: RunHandle,
+    input: {
+      operation: Operation
+      reason?: string
+      source?: Source
+      sessionId?: string
+      groupThreadId?: string
+      agent: AgentName
+      persist: (env: EventEnvelope) => Promise<unknown>
+      stream: (env: EventEnvelope) => void
+    },
+  ): Promise<'approved' | 'rejected'> {
+    const { runId, turnId } = handle.record
+    const approval = await approvalStore.create({
+      runId,
+      turnId,
+      source: input.source,
+      sessionId: input.sessionId,
+      groupThreadId: input.groupThreadId,
+      agent: input.agent,
+      operation: input.operation,
+      reason: input.reason,
+    })
+    const required = input.source === 'cockpit' || input.groupThreadId
+      ? wrapGroup(
+          {
+            type: 'meta',
+            key: 'approval_required',
+            value: approval,
+            ts: approval.createdAt,
+          },
+          turnId,
+          runId,
+        )
+      : wrap(input.source ?? 'cockpit', {
+          type: 'meta',
+          key: 'approval_required',
+          value: approval,
+          ts: approval.createdAt,
+        }, turnId, runId)
+    await input.persist(required)
+    input.stream(required)
+    handle.write({ kind: 'approval_required', approval })
+
+    const status = await new Promise<'approved' | 'rejected'>((resolve) => {
+      const onAbort = () => {
+        this.approvalWaiters.delete(approval.approvalId)
+        void approvalStore.expire(approval.approvalId)
+        resolve('rejected')
+      }
+      this.approvalWaiters.set(approval.approvalId, resolve)
+      handle.controller.signal.addEventListener('abort', onAbort, { once: true })
+    })
+
+    const resolved = input.source === 'cockpit' || input.groupThreadId
+      ? wrapGroup(
+          {
+            type: 'meta',
+            key: 'approval_resolved',
+            value: { approvalId: approval.approvalId, status },
+            ts: new Date().toISOString(),
+          },
+          turnId,
+          runId,
+        )
+      : wrap(input.source ?? 'cockpit', {
+          type: 'meta',
+          key: 'approval_resolved',
+          value: { approvalId: approval.approvalId, status },
+          ts: new Date().toISOString(),
+        }, turnId, runId)
+    await input.persist(resolved)
+    input.stream(resolved)
+    handle.write({ kind: 'approval_resolved', approvalId: approval.approvalId, status })
+    return status
+  }
+
   private async executeFollowup(handle: RunHandle, input: FollowupStartInput) {
     const { runId, turnId } = handle.record
     try {
@@ -538,8 +652,21 @@ class RunRegistry {
         targetAgent: input.targetAgent,
         cwd: detail?.summary.cwd ?? null,
         useTools: input.useTools,
+        permissions: input.permissions,
         model: input.model,
         effort: input.effort,
+        requestApproval: input.targetAgent === 'codex' || input.targetAgent === 'claude'
+          ? (operation, reason) =>
+              this.requestApproval(handle, {
+                operation,
+                reason,
+                source: input.source,
+                sessionId: input.sessionId,
+                agent: input.targetAgent,
+                persist: (env) => threadStore.appendEvent(input.source, input.sessionId, env),
+                stream: (env) => handle.write({ kind: 'event', envelope: env }),
+              })
+          : undefined,
         signal: handle.controller.signal,
       })) {
         let ev = raw
@@ -595,8 +722,21 @@ class RunRegistry {
         targetAgent: agentNameForRun,
         cwd,
         useTools: input.useTools,
+        permissions: input.permissions,
         model: input.cliByAgent?.[agentNameForRun]?.model,
         effort: input.cliByAgent?.[agentNameForRun]?.effort,
+        requestApproval: agentNameForRun === 'codex' || agentNameForRun === 'claude'
+          ? (operation, reason) =>
+              this.requestApproval(handle, {
+                operation,
+                reason,
+                source: 'cockpit',
+                groupThreadId: input.id,
+                agent: agentNameForRun,
+                persist: (env) => groupThreadStore.appendEvent(input.id, env),
+                stream: (env) => handle.write({ kind: 'event', groupTurnId: turnId, runId, agent: agentNameForRun, envelope: env }),
+              })
+          : undefined,
         signal: handle.controller.signal,
       })) {
         let ev = raw

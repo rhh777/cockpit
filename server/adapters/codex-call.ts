@@ -5,6 +5,13 @@ import type { NormalizedEvent } from '../loaders/types'
 import { serializeForAgent } from './serialize'
 import type { AgentRunInput, NativeResumeInput, ReviewAgent } from './types'
 import { resolveCodexCommand } from './codex-command'
+import { codexGlobalArgsForPermissions, codexSandboxForPermissions } from '../permissions/adapter-policy'
+import {
+  CodexAppServer,
+  codexThreadSettings,
+  mapCodexApprovalRequest,
+  translateNotification,
+} from './codex-app-server'
 
 // `codex exec --json` 输出的是 codex-sdk ThreadEvent JSONL(不是 rollout 会话格式),
 // 顶层 {type:'item.started'|'item.completed'|'item.updated', item:{type:...}}。
@@ -117,25 +124,167 @@ function translateCompletedNonTool(item: Record<string, any>, ts: string): Norma
   }
 }
 
+class AsyncEventQueue<T> {
+  private values: T[] = []
+  private waiters: Array<(next: IteratorResult<T>) => void> = []
+  private ended = false
+  private error: Error | null = null
+
+  push(value: T) {
+    if (this.ended) return
+    const waiter = this.waiters.shift()
+    if (waiter) waiter({ value, done: false })
+    else this.values.push(value)
+  }
+
+  close(error?: Error) {
+    if (this.ended) return
+    this.ended = true
+    this.error = error ?? null
+    for (const waiter of this.waiters.splice(0)) waiter({ value: undefined as T, done: true })
+  }
+
+  async next(): Promise<IteratorResult<T>> {
+    if (this.values.length > 0) return { value: this.values.shift()!, done: false }
+    if (this.ended) {
+      if (this.error) throw this.error
+      return { value: undefined as T, done: true }
+    }
+    return new Promise((resolve) => this.waiters.push(resolve))
+  }
+
+  async *[Symbol.asyncIterator](): AsyncGenerator<T> {
+    while (true) {
+      const next = await this.next()
+      if (next.done) return
+      yield next.value
+    }
+  }
+}
+
+async function initializeCodexAppServer(server: CodexAppServer): Promise<void> {
+  await server.request('initialize', {
+    clientInfo: { name: 'cockpit', title: 'Cockpit', version: '0.1.0' },
+    capabilities: { experimentalApi: true, requestAttestation: false },
+  })
+  server.notify('initialized')
+}
+
+async function* runCodexAppServer(input: AgentRunInput): AsyncGenerator<NormalizedEvent> {
+  if (!input.requestApproval) throw new Error('Codex app-server approval requires requestApproval callback')
+  const prompt = serializeForAgent(input.contextEvents, input.text, 'codex')
+  const server = new CodexAppServer()
+  await server.spawn()
+
+  const queue = new AsyncEventQueue<NormalizedEvent>()
+  let threadId: string | null = null
+  let turnDone = false
+  let turnError: string | null = null
+  let settle: (() => void) | null = null
+  const done = new Promise<void>((resolve) => {
+    settle = resolve
+  })
+
+  server.onNotification = (n) => {
+    for (const ev of translateNotification(n.method, n.params, threadId)) queue.push(ev)
+    if (n.method === 'turn/completed') {
+      turnDone = true
+      settle?.()
+    } else if (n.method === 'error') {
+      turnError = String((n.params as any)?.error?.message ?? 'app-server error')
+      settle?.()
+    }
+  }
+  server.onServerRequest = (r) => {
+    void (async () => {
+      const mapping = mapCodexApprovalRequest(r.method, r.params)
+      if (!mapping) {
+        server.respond(r.id, {
+          error: { code: -32601, message: `Unsupported Codex server request: ${r.method}` },
+        })
+        return
+      }
+      try {
+        const status = await input.requestApproval!(mapping.operation, mapping.reason)
+        server.respond(r.id, mapping.responseFor(status))
+      } catch (err) {
+        server.respond(r.id, {
+          error: { code: -32000, message: String((err as Error)?.message ?? err) },
+        })
+      }
+    })()
+  }
+
+  const loopP = server.readLoop().catch((err) => {
+    if (!input.signal.aborted) {
+      turnError = String((err as Error)?.message ?? err)
+      settle?.()
+      queue.close(err as Error)
+    }
+  })
+  const onAbort = () => {
+    server.kill()
+    queue.close(new Error('aborted'))
+    settle?.()
+  }
+  input.signal.addEventListener('abort', onAbort, { once: true })
+
+  try {
+    await initializeCodexAppServer(server)
+    const settings = codexThreadSettings({
+      mode: input.permissions?.mode,
+      cwd: input.cwd,
+      model: input.model,
+      effort: input.effort,
+      writableRoots: input.writableRoots,
+    })
+    const thread = (await server.request('thread/start', {
+      ...settings,
+      sandbox: input.permissions?.mode === 'full-access' ? 'danger-full-access' : input.permissions?.mode === 'auto-safe' ? 'workspace-write' : 'read-only',
+      ephemeral: true,
+    })) as { thread?: { id?: string } }
+    threadId = thread.thread?.id ?? null
+    if (!threadId) throw new Error('codex app-server 未返回 threadId')
+
+    await server.request('turn/start', {
+      threadId,
+      input: [{ type: 'text', text: prompt, text_elements: [] }],
+      ...settings,
+    })
+
+    void done.then(() => queue.close())
+    for await (const ev of queue) yield ev
+
+    if (input.signal.aborted) throw new Error('aborted')
+    if (turnError) throw new Error(turnError)
+    if (!turnDone) throw new Error('turn interrupted')
+  } finally {
+    input.signal.removeEventListener('abort', onAbort)
+    server.kill()
+    await loopP.catch(() => {})
+  }
+}
+
 async function* runCodexExec(input: AgentRunInput): AsyncGenerator<NormalizedEvent> {
   const prompt = serializeForAgent(input.contextEvents, input.text, 'codex')
   const codex = await resolveCodexCommand()
   if (!codex) throw new Error('codex CLI 不可用(本机未安装/登录对应 CLI)')
 
-  // 只读 + 禁审批沙箱 + 禁 git 检查(docs/01 §九 / T13)。prompt 作为位置参数。
-  // Cockpit follow-up / group-chat worker 不应污染原生 Codex session 列表。
+  // 权限档位映射到 Codex 官方 sandbox / approval policy;ask 保持 read-only。
   const args = [
+    ...codexGlobalArgsForPermissions(input.permissions),
     'exec',
     '--json',
     '--ephemeral',
     '--sandbox',
-    'read-only', // MVP 始终只读沙箱,不随 useTools 放开
+    codexSandboxForPermissions(input.permissions),
     '--skip-git-repo-check',
     ...(input.model ? ['--model', input.model] : []),
     // `-c key=value`,value 走 TOML 解析:用带引号字符串避免 "high" / "low" 被当作裸 token。
     ...(input.effort ? ['-c', `model_reasoning_effort="${input.effort}"`] : []),
     '-C',
     input.cwd ?? process.cwd(),
+    ...(input.writableRoots ?? []).flatMap((dir) => ['--add-dir', dir]),
     prompt,
   ]
 
@@ -229,6 +378,10 @@ export const codexAdapter: ReviewAgent = {
   },
 
   async *run(input: AgentRunInput): AsyncGenerator<NormalizedEvent> {
+    if (input.requestApproval) {
+      yield* runCodexAppServer(input)
+      return
+    }
     for (let attempt = 1; attempt <= CODEX_TRANSIENT_RETRY_ATTEMPTS; attempt++) {
       let emitted = 0
       try {

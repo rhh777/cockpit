@@ -1,4 +1,4 @@
-import type { EventEnvelope } from './types'
+import type { ApprovalRequest, ChatAttachment, EventEnvelope, RunPermissions } from './types'
 
 // POST + SSE。EventSource 不支持 POST body,用 fetch + ReadableStream 手解析 text/event-stream。
 export type StreamMessage =
@@ -7,8 +7,8 @@ export type StreamMessage =
   | { kind: 'done'; turnId: string; status: string }
   | { kind: 'aborted'; turnId: string; status: string; message?: string }
   | { kind: 'error'; turnId?: string; status?: string; message?: string }
-
-import type { ChatAttachment } from './types'
+  | { kind: 'approval_required'; approval: ApprovalRequest }
+  | { kind: 'approval_resolved'; approvalId: string; status: 'approved' | 'rejected' }
 
 /** 发送前的附件草稿:本地 file/directory 只带路径,粘贴图片带 base64 dataUrl。 */
 export type ChatAttachmentDraft =
@@ -47,17 +47,20 @@ export interface SendFollowupBody {
   effort?: string
   /** 本轮附件(与群聊一致):图片落 threads/<src>/<id>/attachments,file/directory 只引用路径。 */
   attachments?: ChatAttachmentDraft[]
+  /** run 级权限档位。默认 ask。 */
+  permissions?: RunPermissions
 }
 
 export interface RunRecord {
   runId: string
-  kind: 'followup' | 'native-resume' | 'group-member'
+  kind: 'followup' | 'native-resume' | 'group-member' | 'native-continuation'
   status: 'running' | 'completed' | 'failed' | 'aborted' | 'interrupted'
   source?: string
   sessionId?: string
   groupThreadId?: string
   turnId: string
   agent: string
+  permissions?: RunPermissions
   startedAt: string
   endedAt?: string
   error?: string
@@ -173,6 +176,7 @@ export async function startGroupRun(
     useTools?: boolean
     cliByAgent?: Partial<Record<string, { model?: string; effort?: string }>>
     attachments?: ChatAttachmentDraft[]
+    permissions?: RunPermissions
   },
 ): Promise<{
   groupTurnId: string

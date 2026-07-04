@@ -14,7 +14,7 @@ import {
 } from '../lib/sse'
 import { sourceLabel, displayTitle } from '../lib/display'
 import { buildTimeline, summarizeTools, type FilterKind, type TraceGroup } from '../lib/timeline'
-import type { AgentName, ChatAttachment, EventEnvelope, Source } from '../lib/types'
+import type { AgentName, ApprovalRequest, ChatAttachment, EventEnvelope, RunPermissions, Source } from '../lib/types'
 import { EventTimeline } from '../components/EventTimeline'
 import { NarrativeTimeline } from '../components/NarrativeTimeline'
 import { ToolActivityBar } from '../components/ToolActivityBar'
@@ -59,6 +59,14 @@ function isServerRunClientId(clientId: string): boolean {
   return clientId.startsWith('run_') || clientId.startsWith('native_run_')
 }
 
+function approvalLabel(approval: ApprovalRequest): string {
+  const op = approval.operation
+  if (op.kind === 'file_write') return `允许 ${approval.agent} 写入 ${op.path}`
+  if (op.kind === 'shell') return `允许 ${approval.agent} 执行 ${op.command}`
+  if (op.kind === 'network') return `允许 ${approval.agent} 访问 ${op.url ?? op.host ?? '网络'}`
+  return `允许 ${approval.agent} 读取 ${op.path}`
+}
+
 export function SessionDetail() {
   const { source, id } = useParams()
   const { width: reviewWidth, onDragStart: onReviewDrag } = useResizable(
@@ -78,6 +86,7 @@ export function SessionDetail() {
   const [live, setLive] = useState(false)
   const [streams, setStreams] = useState<ActiveStream[]>([])
   const [sendError, setSendError] = useState<string | null>(null)
+  const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([])
   const [activeTrace, setActiveTrace] = useState<TraceGroup | null>(null)
   // 客户端 partition 兜底:即便 server 没回写 parentTurnId / 历史 user_text 没 targetAgent,
   // 也能把 child 轮归回旁路 thread。送出请求时就锁定,不依赖 SSE/loader 字段。
@@ -114,6 +123,29 @@ export function SessionDetail() {
     setEvents(d.events)
     seenIds.current = new Set(d.events.map((e, i) => e.sourceEventId ?? `#${i}`))
   }, [])
+
+  const noteApproval = useCallback((approval: ApprovalRequest) => {
+    setPendingApprovals((prev) =>
+      prev.some((a) => a.approvalId === approval.approvalId) ? prev : [...prev, approval],
+    )
+  }, [])
+
+  const resolveApprovalInUi = useCallback((approvalId: string) => {
+    setPendingApprovals((prev) => prev.filter((a) => a.approvalId !== approvalId))
+  }, [])
+
+  const decideApproval = useCallback(
+    async (approvalId: string, decision: 'approve' | 'reject') => {
+      try {
+        const res = await fetch(`/api/approvals/${encodeURIComponent(approvalId)}/${decision}`, { method: 'POST' })
+        if (!res.ok) throw new Error(`${res.status}`)
+        resolveApprovalInUi(approvalId)
+      } catch (e) {
+        setSendError(`审批失败:${String((e as Error)?.message ?? e)}`)
+      }
+    },
+    [resolveApprovalInUi],
+  )
 
   const attachFollowupRun = useCallback(
     (run: RunRecord, parentTurnId?: string) => {
@@ -197,6 +229,10 @@ export function SessionDetail() {
             }
             list.push(msg.envelope)
             appendEnvelopes(list)
+          } else if (msg.kind === 'approval_required') {
+            noteApproval(msg.approval)
+          } else if (msg.kind === 'approval_resolved') {
+            resolveApprovalInUi(msg.approvalId)
           } else if (msg.kind === 'done') {
             cleanup('done')
           } else if (msg.kind === 'aborted') {
@@ -210,7 +246,7 @@ export function SessionDetail() {
         if (!ac.signal.aborted) cleanup('error', String(e))
       })
     },
-    [source, id, appendEnvelopes],
+    [source, id, appendEnvelopes, noteApproval, resolveApprovalInUi],
   )
 
   const attachGroupRun = useCallback(
@@ -251,6 +287,10 @@ export function SessionDetail() {
             )
           } else if (msg.kind === 'event' && 'groupTurnId' in msg) {
             appendEnvelopes([msg.envelope])
+          } else if (msg.kind === 'approval_required') {
+            noteApproval(msg.approval)
+          } else if (msg.kind === 'approval_resolved') {
+            resolveApprovalInUi(msg.approvalId)
           } else if (msg.kind === 'run_done' && msg.runId === run.runId) {
             cleanup(msg.status === 'completed' ? 'done' : msg.status === 'aborted' ? 'aborted' : 'error', msg.message)
           } else if (msg.kind === 'error') {
@@ -262,7 +302,7 @@ export function SessionDetail() {
         if (!ac.signal.aborted) cleanup('error', String(e))
       })
     },
-    [source, id, appendEnvelopes],
+    [source, id, appendEnvelopes, noteApproval, resolveApprovalInUi],
   )
 
   const attachNativeRun = useCallback(
@@ -336,6 +376,7 @@ export function SessionDetail() {
     setDetail(null)
     setEvents([])
     setSendError(null)
+    setPendingApprovals([])
     // 切 session 时只断开当前页面的订阅。follow-up run 留在服务端继续跑,显式取消才 abort。
     for (const abort of abortsRef.current.values()) abort()
     abortsRef.current.clear()
@@ -508,6 +549,7 @@ export function SessionDetail() {
       parentTurnId?: string,
       cli?: { model?: string; effort?: string },
       attachments?: AttachmentDraft[],
+      permissions?: RunPermissions,
     ) => {
       if (!source || !id || agents.length === 0) return
       setSendError(null)
@@ -528,6 +570,7 @@ export function SessionDetail() {
             model: cli?.model,
             effort: cli?.effort,
             attachments,
+            permissions,
           })
           .then(({ run, userEnvelope }) => {
             appendEnvelopes([userEnvelope])
@@ -550,7 +593,13 @@ export function SessionDetail() {
   )
 
   const handleGroupSend = useCallback(
-    (text: string, agents: AgentName[], options?: CliSelection | CliSelectionByAgent, attachments?: AttachmentDraft[]) => {
+    (
+      text: string,
+      agents: AgentName[],
+      options?: CliSelection | CliSelectionByAgent,
+      attachments?: AttachmentDraft[],
+      permissions?: RunPermissions,
+    ) => {
       if (!id) return
       setSendError(null)
       startGroupRun(
@@ -561,6 +610,7 @@ export function SessionDetail() {
           useTools: true,
           cliByAgent: options as CliSelectionByAgent | undefined,
           attachments,
+          permissions,
         },
       )
         .then(({ records, userEnvelope, turnStart }) => {
@@ -764,6 +814,23 @@ export function SessionDetail() {
               onViewTrace={setActiveTrace}
             />
           )}
+          {pendingApprovals.length > 0 && (
+            <div className="approval-stack conversation-banner">
+              {pendingApprovals.map((approval) => (
+                <div key={approval.approvalId} className="approval-card">
+                  <div className="approval-copy">
+                    <strong>请求批准</strong>
+                    <span>{approvalLabel(approval)}</span>
+                    {approval.reason && <small>{approval.reason}</small>}
+                  </div>
+                  <div className="approval-actions">
+                    <button onClick={() => decideApproval(approval.approvalId, 'reject')}>拒绝</button>
+                    <button className="primary" onClick={() => decideApproval(approval.approvalId, 'approve')}>允许</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           {sendError && <div className="banner warn conversation-banner">发送失败:{sendError}</div>}
           <div className="conversation-bottom">
             <StreamingStatus
@@ -776,10 +843,10 @@ export function SessionDetail() {
               sessionAgent={sessionAgentOf(source)}
               nativeAvailable={!groupMode && canNativeResume(source)}
               groupMode={groupMode}
-              onSend={(t, a, options, attachments) =>
+              onSend={(t, a, options, attachments, permissions) =>
                 groupMode
-                  ? handleGroupSend(t, a, options as CliSelectionByAgent | undefined, attachments)
-                  : handleSend(t, a, undefined, options as CliSelection | undefined, attachments)
+                  ? handleGroupSend(t, a, options as CliSelectionByAgent | undefined, attachments, permissions)
+                  : handleSend(t, a, undefined, options as CliSelection | undefined, attachments, permissions)
               }
               onNativeSend={handleNativeSend}
               onCancelAll={handleCancelAll}

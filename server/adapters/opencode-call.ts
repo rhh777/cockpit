@@ -6,6 +6,7 @@ import { commandExists } from './cli-utils'
 import { normalizeJsonCliEvent } from './json-cli-events'
 import { serializeForAgent } from './serialize'
 import type { AgentRunInput, ReviewAgent } from './types'
+import { openCodePermissionArgs } from '../permissions/adapter-policy'
 
 async function* runOpenCode(input: AgentRunInput): AsyncGenerator<NormalizedEvent> {
   const prompt = serializeForAgent(input.contextEvents, input.text, 'opencode')
@@ -16,8 +17,7 @@ async function* runOpenCode(input: AgentRunInput): AsyncGenerator<NormalizedEven
     'json',
     '--dir',
     cwd,
-    '--agent',
-    'plan',
+    ...openCodePermissionArgs(input.permissions),
     ...(input.model ? ['--model', input.model] : []),
     ...(input.effort ? ['--variant', input.effort] : []),
     prompt,
@@ -68,4 +68,3 @@ export const opencodeAdapter: ReviewAgent = {
     yield* runOpenCode(input)
   },
 }
-

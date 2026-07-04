@@ -4,6 +4,7 @@ import path from 'node:path'
 import { COCKPIT_ROOT } from '../config'
 import { readJsonlLines } from '../util/jsonl'
 import type { AgentName, Source } from '../loaders/types'
+import type { RunPermissions } from '../permissions/types'
 
 export type RunKind = 'followup' | 'native-resume' | 'group-member' | 'native-continuation'
 export type RunStatus = 'running' | 'completed' | 'failed' | 'aborted' | 'interrupted'
@@ -17,6 +18,7 @@ export interface RunRecord {
   groupThreadId?: string
   turnId: string
   agent: AgentName
+  permissions?: RunPermissions
   startedAt: string
   endedAt?: string
   error?: string

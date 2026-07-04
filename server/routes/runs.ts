@@ -4,6 +4,7 @@ import { resolveSafe } from './resolve'
 import { runRegistry } from '../runs/run-registry'
 import { normalizeAttachments, type AttachmentDraft } from '../util/attachments'
 import { threadAttachmentsDir } from '../store/paths'
+import { normalizeRunPermissions } from '../permissions/types'
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status
@@ -47,6 +48,7 @@ async function handleStartFollowup(req: IncomingMessage, res: ServerResponse, so
     model?: string
     effort?: string
     attachments?: AttachmentDraft[]
+    permissions?: unknown
   }
   const text = (body.text ?? '').trim()
   const attachments = await normalizeAttachments(threadAttachmentsDir(source, id), body.attachments)
@@ -62,6 +64,7 @@ async function handleStartFollowup(req: IncomingMessage, res: ServerResponse, so
     text,
     targetAgent: body.targetAgent ?? 'claude',
     useTools: body.useTools ?? true,
+    permissions: normalizeRunPermissions(body.permissions),
     parentTurnId: body.parentTurnId?.trim() || undefined,
     model: body.model?.trim() || undefined,
     effort: body.effort?.trim() || undefined,

@@ -11,6 +11,7 @@ import { cleanTitle } from '../util/title'
 import { runRegistry } from '../runs/run-registry'
 import { loadSessionDetail } from '../sessions-service'
 import type { Source } from '../loaders/types'
+import { normalizeRunPermissions } from '../permissions/types'
 
 type RunStatus = 'running' | 'completed' | 'failed' | 'aborted'
 
@@ -220,6 +221,7 @@ async function handlePostMessage(req: IncomingMessage, res: ServerResponse, id: 
     targetAgents?: AgentName[]
     cliByAgent?: Partial<Record<AgentName, { model?: string; effort?: string }>>
     attachments?: AttachmentDraft[]
+    permissions?: unknown
   }
   const text = (body.text ?? '').trim()
   const attachments = await normalizeAttachments(groupAttachmentsDir(id), body.attachments)
@@ -391,6 +393,7 @@ async function handleStartRun(req: IncomingMessage, res: ServerResponse, id: str
     targetAgents?: AgentName[]
     cliByAgent?: Partial<Record<AgentName, { model?: string; effort?: string }>>
     attachments?: AttachmentDraft[]
+    permissions?: unknown
   }
   const text = (body.text ?? '').trim()
   const attachments = await normalizeAttachments(groupAttachmentsDir(id), body.attachments)
@@ -408,6 +411,7 @@ async function handleStartRun(req: IncomingMessage, res: ServerResponse, id: str
       text,
       targetAgents,
       useTools: body.useTools ?? true,
+      permissions: normalizeRunPermissions(body.permissions),
       cliByAgent: body.cliByAgent,
       attachments,
     })

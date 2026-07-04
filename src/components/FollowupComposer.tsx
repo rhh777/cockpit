@@ -10,6 +10,7 @@ import {
 } from '../lib/preferences'
 import { parseMentions } from '../lib/mentions'
 import { AGENT_OPTIONS, labelForAgent } from '../lib/agents'
+import type { ApprovalMode, RunPermissions } from '../lib/types'
 
 export type SendMode = 'followup' | 'native'
 
@@ -129,6 +130,40 @@ type AttachmentDraft =
   | Pick<Extract<ChatAttachment, { kind: 'file' | 'directory' }>, 'kind' | 'path' | 'name'>
   | { kind: 'imageData'; dataUrl: string; name: string; mimeType: string }
 
+const PERMISSION_OPTIONS: { mode: ApprovalMode; label: string; hint: string }[] = [
+  { mode: 'ask', label: '请求批准', hint: '编辑文件、命令和网络前询问' },
+  { mode: 'auto-safe', label: '替我审批', hint: '低风险自动允许,风险操作询问' },
+  { mode: 'full-access', label: '完全访问权限', hint: '允许访问网络和 workspace 写入' },
+]
+
+function permissionsForMode(mode: ApprovalMode): RunPermissions {
+  if (mode === 'full-access') {
+    return {
+      mode,
+      allowNetwork: true,
+      allowWorkspaceWrite: true,
+      allowOutsideWorkspaceWrite: false,
+      allowShell: true,
+    }
+  }
+  if (mode === 'auto-safe') {
+    return {
+      mode,
+      allowNetwork: true,
+      allowWorkspaceWrite: true,
+      allowOutsideWorkspaceWrite: false,
+      allowShell: true,
+    }
+  }
+  return {
+    mode: 'ask',
+    allowNetwork: false,
+    allowWorkspaceWrite: false,
+    allowOutsideWorkspaceWrite: false,
+    allowShell: false,
+  }
+}
+
 export function FollowupComposer({
   hasActiveStreams,
   sessionAgent,
@@ -148,6 +183,7 @@ export function FollowupComposer({
     agents: AgentName[],
     options?: CliSelection | CliSelectionByAgent,
     attachments?: AttachmentDraft[],
+    permissions?: RunPermissions,
   ) => void
   onNativeSend: (text: string, attachments?: AttachmentDraft[]) => void
   onCancelAll: () => void
@@ -166,6 +202,8 @@ export function FollowupComposer({
   const [modelMenuOpen, setModelMenuOpen] = useState<AgentName | null>(null)
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false)
   const [advancedMenuOpen, setAdvancedMenuOpen] = useState(false)
+  const [permissionMenuOpen, setPermissionMenuOpen] = useState(false)
+  const [permissionMode, setPermissionMode] = useState<ApprovalMode>('ask')
   const [attachments, setAttachments] = useState<AttachmentDraft[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [reviewDraft, setReviewDraft] = useState(false)
@@ -175,6 +213,7 @@ export function FollowupComposer({
   const modelMenuRef = useRef<HTMLDivElement | null>(null)
   const attachmentMenuRef = useRef<HTMLDivElement | null>(null)
   const advancedMenuRef = useRef<HTMLDivElement | null>(null)
+  const permissionMenuRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
 
   useEffect(() => {
@@ -190,15 +229,16 @@ export function FollowupComposer({
   }, [])
 
   useEffect(() => {
-    if (!modelMenuOpen && !attachmentMenuOpen && !advancedMenuOpen) return
+    if (!modelMenuOpen && !attachmentMenuOpen && !advancedMenuOpen && !permissionMenuOpen) return
     const onDoc = (e: MouseEvent) => {
       if (!modelMenuRef.current?.contains(e.target as Node)) setModelMenuOpen(null)
       if (!attachmentMenuRef.current?.contains(e.target as Node)) setAttachmentMenuOpen(false)
       if (!advancedMenuRef.current?.contains(e.target as Node)) setAdvancedMenuOpen(false)
+      if (!permissionMenuRef.current?.contains(e.target as Node)) setPermissionMenuOpen(false)
     }
     document.addEventListener('mousedown', onDoc)
     return () => document.removeEventListener('mousedown', onDoc)
-  }, [modelMenuOpen, attachmentMenuOpen, advancedMenuOpen])
+  }, [modelMenuOpen, attachmentMenuOpen, advancedMenuOpen, permissionMenuOpen])
 
   const mentions = useMemo(() => parseMentions(text), [text])
   const usingNative = !groupMode && mode === 'native' && nativeAvailable
@@ -246,7 +286,7 @@ export function FollowupComposer({
       // 单 agent 场景按当前 agent 偏好透传;@mentions 多目标下让 caller 走默认,避免一个
       // 模型设置被错配到另一个 agent。
       const options = groupMode ? cliByAgent : !usingMentions ? cliByAgent[agent] : undefined
-      onSend(t, targets, options, outgoing)
+      onSend(t, targets, options, outgoing, permissionsForMode(permissionMode))
     }
     setText('')
     setAttachments([])
@@ -429,6 +469,7 @@ export function FollowupComposer({
   }
 
   const agentLabel = labelForAgent(sessionAgent)
+  const permissionOption = PERMISSION_OPTIONS.find((o) => o.mode === permissionMode) ?? PERMISSION_OPTIONS[0]
 
   const sendTitle = usingNative
     ? `通过本机 ${agentLabel} CLI 续写原生 session`
@@ -436,7 +477,7 @@ export function FollowupComposer({
     ? '只记录到群聊;输入 @ 可选择成员回答'
     : usingMentions
     ? `并行发送给 ${targets.map(labelForAgent).join('、')}`
-    : `通过本机 ${labelForAgent(agent)} CLI 运行,只读权限`
+    : `通过本机 ${labelForAgent(agent)} CLI 运行,权限: ${permissionOption.label}`
   const reviewTargets = usingMentions ? targets : [agent]
   const showReviewTarget = reviewDraft && !usingNative && !groupMode && reviewTargets.length > 0
 
@@ -627,6 +668,45 @@ export function FollowupComposer({
                       <Icon name="folder" size={13} />
                       <span>文件夹</span>
                     </button>
+                  </div>
+                )}
+              </div>
+            )}
+            {!hasActiveStreams && !usingNative && (
+              <div className="permission-menu-wrap" ref={permissionMenuRef}>
+                <button
+                  className={`permission-trigger permission-${permissionMode}`}
+                  onClick={() => setPermissionMenuOpen((v) => !v)}
+                  title={`权限: ${permissionOption.label}`}
+                  aria-label="权限设置"
+                  aria-expanded={permissionMenuOpen}
+                >
+                  <Icon name="wrench" size={14} />
+                  <span>{permissionOption.label}</span>
+                </button>
+                {permissionMenuOpen && (
+                  <div className="permission-menu" role="menu">
+                    <div className="permission-menu-title">应如何批准操作?</div>
+                    {PERMISSION_OPTIONS.map((option) => {
+                      const active = option.mode === permissionMode
+                      return (
+                        <button
+                          key={option.mode}
+                          className={`permission-menu-item ${active ? 'active' : ''}`}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            setPermissionMode(option.mode)
+                            setPermissionMenuOpen(false)
+                          }}
+                        >
+                          <span className="permission-menu-copy">
+                            <strong>{option.label}</strong>
+                            <span>{option.hint}</span>
+                          </span>
+                          {active && <Icon name="check" size={13} />}
+                        </button>
+                      )
+                    })}
                   </div>
                 )}
               </div>

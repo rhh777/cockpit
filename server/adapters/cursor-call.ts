@@ -6,6 +6,7 @@ import { commandExists } from './cli-utils'
 import { normalizeJsonCliEvent } from './json-cli-events'
 import { serializeForAgent } from './serialize'
 import type { AgentRunInput, ReviewAgent } from './types'
+import { cursorPermissionArgs } from '../permissions/adapter-policy'
 
 async function resolveCursorCommand(): Promise<string | null> {
   if (await commandExists('cursor-agent', ['--version'])) return 'cursor-agent'
@@ -24,8 +25,8 @@ async function* runCursor(input: AgentRunInput): AsyncGenerator<NormalizedEvent>
     '--output-format',
     'stream-json',
     '--stream-partial-output',
-    '--mode',
-    'ask',
+    ...cursorPermissionArgs(input.permissions),
+    ...(input.writableRoots ?? []).flatMap((dir) => ['--add-dir', dir]),
     ...(input.model ? ['--model', input.model] : []),
     prompt,
   ]
@@ -75,4 +76,3 @@ export const cursorAdapter: ReviewAgent = {
     yield* runCursor(input)
   },
 }
-
