@@ -4,6 +4,7 @@ import { CODEX_SESSIONS_ROOT, CODEX_SESSION_INDEX } from '../config'
 import { readJsonlLines, safeJsonParse } from '../util/jsonl'
 import { cleanTitle } from '../util/title'
 import type {
+  ChatAttachment,
   EventEnvelope,
   LoaderWarning,
   NormalizedEvent,
@@ -28,8 +29,74 @@ function codexMessageText(p: Record<string, unknown>): string {
   return ''
 }
 
+const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif)$/i
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+}
+
+function imageAttachmentFromPath(filePath: string): ChatAttachment | null {
+  const clean = filePath.trim()
+  if (!IMAGE_EXT_RE.test(clean)) return null
+  const ext = path.extname(clean).toLowerCase()
+  return {
+    kind: 'image',
+    path: clean,
+    name: path.basename(clean),
+    mimeType: IMAGE_MIME_BY_EXT[ext] ?? 'image/png',
+  }
+}
+
+function codexImageAttachments(p: Record<string, unknown>, text: string): ChatAttachment[] {
+  const out: ChatAttachment[] = []
+  const seen = new Set<string>()
+  const addPath = (filePath: string) => {
+    const attachment = imageAttachmentFromPath(filePath)
+    if (!attachment || seen.has(attachment.path ?? attachment.name)) return
+    seen.add(attachment.path ?? attachment.name)
+    out.push(attachment)
+  }
+
+  if (Array.isArray(p.images)) {
+    for (const item of p.images) {
+      if (typeof item === 'string') {
+        addPath(item)
+      } else if (item && typeof item === 'object') {
+        const obj = item as Record<string, unknown>
+        const filePath = obj.path ?? obj.file_path ?? obj.filePath
+        if (typeof filePath === 'string') addPath(filePath)
+      }
+    }
+  }
+
+  for (const match of text.matchAll(/(?:^|\s)(\/[^\n\r]+?\.(?:png|jpe?g|webp|gif))(?=$|\s)/gi)) {
+    addPath(match[1])
+  }
+
+  return out
+}
+
+function stripCodexMentionedFilesBlock(text: string, attachments: ChatAttachment[]): string {
+  if (attachments.length === 0 || !/^Files mentioned by the user:/i.test(text.trim())) return text
+  const requestMatch = text.match(/(?:^|\n)My request for Codex:\s*\n?([\s\S]*)$/i)
+  if (requestMatch) return requestMatch[1].trim()
+
+  let out = text.replace(/^Files mentioned by the user:\s*/i, '')
+  for (const a of attachments) {
+    if (!a.path) continue
+    const escapedPath = a.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const escapedName = a.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    out = out.replace(new RegExp(`\\n?${escapedName}:\\s*\\n?${escapedPath}`, 'g'), '')
+    out = out.replace(new RegExp(`\\n?${escapedPath}`, 'g'), '')
+  }
+  return out.trim()
+}
+
 // 关键:key 在 payload.type 上,不在顶层 .type(顶层是 session_meta/event_msg/response_item)。
-function normalizeCodexLine(o: Record<string, unknown>): NormalizedEvent[] {
+export function normalizeCodexLine(o: Record<string, unknown>): NormalizedEvent[] {
   const ts = (o.timestamp as string) ?? ''
   const p = o.payload as Record<string, unknown> | undefined
   if (!p || typeof p !== 'object') return []
@@ -40,7 +107,11 @@ function normalizeCodexLine(o: Record<string, unknown>): NormalizedEvent[] {
       return [] // 第一行,summarize 时单独处理
     case 'user_message': {
       const text = codexMessageText(p) // 实测有的用 message
-      if (text) return [{ type: 'user_text', text, ts }]
+      const attachments = codexImageAttachments(p, text)
+      const displayText = stripCodexMentionedFilesBlock(text, attachments)
+      if (displayText || attachments.length) {
+        return [{ type: 'user_text', text: displayText, ts, ...(attachments.length ? { attachments } : {}) }]
+      }
       return []
     }
     case 'agent_message': {

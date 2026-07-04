@@ -12,6 +12,12 @@ const IMAGE_TYPES: Record<string, string> = {
   '.gif': 'image/gif',
 }
 
+const NATIVE_IMAGE_ROOTS = [
+  '/var/folders/',
+  '/tmp/',
+  '/private/tmp/',
+]
+
 function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status
   res.setHeader('Content-Type', 'application/json; charset=utf-8')
@@ -26,6 +32,11 @@ function isWithinAttachments(filePath: string): boolean {
   return [COCKPIT_GROUP_THREADS_ROOT, COCKPIT_THREADS_ROOT].some((r) =>
     resolved.startsWith(path.resolve(r) + path.sep),
   )
+}
+
+function isNativeTempImage(filePath: string): boolean {
+  const resolved = path.resolve(filePath)
+  return NATIVE_IMAGE_ROOTS.some((r) => resolved.startsWith(path.resolve(r) + path.sep))
 }
 
 export async function handleAttachmentsRoute(
@@ -47,7 +58,7 @@ export async function handleAttachmentsRoute(
 
   const filePath = path.resolve(rawPath)
   const mime = IMAGE_TYPES[path.extname(filePath).toLowerCase()]
-  if (!mime || !isWithinAttachments(filePath)) {
+  if (!mime || (!isWithinAttachments(filePath) && !isNativeTempImage(filePath))) {
     sendJson(res, 403, { error: 'forbidden' })
     return true
   }

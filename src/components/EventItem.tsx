@@ -242,18 +242,22 @@ function AttachmentReferences({
   return (
     <div className="event-attachments">
       {attachments.map((a, index) => (
-        <div key={`${a.kind}-${a.path}-${index}`} className="event-attachment-wrap">
+        <div key={`${a.kind}-${a.kind === 'image' ? a.path ?? a.dataUrl ?? '' : a.path}-${index}`} className="event-attachment-wrap">
           {a.kind === 'image' && (
-            <img
-              className="event-attachment-preview"
-              src={`/api/attachments/image?path=${encodeURIComponent(a.path)}`}
-              alt={a.name}
-            />
+            a.dataUrl ? (
+              <img className="event-attachment-preview" src={a.dataUrl} alt={a.name} />
+            ) : a.path ? (
+              <img
+                className="event-attachment-preview"
+                src={`/api/attachments/image?path=${encodeURIComponent(a.path)}`}
+                alt={a.name}
+              />
+            ) : null
           )}
-          <div className="event-attachment" title={a.path}>
+          <div className="event-attachment" title={a.kind === 'image' ? a.path ?? a.name : a.path}>
             <Icon name={a.kind === 'directory' ? 'folder' : a.kind === 'image' ? 'image' : 'file-text'} size={13} />
             <span className="event-attachment-name">{a.name}</span>
-            <span className="event-attachment-path">{a.path}</span>
+            <span className="event-attachment-path">{a.kind === 'image' ? a.path ?? a.mimeType : a.path}</span>
           </div>
         </div>
       ))}

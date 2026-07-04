@@ -660,7 +660,7 @@ export function SessionDetail() {
   const pairs = useMemo(() => buildTimeline(partitioned.main).pairs, [partitioned.main])
   const activity = useMemo(() => summarizeTools(pairs, partitioned.main), [pairs, partitioned.main])
   const [showFiles, setShowFiles] = useState(false)
-  const [viewMode, setViewMode] = useState<'narrative' | 'detail'>('narrative')
+  const [viewMode, setViewMode] = useState<'narrative' | 'detail'>('detail')
 
   if (loading)
     return (

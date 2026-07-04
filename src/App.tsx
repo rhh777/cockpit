@@ -31,7 +31,7 @@ export default function App() {
       {/* macOS 红绿灯避让区 + 全局可拖拽 title bar。
           padding-left 78px 给红绿灯让位;品牌字样落在这里,顺便统一三列顶部基准线。 */}
       <div className="titlebar">
-        <span className="titlebar-brand">✦ cockpit</span>
+        <span className="titlebar-brand">cockpit</span>
         <span className="titlebar-spacer" />
         <button className="titlebar-icon-btn" onClick={() => setSettingsOpen(true)} title={t('app.settings')}>
           <Icon name="settings" size={14} />

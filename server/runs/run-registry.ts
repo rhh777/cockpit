@@ -177,7 +177,8 @@ function renderAttachmentLines(attachments?: ChatAttachment[]): string[] {
     '[Attachments]',
     ...attachments.map((a) => {
       const label = a.kind === 'directory' ? 'directory' : a.kind === 'image' ? `image ${a.mimeType}` : 'file'
-      return `- ${label}: ${a.name} -> ${a.path}`
+      const target = a.kind === 'image' ? a.path ?? '[embedded image]' : a.path
+      return `- ${label}: ${a.name} -> ${target}`
     }),
   ]
 }

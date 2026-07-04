@@ -33,7 +33,8 @@ export type ChatAttachment =
     }
   | {
       kind: 'image'
-      path: string
+      path?: string
+      dataUrl?: string
       name: string
       mimeType: string
     }

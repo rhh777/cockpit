@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentName, ChatAttachment } from '../lib/types'
 import { Icon } from './Icon'
 import { AgentIcon } from './AgentIcon'
+import { AgentPicker } from './AgentPicker'
 import {
   PREFERENCES_CHANGED_EVENT,
   readDefaultAgent,
@@ -167,6 +168,7 @@ export function FollowupComposer({
   const [advancedMenuOpen, setAdvancedMenuOpen] = useState(false)
   const [attachments, setAttachments] = useState<AttachmentDraft[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
+  const [reviewDraft, setReviewDraft] = useState(false)
   const [mentionMenu, setMentionMenu] = useState<{ start: number; query: string; active: number } | null>(null)
   const [mentionConfirm, setMentionConfirm] = useState<AgentName | null>(null)
   const mentionConfirmTimer = useRef<number | null>(null)
@@ -220,6 +222,7 @@ export function FollowupComposer({
   const chooseMode = (next: SendMode) => {
     const resolved = next === 'native' && !nativeAvailable ? 'followup' : next
     setMode(resolved)
+    if (resolved === 'native') setReviewDraft(false)
   }
 
   const pickReviewTemplate = () => {
@@ -228,6 +231,7 @@ export function FollowupComposer({
     setAgent(reviewAgent)
     setModelMenuOpen(null)
     setAdvancedMenuOpen(false)
+    setReviewDraft(true)
     setText(REVIEW_TEMPLATE)
   }
 
@@ -247,6 +251,7 @@ export function FollowupComposer({
     setText('')
     setAttachments([])
     setAttachmentError(null)
+    setReviewDraft(false)
   }
 
   const addPathAttachments = (kind: 'file' | 'directory', paths: string[]) => {
@@ -432,6 +437,8 @@ export function FollowupComposer({
     : usingMentions
     ? `并行发送给 ${targets.map(labelForAgent).join('、')}`
     : `通过本机 ${labelForAgent(agent)} CLI 运行,只读权限`
+  const reviewTargets = usingMentions ? targets : [agent]
+  const showReviewTarget = reviewDraft && !usingNative && !groupMode && reviewTargets.length > 0
 
   return (
     <div className="composer">
@@ -489,18 +496,7 @@ export function FollowupComposer({
               ))}
             </div>
           ) : (
-            <div className="segmented-control">
-              {AGENT_OPTIONS.map((a) => (
-                <button
-                  key={a.value}
-                  className={`segmented-item ${agent === a.value ? 'active' : ''} agent-${a.value}`}
-                  onClick={() => setAgent(a.value)}
-                >
-                  <AgentIcon agent={a.value} size={16} />
-                  {a.label}
-                </button>
-              ))}
-            </div>
+            <AgentPicker value={agent} onChange={setAgent} />
           )}
         </div>
 
@@ -543,6 +539,7 @@ export function FollowupComposer({
           value={text}
           onChange={(e) => {
             setText(e.target.value)
+            if (!e.target.value.trim()) setReviewDraft(false)
             refreshMentionMenu(e.target.value, e.target.selectionStart)
           }}
           onPaste={(e) => {
@@ -656,22 +653,41 @@ export function FollowupComposer({
               </div>
             )}
           </div>
-          <button
-            className={`send-btn primary-action ${hasActiveStreams ? 'is-canceling' : 'is-ready'}`}
-            onClick={hasActiveStreams ? onCancelAll : send}
-            disabled={!hasActiveStreams && !text.trim() && attachments.length === 0}
-            title={hasActiveStreams ? '取消当前所有正在生成的回复' : `${sendTitle}; Enter 发送, Alt+Enter 换行`}
-            aria-label={hasActiveStreams ? '取消生成' : '发送'}
-          >
-            {hasActiveStreams ? (
-              <>
-                <span className="send-pulse" aria-hidden />
-                <Icon name="close" size={14} />
-              </>
-            ) : (
-              <Icon name="send" size={14} />
+          <div className="composer-action-right">
+            {showReviewTarget && (
+              <div className="review-target-strip" role="status" aria-live="polite">
+                <span className="review-target-label">
+                  <Icon name="sparkle" size={13} />
+                  Review
+                </span>
+                <span className="review-target-arrow">→</span>
+                <span className="review-target-agents">
+                  {reviewTargets.map((a) => (
+                    <span key={a} className={`review-target-agent agent-${a}`}>
+                      <AgentIcon agent={a} size={15} />
+                      {labelForAgent(a)}
+                    </span>
+                  ))}
+                </span>
+              </div>
             )}
-          </button>
+            <button
+              className={`send-btn primary-action ${hasActiveStreams ? 'is-canceling' : 'is-ready'}`}
+              onClick={hasActiveStreams ? onCancelAll : send}
+              disabled={!hasActiveStreams && !text.trim() && attachments.length === 0}
+              title={hasActiveStreams ? '取消当前所有正在生成的回复' : `${sendTitle}; Enter 发送, Alt+Enter 换行`}
+              aria-label={hasActiveStreams ? '取消生成' : '发送'}
+            >
+              {hasActiveStreams ? (
+                <>
+                  <span className="send-pulse" aria-hidden />
+                  <Icon name="close" size={14} />
+                </>
+              ) : (
+                <Icon name="send" size={14} />
+              )}
+            </button>
+          </div>
         </div>
       </div>
       </div>

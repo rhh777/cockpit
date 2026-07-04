@@ -5,6 +5,7 @@ import { CLAUDE_PROJECTS_ROOT } from '../config'
 import { readJsonlLines, stringifyToolResult } from '../util/jsonl'
 import { cleanTitle } from '../util/title'
 import type {
+  ChatAttachment,
   EventEnvelope,
   LoaderWarning,
   NormalizedEvent,
@@ -13,6 +14,33 @@ import type {
 } from './types'
 
 const SOURCE = 'claude-code' as const
+
+function imageAttachmentFromClaudeBlock(p: Record<string, unknown>, index: number): ChatAttachment | null {
+  const source = p.source as Record<string, unknown> | undefined
+  const mimeType = String(source?.media_type ?? source?.mime_type ?? 'image/png')
+  const name = typeof p.name === 'string' ? p.name : `claude-image-${index + 1}.${mimeType.split('/')[1] || 'png'}`
+
+  if (source?.type === 'base64' && typeof source.data === 'string' && source.data) {
+    return {
+      kind: 'image',
+      dataUrl: `data:${mimeType};base64,${source.data}`,
+      name,
+      mimeType,
+    }
+  }
+
+  const pathValue = source?.path ?? source?.file_path ?? p.path
+  if (typeof pathValue === 'string' && pathValue) {
+    return {
+      kind: 'image',
+      path: pathValue,
+      name,
+      mimeType,
+    }
+  }
+
+  return null
+}
 
 // 把一行 Claude JSONL 转成 0..n 个 NormalizedEvent(见 docs/02 §一 Loader 提取规则)。
 // 同时被 claude-call adapter 复用:`claude -p --output-format stream-json` 的
@@ -35,7 +63,8 @@ export function normalizeClaudeLine(o: Record<string, unknown>): NormalizedEvent
       }
       if (Array.isArray(c)) {
         const out: NormalizedEvent[] = []
-        for (const p of c as Record<string, unknown>[]) {
+        let pendingAttachments: ChatAttachment[] = []
+        for (const [index, p] of (c as Record<string, unknown>[]).entries()) {
           if (p?.type === 'tool_result') {
             out.push({
               type: 'tool_result',
@@ -45,9 +74,14 @@ export function normalizeClaudeLine(o: Record<string, unknown>): NormalizedEvent
               ts,
             })
           } else if (p?.type === 'text' && typeof p.text === 'string') {
-            out.push({ type: 'user_text', text: p.text, ts })
+            out.push({ type: 'user_text', text: p.text, ts, ...(pendingAttachments.length ? { attachments: pendingAttachments } : {}) })
+            pendingAttachments = []
+          } else if (p?.type === 'image') {
+            const attachment = imageAttachmentFromClaudeBlock(p, index)
+            if (attachment) pendingAttachments.push(attachment)
           }
         }
+        if (pendingAttachments.length) out.push({ type: 'user_text', text: '', ts, attachments: pendingAttachments })
         return out
       }
       return []

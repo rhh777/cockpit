@@ -2,8 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { claudeLoader } from './claude-loader'
-import { codexLoader, resolveCodexUpdatedAt, summarizeCodexFile } from './codex-loader'
+import { claudeLoader, normalizeClaudeLine } from './claude-loader'
+import { codexLoader, normalizeCodexLine, resolveCodexUpdatedAt, summarizeCodexFile } from './codex-loader'
 import type { NormalizedEvent } from './types'
 
 const FIX = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../__fixtures__')
@@ -36,6 +36,35 @@ test('claude loader: best-effort, normalizes core event types', async () => {
   assert.ok(tu && tu.event.type === 'tool_use' && tu.event.name === 'Read')
 })
 
+test('claude loader: user image content blocks become attachments', () => {
+  const events = normalizeClaudeLine({
+    type: 'user',
+    timestamp: '2026-07-04T00:00:00.000Z',
+    message: {
+      content: [
+        {
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: 'image/png',
+            data: 'aGVsbG8=',
+          },
+        },
+        { type: 'text', text: '看这张图' },
+      ],
+    },
+  })
+
+  assert.equal(events.length, 1)
+  const ev = events[0]
+  assert.equal(ev.type, 'user_text')
+  if (ev.type !== 'user_text') return
+  assert.equal(ev.text, '看这张图')
+  assert.equal(ev.attachments?.[0]?.kind, 'image')
+  assert.equal(ev.attachments?.[0]?.mimeType, 'image/png')
+  assert.equal(ev.attachments?.[0]?.dataUrl, 'data:image/png;base64,aGVsbG8=')
+})
+
 test('codex loader: payload.type keying, arguments parse, output prefix strip', async () => {
   const { events, summaryPatch } = await codexLoader.loadEvents(
     path.join(FIX, 'codex-sample.jsonl'),
@@ -63,6 +92,25 @@ test('codex loader: payload.type keying, arguments parse, output prefix strip', 
   assert.ok(am && am.event.type === 'assistant_text' && am.event.agent === 'codex')
 
   assert.equal(summaryPatch.title, '列一下文件')
+})
+
+test('codex loader: user images become attachments', async () => {
+  const tmpImage = '/var/folders/demo/codex-clipboard-demo.png'
+  const normalized = normalizeCodexLine({
+    timestamp: '2026-07-04T00:00:00.000Z',
+    payload: {
+      type: 'user_message',
+      message: `Files mentioned by the user:\n${tmpImage}\n请看图`,
+      images: [tmpImage],
+    },
+  })
+  const ev = normalized[0]
+  assert.equal(ev.type, 'user_text')
+  if (ev.type !== 'user_text') return
+  assert.equal(ev.text, '请看图')
+  assert.equal(ev.attachments?.[0]?.kind, 'image')
+  assert.equal(ev.attachments?.[0]?.path, tmpImage)
+  assert.equal(ev.attachments?.[0]?.mimeType, 'image/png')
 })
 
 test('codex loader: fallback summary title comes from first user message', async () => {

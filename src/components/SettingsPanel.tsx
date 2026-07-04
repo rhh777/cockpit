@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { SettingsDiagnostics } from '../lib/api'
 import { fetchSettingsDiagnostics } from '../lib/api'
-import { AGENT_OPTIONS, labelForAgent } from '../lib/agents'
+import { labelForAgent } from '../lib/agents'
 import type { AgentName } from '../lib/types'
-import { AgentIcon } from './AgentIcon'
+import { AgentPicker } from './AgentPicker'
 import { Icon } from './Icon'
 import {
   applyThemePreference,
@@ -238,22 +238,10 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
         <div className="settings-body">
           <section className="settings-section">
             <h2>Agent</h2>
-            <div className="settings-segment">
-              {AGENT_OPTIONS.map(({ value: agent, label }) => (
-                <button
-                  key={agent}
-                  className={`settings-segment-item agent-${agent} ${defaultAgent === agent ? 'active' : ''}`}
-                  onClick={() => pickAgent(agent)}
-                >
-                  <AgentIcon agent={agent} size={16} />
-                  {label}
-                </button>
-              ))}
-            </div>
+            <AgentPicker value={defaultAgent} onChange={pickAgent} className="settings-agent-picker" variant="grid" />
             <div className="settings-agent-block">
               <div className="settings-agent-title">
-                <AgentIcon agent={defaultAgent} size={16} />
-                {labelForAgent(defaultAgent)} CLI
+                <span>CLI</span>
                 {selectedStatus && (
                   <strong className={`settings-inline-status ${selectedStatus.available ? 'ok' : 'bad'}`}>
                     {selectedStatus.available ? t('common.available') : t('common.unavailable')}
