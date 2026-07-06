@@ -3,8 +3,14 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { EventEnvelope, NormalizedEvent, Source } from '../loaders/types'
 import { loadSessionDetail } from '../sessions-service'
 import { resolveAgent } from '../adapters/registry'
+import type { NativeWriteMode } from '../adapters/types'
 import { filterToolResult, redactSecrets } from '../adapters/sensitive'
 import { resolveSafe } from './resolve'
+
+function parseWriteMode(raw: unknown): NativeWriteMode {
+  // 白名单校验,未知值一律 fallback 到最安全的 read-only。
+  return raw === 'trusted' ? 'trusted' : 'read-only'
+}
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status
@@ -52,12 +58,13 @@ async function handlePostNativeMessage(
   id: string,
   filePath: string,
 ) {
-  const body = (await readBody(req)) as { text?: string }
+  const body = (await readBody(req)) as { text?: string; writeMode?: unknown }
   const text = (body.text ?? '').trim()
   if (!text) {
     sendJson(res, 400, { error: 'empty message' })
     return
   }
+  const writeMode = parseWriteMode(body.writeMode)
 
   const agentName = sessionAgentOf(source)
   if (!agentName) {
@@ -120,6 +127,7 @@ async function handlePostNativeMessage(
       sessionId: id,
       filePath,
       cwd: detail.summary.cwd,
+      writeMode,
       signal: ac.signal,
     })) {
       let ev = raw

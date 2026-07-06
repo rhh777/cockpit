@@ -1,0 +1,218 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 780" font-family="ui-sans-serif,system-ui,-apple-system,Segoe UI,Helvetica,Arial" font-size="13">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1d4ed8"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#047857"/>
+    </marker>
+    <marker id="arrowRed" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/>
+    </marker>
+    <style>
+      .box { fill:#fff; stroke:#333; stroke-width:1.2; rx:8; ry:8; }
+      .ui   { fill:#eef4ff; stroke:#1d4ed8; }
+      .srv  { fill:#f0fdf4; stroke:#047857; }
+      .adp  { fill:#fff7ed; stroke:#c2410c; }
+      .cli  { fill:#fef2f2; stroke:#b91c1c; }
+      .fs   { fill:#f5f3ff; stroke:#6d28d9; }
+      .title { font-weight:700; font-size:14px; }
+      .h     { font-weight:700; font-size:15px; fill:#111; }
+      .mono  { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:11px; fill:#333; }
+      .lbl   { font-size:11px; fill:#333; }
+      .grp   { fill:none; stroke:#94a3b8; stroke-dasharray:6 4; }
+    </style>
+  </defs>
+
+  <text x="20" y="24" class="h">Cockpit ⇄ Agent 集成拓扑(follow-up / group chat / native resume / handoff)</text>
+
+  <!-- UI Column -->
+  <rect class="box ui" x="20" y="50" width="220" height="180"/>
+  <text x="30" y="70" class="title">前端 (React)</text>
+  <text x="30" y="92"  class="lbl">• 三栏 Timeline / Composer</text>
+  <text x="30" y="110" class="lbl">• SSE EventSource 消费</text>
+  <text x="30" y="128" class="lbl">• 只认 NormalizedEvent /</text>
+  <text x="30" y="144" class="lbl">   EventEnvelope,不解原生 schema</text>
+  <text x="30" y="170" class="lbl">POST 路径:</text>
+  <text x="30" y="186" class="mono">/api/threads/:src/:id/messages</text>
+  <text x="30" y="200" class="mono">/api/group-threads/:id/messages</text>
+  <text x="30" y="214" class="mono">/api/native/:src/:id/messages</text>
+  <text x="30" y="228" class="mono">/api/handoffs/:id/open-native</text>
+
+  <!-- Server routes -->
+  <rect class="box srv" x="290" y="50" width="260" height="600"/>
+  <text x="300" y="70" class="title">Vite middleware 后端</text>
+
+  <rect class="box srv" x="300" y="85" width="240" height="70"/>
+  <text x="310" y="103" class="title">routes/threads.ts</text>
+  <text x="310" y="120" class="lbl">follow-up:同 session 追问</text>
+  <text x="310" y="136" class="lbl">落盘 ~/.cockpit/threads/…</text>
+  <text x="310" y="152" class="mono">handlePostMessage → agent.run()</text>
+
+  <rect class="box srv" x="300" y="165" width="240" height="82"/>
+  <text x="310" y="183" class="title">routes/group-threads.ts</text>
+  <text x="310" y="200" class="lbl">@mention 解析 → 并发多 agent</text>
+  <text x="310" y="216" class="lbl">共享 baseEventSeq / transcript</text>
+  <text x="310" y="232" class="lbl">落盘 ~/.cockpit/group-threads/…</text>
+  <text x="310" y="244" class="mono">Promise.all(runs.map(runOne))</text>
+
+  <rect class="box srv" x="300" y="257" width="240" height="72"/>
+  <text x="310" y="275" class="title">routes/native.ts</text>
+  <text x="310" y="292" class="lbl">用户显式选:写回原生会话</text>
+  <text x="310" y="308" class="lbl">调 agent.resumeNative()</text>
+  <text x="310" y="324" class="mono">origin='native',不落 cockpit JSONL</text>
+
+  <rect class="box srv" x="300" y="339" width="240" height="112"/>
+  <text x="310" y="357" class="title">routes/handoffs.ts</text>
+  <text x="310" y="374" class="lbl">buildContext →</text>
+  <text x="310" y="390" class="mono">  ~/.cockpit/handoffs/&lt;id&gt;/*.md</text>
+  <text x="310" y="406" class="lbl">open-native:</text>
+  <text x="310" y="422" class="mono">  codex:  deeplink | app-server</text>
+  <text x="310" y="438" class="mono">  claude: manual prompt (Phase 1)</text>
+
+  <rect class="box srv" x="300" y="461" width="240" height="88"/>
+  <text x="310" y="479" class="title">adapters/serialize.ts</text>
+  <text x="310" y="496" class="lbl">serializeForAgent(ctx,text,agent)</text>
+  <text x="310" y="512" class="lbl">钉首尾 + 中段可截 + redactSecrets</text>
+  <text x="310" y="530" class="lbl">所有 adapter 必须经过它</text>
+  <text x="310" y="544" class="lbl">(不变量 6)</text>
+
+  <rect class="box srv" x="300" y="559" width="240" height="82"/>
+  <text x="310" y="577" class="title">runs/run-registry.ts</text>
+  <text x="310" y="594" class="lbl">runId/turnId、审批回调</text>
+  <text x="310" y="610" class="lbl">SSE 广播 + 落盘 + replay</text>
+  <text x="310" y="626" class="lbl">Codex app-server 进程生命周期</text>
+
+  <!-- Adapters -->
+  <rect class="box adp" x="600" y="50" width="260" height="600"/>
+  <text x="610" y="70" class="title">adapters/registry.ts(不变量 9)</text>
+  <text x="610" y="88" class="lbl">resolveAgent(name) → ReviewAgent</text>
+
+  <rect class="box adp" x="610" y="100" width="240" height="128"/>
+  <text x="620" y="118" class="title">Claude Adapter</text>
+  <text x="620" y="135" class="lbl">run(): 无审批 → CLI 子进程</text>
+  <text x="620" y="149" class="mono">  claude -p --output-format stream-json</text>
+  <text x="620" y="163" class="mono">        --include-partial-messages</text>
+  <text x="620" y="177" class="lbl">run(): 需审批 → Agent SDK</text>
+  <text x="620" y="191" class="mono">  @anthropic-ai/claude-agent-sdk query()</text>
+  <text x="620" y="205" class="mono">  canUseTool → requestApproval()</text>
+  <text x="620" y="221" class="lbl">resumeNative: claude -p --resume &lt;id&gt;</text>
+
+  <rect class="box adp" x="610" y="238" width="240" height="138"/>
+  <text x="620" y="256" class="title">Codex Adapter</text>
+  <text x="620" y="273" class="lbl">run(): 无审批 → CLI 子进程</text>
+  <text x="620" y="287" class="mono">  codex exec --json --sandbox …</text>
+  <text x="620" y="303" class="lbl">run(): 需审批 → app-server</text>
+  <text x="620" y="317" class="mono">  codex app-server --stdio (JSON-RPC)</text>
+  <text x="620" y="331" class="mono">  thread/start → turn/start</text>
+  <text x="620" y="345" class="mono">  server→client requestApproval</text>
+  <text x="620" y="361" class="lbl">resumeNative: codex exec resume &lt;id&gt;</text>
+
+  <rect class="box adp" x="610" y="386" width="240" height="60"/>
+  <text x="620" y="404" class="title">OpenCode / Cursor Adapter</text>
+  <text x="620" y="420" class="mono">opencode run --agent plan</text>
+  <text x="620" y="435" class="mono">cursor-agent -p --mode ask</text>
+
+  <rect class="box adp" x="610" y="456" width="240" height="68"/>
+  <text x="620" y="474" class="title">共同契约(types.ts)</text>
+  <text x="620" y="490" class="lbl">yield NormalizedEvent(不带 envelope)</text>
+  <text x="620" y="504" class="lbl">route 负责补 origin/turnId/runId</text>
+  <text x="620" y="518" class="lbl">requestApproval?、writableRoots、signal</text>
+
+  <rect class="box adp" x="610" y="534" width="240" height="100"/>
+  <text x="620" y="552" class="title">流翻译</text>
+  <text x="620" y="568" class="lbl">Claude: content_block_delta → assistant_text</text>
+  <text x="620" y="584" class="lbl">Codex:  item.started → tool_use,</text>
+  <text x="620" y="598" class="lbl">        item.completed → tool_result</text>
+  <text x="620" y="614" class="lbl">敏感路径过滤 + redactSecrets 双端</text>
+
+  <!-- CLI + FS -->
+  <rect class="box cli" x="910" y="50" width="250" height="270"/>
+  <text x="920" y="70" class="title">本机 CLI(子进程)</text>
+  <text x="920" y="90" class="lbl">复用用户 OAuth / 登录态</text>
+  <text x="920" y="105" class="lbl">Cockpit 不装官方 SDK 认证</text>
+
+  <rect class="box cli" x="920" y="118" width="230" height="60"/>
+  <text x="930" y="136" class="mono">claude</text>
+  <text x="930" y="152" class="lbl">Claude Code CLI</text>
+  <text x="930" y="168" class="lbl">写回 ~/.claude/projects/*.jsonl</text>
+
+  <rect class="box cli" x="920" y="186" width="230" height="60"/>
+  <text x="930" y="204" class="mono">codex</text>
+  <text x="930" y="220" class="lbl">Codex CLI(exec / app-server)</text>
+  <text x="930" y="236" class="lbl">写回 ~/.codex/sessions/*.jsonl</text>
+
+  <rect class="box cli" x="920" y="254" width="230" height="60"/>
+  <text x="930" y="272" class="mono">opencode  cursor-agent</text>
+  <text x="930" y="288" class="lbl">provider-agnostic follow-up</text>
+  <text x="930" y="304" class="lbl">(不参与 native resume)</text>
+
+  <!-- Filesystem -->
+  <rect class="box fs" x="910" y="335" width="250" height="315"/>
+  <text x="920" y="355" class="title">文件系统 = 事实来源</text>
+
+  <rect class="box fs" x="920" y="370" width="230" height="60"/>
+  <text x="930" y="388" class="title">原生 JSONL(只读)</text>
+  <text x="930" y="404" class="mono">~/.claude/projects/…</text>
+  <text x="930" y="420" class="mono">~/.codex/sessions/…</text>
+
+  <rect class="box fs" x="920" y="438" width="230" height="80"/>
+  <text x="930" y="456" class="title">~/.cockpit(可写)</text>
+  <text x="930" y="472" class="mono">threads/&lt;src&gt;/&lt;id&gt;/followups.jsonl</text>
+  <text x="930" y="488" class="mono">group-threads/&lt;id&gt;/transcript.jsonl</text>
+  <text x="930" y="504" class="mono">handoffs/&lt;id&gt;/manifest.json</text>
+
+  <rect class="box fs" x="920" y="526" width="230" height="60"/>
+  <text x="930" y="544" class="title">Watcher</text>
+  <text x="930" y="560" class="lbl">chokidar 监原生 + cockpit 目录</text>
+  <text x="930" y="576" class="lbl">SSE 推 timeline 增量</text>
+
+  <text x="920" y="610" class="lbl">不变量:cockpit 只写 ~/.cockpit;</text>
+  <text x="920" y="626" class="lbl">原生写回必须走官方 CLI 子进程。</text>
+
+  <!-- Arrows -->
+  <!-- UI -> routes -->
+  <path d="M240,140 L290,140" stroke="#1d4ed8" stroke-width="1.6" fill="none" marker-end="url(#arrowBlue)"/>
+  <text x="245" y="132" class="lbl" fill="#1d4ed8">SSE POST</text>
+
+  <!-- routes -> serialize -->
+  <path d="M420,155 C 420,300 420,400 420,461" stroke="#047857" stroke-width="1.4" fill="none" marker-end="url(#arrowGreen)"/>
+  <path d="M420,247 C 460,400 460,430 460,461" stroke="#047857" stroke-width="1" fill="none" marker-end="url(#arrowGreen)" opacity="0.5"/>
+  <path d="M420,329 C 400,400 400,430 400,461" stroke="#047857" stroke-width="1" fill="none" marker-end="url(#arrowGreen)" opacity="0.5"/>
+
+  <!-- serialize -> adapter -->
+  <path d="M540,500 L610,300" stroke="#c2410c" stroke-width="1.4" fill="none" marker-end="url(#arrow)"/>
+  <text x="550" y="405" class="lbl" fill="#c2410c">prompt + ctx</text>
+
+  <!-- adapter -> CLI -->
+  <path d="M850,150 L920,148" stroke="#b91c1c" stroke-width="1.4" fill="none" marker-end="url(#arrowRed)"/>
+  <path d="M850,300 L920,216" stroke="#b91c1c" stroke-width="1.4" fill="none" marker-end="url(#arrowRed)"/>
+  <path d="M850,415 L920,280" stroke="#b91c1c" stroke-width="1" fill="none" marker-end="url(#arrowRed)" opacity="0.6"/>
+
+  <!-- CLI -> native JSONL -->
+  <path d="M1030,178 L1030,370" stroke="#6d28d9" stroke-width="1.4" fill="none" marker-end="url(#arrow)"/>
+  <text x="1040" y="270" class="lbl" fill="#6d28d9">追加</text>
+
+  <!-- routes -> cockpit fs (append) -->
+  <path d="M540,220 C 700,220 810,470 920,470" stroke="#6d28d9" stroke-width="1.2" fill="none" marker-end="url(#arrow)"/>
+  <text x="700" y="330" class="lbl" fill="#6d28d9">append EventEnvelope</text>
+
+  <!-- Watcher -> UI (via SSE) -->
+  <path d="M920,555 C 500,720 100,600 130,230" stroke="#94a3b8" stroke-width="1.2" fill="none" marker-end="url(#arrow)" stroke-dasharray="5 4"/>
+  <text x="440" y="740" class="lbl" fill="#475569">FS watch → sessions SSE → timeline 增量</text>
+
+  <!-- legend -->
+  <rect x="20" y="700" width="16" height="12" class="box ui"/>
+  <text x="42" y="710" class="lbl">前端</text>
+  <rect x="90" y="700" width="16" height="12" class="box srv"/>
+  <text x="112" y="710" class="lbl">后端 route / registry</text>
+  <rect x="230" y="700" width="16" height="12" class="box adp"/>
+  <text x="252" y="710" class="lbl">Agent adapter</text>
+  <rect x="360" y="700" width="16" height="12" class="box cli"/>
+  <text x="382" y="710" class="lbl">本机 CLI 子进程</text>
+  <rect x="490" y="700" width="16" height="12" class="box fs"/>
+  <text x="512" y="710" class="lbl">文件系统 / JSONL</text>
+</svg>

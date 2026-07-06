@@ -28,6 +28,8 @@ type IconName =
   | 'edit'
   | 'trash'
   | 'more-horizontal'
+  | 'lock'
+  | 'alert-triangle'
 
 export function Icon({ name, size = 14, className }: { name: IconName; size?: number; className?: string }) {
   const common = {
@@ -225,6 +227,21 @@ export function Icon({ name, size = 14, className }: { name: IconName; size?: nu
           <circle cx="6" cy="12" r="1.2" fill="currentColor" stroke="none" />
           <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
           <circle cx="18" cy="12" r="1.2" fill="currentColor" stroke="none" />
+        </svg>
+      )
+    case 'lock':
+      return (
+        <svg {...common}>
+          <rect x="5" y="11" width="14" height="9" rx="2" />
+          <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+        </svg>
+      )
+    case 'alert-triangle':
+      return (
+        <svg {...common}>
+          <path d="M12 3.5 21 19H3L12 3.5Z" />
+          <path d="M12 10v4" />
+          <circle cx="12" cy="17" r="0.8" fill="currentColor" stroke="none" />
         </svg>
       )
   }

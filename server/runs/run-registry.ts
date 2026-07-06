@@ -10,6 +10,7 @@ import type { RunRecord, RunStatus } from './run-store'
 import { runStore } from './run-store'
 import { nativeShadowStore } from './native-shadow-store'
 import { CodexAppServer, translateNotification } from '../adapters/codex-app-server'
+import type { NativeWriteMode } from '../adapters/types'
 import { approvalStore } from '../approvals/approval-store'
 import type { ApprovalRequest, Operation, RunPermissions } from '../permissions/types'
 
@@ -68,6 +69,8 @@ interface NativeStartInput {
   filePath: string
   text: string
   attachments?: ChatAttachment[]
+  /** Native resume 只有两档;缺省 read-only。 */
+  writeMode?: NativeWriteMode
 }
 
 interface NativeContinuationInput {
@@ -880,6 +883,7 @@ class RunRegistry {
         sessionId: input.sessionId,
         filePath: input.filePath,
         cwd,
+        writeMode: input.writeMode ?? 'read-only',
         signal: handle.controller.signal,
       })) {
         let ev = raw

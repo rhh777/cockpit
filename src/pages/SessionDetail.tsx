@@ -630,10 +630,10 @@ export function SessionDetail() {
   )
 
   const handleNativeSend = useCallback(
-    (text: string, attachments?: AttachmentDraft[]) => {
+    (text: string, attachments?: AttachmentDraft[], writeMode?: 'read-only' | 'trusted') => {
       if (!source || !id || !canNativeResume(source)) return
       setSendError(null)
-      startNativeResumeRun(source, id, { text, attachments })
+      startNativeResumeRun(source, id, { text, attachments, writeMode })
         .then(({ run, userEnvelope }) => {
           appendEnvelopes([userEnvelope])
           attachNativeRun(run)

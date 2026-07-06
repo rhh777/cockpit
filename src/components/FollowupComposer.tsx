@@ -185,7 +185,11 @@ export function FollowupComposer({
     attachments?: AttachmentDraft[],
     permissions?: RunPermissions,
   ) => void
-  onNativeSend: (text: string, attachments?: AttachmentDraft[]) => void
+  onNativeSend: (
+    text: string,
+    attachments?: AttachmentDraft[],
+    writeMode?: 'read-only' | 'trusted',
+  ) => void
   onCancelAll: () => void
 }) {
   const [text, setText] = useState('')
@@ -204,6 +208,11 @@ export function FollowupComposer({
   const [advancedMenuOpen, setAdvancedMenuOpen] = useState(false)
   const [permissionMenuOpen, setPermissionMenuOpen] = useState(false)
   const [permissionMode, setPermissionMode] = useState<ApprovalMode>('ask')
+  // Native resume 独立开关:每次发送后归零,防止粘性授权。二值:
+  //   false  → --sandbox read-only / --allowedTools Read,Grep,Glob(默认预览)
+  //   true   → --dangerously-bypass-approvals-and-sandbox / --permission-mode bypassPermissions
+  // 不接 cockpit 三档权限选择器 —— CLI headless 接不住 approval 回调。见 docs/10。
+  const [nativeTrustWrite, setNativeTrustWrite] = useState(false)
   const [attachments, setAttachments] = useState<AttachmentDraft[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [reviewDraft, setReviewDraft] = useState(false)
@@ -254,6 +263,11 @@ export function FollowupComposer({
   }, [nativeAvailable, mode, groupMode])
 
   useEffect(() => {
+    // 离开 native 模式或换 session,写回授权立刻失效。
+    if (mode !== 'native') setNativeTrustWrite(false)
+  }, [mode])
+
+  useEffect(() => {
     return () => {
       if (mentionConfirmTimer.current) window.clearTimeout(mentionConfirmTimer.current)
     }
@@ -280,7 +294,10 @@ export function FollowupComposer({
     if (!t && attachments.length === 0) return
     const outgoing = attachments.length ? attachments : undefined
     if (usingNative) {
-      onNativeSend(t, outgoing)
+      onNativeSend(t, outgoing, nativeTrustWrite ? 'trusted' : 'read-only')
+      // 每次发送后回落到 read-only。native resume 是"跨出 cockpit 沙箱"的动作,
+      // 不允许粘性授权 —— 用户下一条要写回必须重新勾选。
+      setNativeTrustWrite(false)
     } else {
       if (!usingMentions && !groupMode) setDefaultAgent(agent)
       // 单 agent 场景按当前 agent 偏好透传;@mentions 多目标下让 caller 走默认,避免一个
@@ -671,6 +688,22 @@ export function FollowupComposer({
                   </div>
                 )}
               </div>
+            )}
+            {!hasActiveStreams && usingNative && (
+              <button
+                type="button"
+                className={`native-write-toggle ${nativeTrustWrite ? 'active' : ''}`}
+                onClick={() => setNativeTrustWrite((v) => !v)}
+                title={
+                  nativeTrustWrite
+                    ? '本次发送将允许 CLI 执行任意工具(等同 claude --continue / codex resume)。发送后自动关闭。'
+                    : '仅只读预览。勾选后允许写回:等同你在终端里跑原 CLI 续写命令。'
+                }
+                aria-pressed={nativeTrustWrite}
+              >
+                <Icon name={nativeTrustWrite ? 'alert-triangle' : 'lock'} size={13} />
+                <span>{nativeTrustWrite ? '允许写回(一次性)' : '只读预览'}</span>
+              </button>
             )}
             {!hasActiveStreams && !usingNative && (
               <div className="permission-menu-wrap" ref={permissionMenuRef}>

@@ -565,8 +565,25 @@ export const claudeAdapter: ReviewAgent = {
     if (input.source !== 'claude-code') {
       throw new Error('Claude native resume 只能用于 Claude Code session')
     }
+    // Native resume 只有两档:read-only 预览 vs trusted 全放行。
+    // trusted 走 --permission-mode bypassPermissions;
+    // read-only 让 claudePermissionArgs 的 useTools=true + 无 permissions 分支给出
+    // `--permission-mode default --allowedTools Read,Grep,Glob`,和 CLI headless 语义对齐。
+    const permissions =
+      input.writeMode === 'trusted'
+        ? { mode: 'full-access' as const, allowNetwork: true, allowWorkspaceWrite: true, allowOutsideWorkspaceWrite: true, allowShell: true }
+        : undefined
     yield* runClaudeWithRetry(
-      () => runClaudePrint(input.text, ['--resume', input.sessionId], input, true),
+      () =>
+        runClaudePrint(
+          input.text,
+          ['--resume', input.sessionId],
+          input,
+          true,
+          undefined,
+          undefined,
+          permissions,
+        ),
       input.signal,
     )
   },

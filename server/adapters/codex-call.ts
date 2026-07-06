@@ -426,9 +426,14 @@ export const codexAdapter: ReviewAgent = {
     // 完成后前端会重新读取 ~/.codex/sessions 中的 JSONL 作为唯一事实来源。
     const codex = await resolveCodexCommand()
     if (!codex) throw new Error('codex CLI 不可用(本机未安装/登录对应 CLI)')
+    // Native resume 只有两档:read-only 预览 vs trusted 全放行。
+    // 没有 auto-safe / ask 中间档 —— CLI headless 接不住 approval,详见 docs/10。
+    const trusted = input.writeMode === 'trusted'
+    const globalArgs = trusted
+      ? ['--dangerously-bypass-approvals-and-sandbox']
+      : ['--sandbox', 'read-only']
     const args = [
-      '--sandbox',
-      'read-only',
+      ...globalArgs,
       '--cd',
       input.cwd ?? process.cwd(),
       'exec',

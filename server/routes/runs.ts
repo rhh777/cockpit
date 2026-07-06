@@ -82,13 +82,14 @@ async function handleStartNative(req: IncomingMessage, res: ServerResponse, sour
     sendJson(res, 404, { error: 'session not found' })
     return
   }
-  const body = (await readBody(req)) as { text?: string; attachments?: AttachmentDraft[] }
+  const body = (await readBody(req)) as { text?: string; attachments?: AttachmentDraft[]; writeMode?: unknown }
   const text = (body.text ?? '').trim()
   const attachments = await normalizeAttachments(threadAttachmentsDir(source, id), body.attachments)
   if (!text && attachments.length === 0) {
     sendJson(res, 400, { error: 'empty message' })
     return
   }
+  const writeMode = body.writeMode === 'trusted' ? 'trusted' : 'read-only'
   try {
     const started = await runRegistry.startNativeResume({
       source,
@@ -96,6 +97,7 @@ async function handleStartNative(req: IncomingMessage, res: ServerResponse, sour
       filePath,
       text,
       attachments: attachments.length ? attachments : undefined,
+      writeMode,
     })
     sendJson(res, 202, {
       run: started.record,

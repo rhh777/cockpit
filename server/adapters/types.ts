@@ -28,6 +28,8 @@ export interface AgentRunInput {
   signal: AbortSignal
 }
 
+export type NativeWriteMode = 'read-only' | 'trusted'
+
 export interface NativeResumeInput {
   /** 当前触发消息(本轮用户请求) */
   text: string
@@ -38,6 +40,10 @@ export interface NativeResumeInput {
   /** 已校验的原生 JSONL 路径,用于后续审计/扩展;adapter 不直接写它 */
   filePath: string
   cwd: string | null
+  /** Native resume 只有两档:read-only 预览 vs trusted 允许写回。
+   *  没有中间"逐工具审批"档 —— CLI headless 接不住 approval,详见 docs/10。
+   *  默认 read-only,trusted 必须由用户在 UI 里显式勾选、每次都要重勾。 */
+  writeMode: NativeWriteMode
   signal: AbortSignal
 }
 

@@ -149,7 +149,7 @@ export async function cancelRun(runId: string): Promise<void> {
 export async function startNativeResumeRun(
   source: string,
   id: string,
-  body: { text: string; attachments?: ChatAttachmentDraft[] },
+  body: { text: string; attachments?: ChatAttachmentDraft[]; writeMode?: 'read-only' | 'trusted' },
 ): Promise<{ run: RunRecord; userEnvelope: EventEnvelope }> {
   const res = await fetch(`/api/native/${encodeURIComponent(source)}/${encodeURIComponent(id)}/runs`, {
     method: 'POST',
@@ -248,7 +248,7 @@ export async function subscribeSessionStream(
 export async function postNativeResumeStream(
   source: string,
   id: string,
-  body: { text: string },
+  body: { text: string; writeMode?: 'read-only' | 'trusted' },
   onMessage: (msg: StreamMessage) => void,
   signal: AbortSignal,
 ): Promise<void> {

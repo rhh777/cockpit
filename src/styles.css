@@ -2475,6 +2475,30 @@ body.resizing * {
 .permission-full-access {
   color: color-mix(in srgb, var(--color-text-danger) 78%, var(--color-text-primary));
 }
+.native-write-toggle {
+  height: 32px;
+  padding: 0 12px;
+  border: 0.5px solid color-mix(in srgb, var(--color-border), transparent 20%);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: var(--compact-font-size);
+  font-weight: 650;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.native-write-toggle:hover {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-text-secondary) 10%, transparent);
+}
+.native-write-toggle.active {
+  color: color-mix(in srgb, var(--color-text-danger) 82%, var(--color-text-primary));
+  border-color: color-mix(in srgb, var(--color-text-danger) 40%, transparent);
+  background: color-mix(in srgb, var(--color-text-danger) 8%, transparent);
+}
 .permission-auto-safe {
   color: color-mix(in srgb, var(--color-followup) 78%, var(--color-text-primary));
 }
