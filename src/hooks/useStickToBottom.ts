@@ -10,11 +10,12 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 // scrollToEnd:把容器滚到最末的具体动作,由调用方按自己的容器实现。
 export function useStickToBottom(
   scrollRef: RefObject<HTMLElement | null>,
-  count: number,
+  signal: unknown,
   scrollToEnd: () => void,
 ) {
   const [atBottom, setAtBottom] = useState(true)
   const [hasNew, setHasNew] = useState(false)
+  const atBottomRef = useRef(true)
 
   const isNearBottom = useCallback(() => {
     const el = scrollRef.current
@@ -24,24 +25,28 @@ export function useStickToBottom(
 
   const onScroll = useCallback(() => {
     const near = isNearBottom()
+    atBottomRef.current = near
     setAtBottom(near)
     if (near) setHasNew(false)
   }, [isNearBottom])
 
   const jumpToBottom = useCallback(() => {
     scrollToEnd()
+    atBottomRef.current = true
+    setAtBottom(true)
     setHasNew(false)
   }, [scrollToEnd])
 
-  // 增长时实时量一次真实位置再决定跟随/提示,不依赖可能过期的缓存状态。
-  const lastCount = useRef(count)
+  // 内容变化后不能再用新的 scrollHeight 判断"之前是否在底部":
+  // 大块追加会把原本贴底的用户瞬间推离底部,所以用滚动事件缓存的上一帧状态。
+  const lastSignal = useRef(signal)
   useEffect(() => {
-    if (count > lastCount.current) {
-      if (isNearBottom()) scrollToEnd()
+    if (!Object.is(signal, lastSignal.current)) {
+      if (atBottomRef.current) scrollToEnd()
       else setHasNew(true)
     }
-    lastCount.current = count
-  }, [count, scrollToEnd, isNearBottom])
+    lastSignal.current = signal
+  }, [signal, scrollToEnd])
 
   return { atBottom, hasNew, onScroll, jumpToBottom }
 }

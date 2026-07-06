@@ -63,15 +63,21 @@ function approvalIntent(approval: ApprovalRequest): {
   verb: string
   target: string
   tone: 'write' | 'shell' | 'network' | 'read'
+  label: string
 } {
   const op = approval.operation
   if (op.kind === 'file_write') {
     const action = op.action === 'delete' ? '删除' : op.action === 'create' ? '创建' : '写入'
-    return { verb: action, target: op.path, tone: 'write' }
+    return { verb: action, target: op.path, tone: 'write', label: '文件变更' }
   }
-  if (op.kind === 'shell') return { verb: '执行', target: op.command, tone: 'shell' }
-  if (op.kind === 'network') return { verb: '访问', target: op.url ?? op.host ?? '网络', tone: 'network' }
-  return { verb: '读取', target: op.path, tone: 'read' }
+  if (op.kind === 'shell') return { verb: '执行', target: op.command, tone: 'shell', label: '终端命令' }
+  if (op.kind === 'network') return { verb: '访问', target: op.url ?? op.host ?? '网络', tone: 'network', label: '网络访问' }
+  return { verb: '读取', target: op.path, tone: 'read', label: '文件读取' }
+}
+
+function approvalPreview(target: string): string {
+  const compact = target.replace(/\s+/g, ' ').trim()
+  return compact.length > 120 ? `${compact.slice(0, 120)}…` : compact
 }
 
 export function SessionDetail() {
@@ -94,6 +100,7 @@ export function SessionDetail() {
   const [streams, setStreams] = useState<ActiveStream[]>([])
   const [sendError, setSendError] = useState<string | null>(null)
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([])
+  const [expandedApprovals, setExpandedApprovals] = useState<Set<string>>(new Set())
   const [activeTrace, setActiveTrace] = useState<TraceGroup | null>(null)
   // 客户端 partition 兜底:即便 server 没回写 parentTurnId / 历史 user_text 没 targetAgent,
   // 也能把 child 轮归回旁路 thread。送出请求时就锁定,不依赖 SSE/loader 字段。
@@ -139,6 +146,12 @@ export function SessionDetail() {
 
   const resolveApprovalInUi = useCallback((approvalId: string) => {
     setPendingApprovals((prev) => prev.filter((a) => a.approvalId !== approvalId))
+    setExpandedApprovals((prev) => {
+      if (!prev.has(approvalId)) return prev
+      const next = new Set(prev)
+      next.delete(approvalId)
+      return next
+    })
   }, [])
 
   const decideApproval = useCallback(
@@ -824,18 +837,54 @@ export function SessionDetail() {
           {pendingApprovals.length > 0 && (
             <div className="approval-stack conversation-banner">
               {pendingApprovals.map((approval) => {
-                const { verb, target, tone } = approvalIntent(approval)
+                const { verb, target, tone, label } = approvalIntent(approval)
+                const expanded = expandedApprovals.has(approval.approvalId)
                 return (
-                  <div key={approval.approvalId} className={`approval-card approval-tone-${tone}`}>
-                    <div className="approval-head">
-                      <span className="approval-agent">{approval.agent}</span>
-                      <span className="approval-verb">请求{verb}</span>
+                  <div key={approval.approvalId} className={`approval-card approval-tone-${tone} ${expanded ? 'is-expanded' : ''}`}>
+                    <div className="approval-icon" aria-hidden="true">
+                      <Icon name={tone === 'read' ? 'lock' : tone === 'shell' ? 'wrench' : 'alert-triangle'} size={16} />
                     </div>
-                    <code className="approval-target">{target}</code>
-                    {approval.reason && <div className="approval-reason">{approval.reason}</div>}
+                    <div className="approval-main">
+                      <div className="approval-head">
+                        <span className="approval-agent">{approval.agent}</span>
+                        <span className="approval-kind">{label}</span>
+                        <span className="approval-verb">请求{verb}</span>
+                      </div>
+                      <div className="approval-summary-row">
+                        <code className="approval-summary" title={target}>{approvalPreview(target)}</code>
+                        {(target || approval.reason) && (
+                          <button
+                            className="approval-disclosure"
+                            onClick={() =>
+                              setExpandedApprovals((prev) => {
+                                const next = new Set(prev)
+                                if (next.has(approval.approvalId)) next.delete(approval.approvalId)
+                                else next.add(approval.approvalId)
+                                return next
+                              })
+                            }
+                            aria-expanded={expanded}
+                          >
+                            {expanded ? '收起' : '详情'}
+                          </button>
+                        )}
+                      </div>
+                      {expanded && (
+                        <div className="approval-details">
+                          <code className="approval-target">{target}</code>
+                          {approval.reason && <div className="approval-reason">{approval.reason}</div>}
+                        </div>
+                      )}
+                    </div>
                     <div className="approval-actions">
-                      <button onClick={() => decideApproval(approval.approvalId, 'reject')}>拒绝</button>
-                      <button className="primary" onClick={() => decideApproval(approval.approvalId, 'approve')}>允许</button>
+                      <button onClick={() => decideApproval(approval.approvalId, 'reject')}>
+                        <Icon name="close" size={14} />
+                        拒绝
+                      </button>
+                      <button className="primary" onClick={() => decideApproval(approval.approvalId, 'approve')}>
+                        <Icon name="check" size={14} />
+                        允许
+                      </button>
                     </div>
                   </div>
                 )

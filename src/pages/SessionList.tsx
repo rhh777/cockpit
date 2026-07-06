@@ -508,11 +508,6 @@ export function SessionList({ style }: { style?: CSSProperties }) {
               onClick={() => setRecentOpen((v) => !v)}
             >
               <span className="project-list-head-main">
-                <Icon
-                  name="chevron-right"
-                  size={12}
-                  className={`project-group-caret ${recentOpen ? 'open' : ''}`}
-                />
                 <Icon name="clock" size={12} />
                 <span>{t('sessions.recent')}</span>
               </span>
@@ -573,11 +568,6 @@ export function SessionList({ style }: { style?: CSSProperties }) {
                   })
                 }
               >
-                <Icon
-                  name="chevron-right"
-                  size={12}
-                  className={`project-group-caret ${open ? 'open' : ''}`}
-                />
                 <Icon name={groupMode === 'project' ? 'folder' : 'clock'} size={15} />
                 <span>{project.label}</span>
                 <span className="project-group-count">{project.items.length}</span>

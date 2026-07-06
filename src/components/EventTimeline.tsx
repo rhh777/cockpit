@@ -80,7 +80,7 @@ export function EventTimeline({
   const scrollToEnd = useCallback(() => {
     if (rows.length > 0) virtualizer.scrollToIndex(rows.length - 1, { align: 'end' })
   }, [rows.length, virtualizer])
-  const { atBottom, hasNew, onScroll, jumpToBottom } = useStickToBottom(scrollRef, rows.length, scrollToEnd)
+  const { atBottom, hasNew, onScroll, jumpToBottom } = useStickToBottom(scrollRef, events.length, scrollToEnd)
 
   return (
     <div className="timeline-wrap">
