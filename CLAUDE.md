@@ -33,6 +33,20 @@ This file gives guidance to anyone working in this repository (Claude Code or ot
 
 文档记录的是已定决策。
 
+## UI 改动同步规则
+
+任何 UI 改动都必须先判断是否影响另一个页面或模式。尤其是 agent 选择、模型/权限 chip、composer、timeline agent 头像、状态提示这些共享体验,不能只改当前看到的页面。
+
+- 改 agent 名称、顺序、可选项、默认值:先改 `src/lib/agents.ts`,再检查 `AgentIcon`、`AgentPicker`、`FollowupComposer`、`SessionList`、`SessionDetail`、`ReviewPanel`、`StreamingStatus` 是否仍一致。
+- 改 agent 图标、颜色、尺寸、选中态:优先改共享组件/样式(`AgentIcon` / `AgentPicker` / 全局 agent class),不要在群聊或单聊页面各写一套。
+- 改 composer 布局或交互:同时检查单聊 follow-up、原生续写、群聊三个状态。群聊可以有多 agent 设置,但视觉语言必须和单聊 agent picker / model picker 对齐。
+- 改文案或占位符:同步中英文 i18n,并确认单聊与群聊的语义差异只是必要差异,不是风格漂移。
+- 新增 agent 或 CLI 参数:必须同时覆盖 agent 列表、@mention、群聊成员、单聊默认 agent、streaming 状态、权限/模型 picker、设置页检测状态。
+- 复用优先级:先抽到共享组件或共享常量;只有页面确有不同信息架构时才允许局部差异,并在代码注释里说明原因。
+- 提交前至少人工走查两个入口:一个原生 session 详情页的单聊 composer,一个 cockpit 群聊页的 composer/agent 列表。
+
+如果某次改动故意只影响一种模式,PR/提交说明必须写清楚"为什么不影响另一种模式"。
+
 ## 技术栈与命令
 
 Vite + React 19 + TypeScript,Vite middleware 后端,SSE,Tailwind v4,`react-markdown` + `shiki`,`@tanstack/react-virtual`,无数据库。可选 Electron。

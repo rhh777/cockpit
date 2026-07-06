@@ -109,6 +109,18 @@
   - 回到原会话:**"将通过本机 {claude|codex} CLI 续写这个原生 session,完成后以原生历史为准刷新时间线"**;并提示桌面端可能需重启才能看到。
 - 发送中 → 发送键变取消;流式部分已落盘保留(`01 §五 流程 B`)。
 
+### 4.4.1 Agent 选择器一致性
+
+Agent 相关 UI 是全局组件体系,不是单聊/群聊各自发挥的局部控件。
+
+- Agent 名称、顺序和 label 的唯一来源是 `src/lib/agents.ts` 的 `AGENT_OPTIONS` / `labelForAgent`。
+- Agent 图标的唯一入口是 `src/components/AgentIcon.tsx`;页面不直接拼图片、不手写 agent 字母 badge。
+- 单选 agent 使用 `AgentPicker`;群聊里的多 agent 展示、@mention 菜单、每个 agent 的模型 picker 必须沿用同一套 icon、label、尺寸节奏、选中态颜色。
+- 同一个 agent 在以下位置必须保持一致:侧栏 session 来源、详情头来源、timeline 头像、ReviewPanel 头像、StreamingStatus、composer agent picker、群聊成员/模型设置、@mention 候选列表。
+- 单聊和群聊允许交互模型不同:单聊默认一个 agent,群聊可多 agent 并行;但按钮高度、圆角、字体大小、图标尺寸、active/hover/disabled 状态必须来自同一视觉语言。
+- 新增 agent 时必须同步检查:`AGENT_OPTIONS`、`AgentIcon.normalizeAgent`、agent CSS class、`FollowupComposer` 的 @mention/模型参数、设置页 CLI 检测、server adapter registry。
+- 不允许为了修一个页面的视觉问题而在另一个页面制造不同步;若需要页面特化,先抽出共享 primitive,再用 prop 控制差异。
+
 ### 4.5 ReviewPanel(右侧可拖拽侧栏)
 
 - 详情页右侧抽屉,展示**当前 follow-up 轮次的结构化 review 视图**(verdict / reasons / suggestions),与 timeline 并列,便于"边看 timeline 边对照 reviewer 结论"。
@@ -161,3 +173,5 @@
 4. 只读语义必须在 composer 与工具卡上**可见**,不能只藏在设置里。
 5. 任何"将通过本机 CLI 运行"的提示必须明示,不暗示数据外发路径。
 6. 所有颜色走 CSS 变量 / 色板类,深色模式可读;禁硬编码颜色。
+7. Agent 选择、图标、label、顺序、active 状态必须由共享常量/共享组件驱动,单聊和群聊不得分叉实现。
+8. 修改 composer、agent picker、model picker、@mention、streaming 状态时,必须同时走查单聊详情页和群聊页。
