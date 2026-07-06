@@ -15,16 +15,93 @@ import type { Operation } from '../permissions/types'
 import { stringifyToolResult } from '../util/jsonl'
 
 const CLAUDE_TRANSIENT_RETRY_ATTEMPTS = 2
+const CLAUDE_AVAILABILITY_TTL_MS = 60 * 1000
 
 type ClaudeAgentSdkModule = typeof import('@anthropic-ai/claude-agent-sdk')
+type ClaudeCommandExists = typeof commandExists
+type ClaudeSdkImporter = (specifier: string) => Promise<ClaudeAgentSdkModule>
 
-async function loadClaudeAgentSdk(): Promise<ClaudeAgentSdkModule> {
+interface ClaudeAvailabilityCache {
+  checkedAt: number
+  available: boolean
+}
+
+export interface ClaudeWarmupStatus {
+  cliAvailable: boolean
+  sdkLoaded: boolean
+  sdkError?: string
+}
+
+let claudeAvailabilityCache: ClaudeAvailabilityCache | null = null
+let claudeCommandExists: ClaudeCommandExists = commandExists
+let claudeAgentSdkPromise: Promise<ClaudeAgentSdkModule> | null = null
+let claudeSdkImporter: ClaudeSdkImporter = (specifier) => {
   // Keep the SDK out of Electron's CJS main-process bundle. The package uses
   // ESM metadata internally, so bundling it into main.cjs breaks import.meta.url.
-  const dynamicImport = new Function('specifier', 'return import(specifier)') as (
-    specifier: string,
-  ) => Promise<ClaudeAgentSdkModule>
-  return dynamicImport('@anthropic-ai/claude-agent-sdk')
+  const dynamicImport = new Function('specifier', 'return import(specifier)') as ClaudeSdkImporter
+  return dynamicImport(specifier)
+}
+
+async function loadClaudeAgentSdk(): Promise<ClaudeAgentSdkModule> {
+  if (!claudeAgentSdkPromise) {
+    claudeAgentSdkPromise = claudeSdkImporter('@anthropic-ai/claude-agent-sdk').catch((err) => {
+      claudeAgentSdkPromise = null
+      throw err
+    })
+  }
+  return claudeAgentSdkPromise
+}
+
+async function isClaudeCliAvailable(force = false, now = Date.now()): Promise<boolean> {
+  if (!force && claudeAvailabilityCache && now - claudeAvailabilityCache.checkedAt < CLAUDE_AVAILABILITY_TTL_MS) {
+    return claudeAvailabilityCache.available
+  }
+  const available = await claudeCommandExists('claude', ['--version'])
+  if (available) {
+    claudeAvailabilityCache = { checkedAt: now, available }
+  } else {
+    claudeAvailabilityCache = null
+  }
+  return available
+}
+
+export async function warmupClaudeRuntime(input: {
+  includeSdk?: boolean
+  force?: boolean
+  now?: number
+} = {}): Promise<ClaudeWarmupStatus> {
+  const cliAvailable = await isClaudeCliAvailable(input.force ?? false, input.now ?? Date.now())
+  if (!input.includeSdk) return { cliAvailable, sdkLoaded: false }
+  try {
+    await loadClaudeAgentSdk()
+    return { cliAvailable, sdkLoaded: true }
+  } catch (err) {
+    return {
+      cliAvailable,
+      sdkLoaded: false,
+      sdkError: String((err as Error)?.message ?? err),
+    }
+  }
+}
+
+export function __setClaudeCommandExistsForTest(fn: ClaudeCommandExists): void {
+  claudeCommandExists = fn
+  claudeAvailabilityCache = null
+}
+
+export function __setClaudeSdkImporterForTest(fn: ClaudeSdkImporter): void {
+  claudeSdkImporter = fn
+  claudeAgentSdkPromise = null
+}
+
+export function __resetClaudeRuntimeCachesForTest(): void {
+  claudeCommandExists = commandExists
+  claudeAvailabilityCache = null
+  claudeAgentSdkPromise = null
+  claudeSdkImporter = (specifier) => {
+    const dynamicImport = new Function('specifier', 'return import(specifier)') as ClaudeSdkImporter
+    return dynamicImport(specifier)
+  }
 }
 
 function isRetryableClaudeError(message: string): boolean {
@@ -533,7 +610,11 @@ export const claudeAdapter: ReviewAgent = {
   name: 'claude',
 
   async isAvailable() {
-    return commandExists('claude', ['--version'])
+    return isClaudeCliAvailable()
+  },
+
+  async warmup() {
+    return warmupClaudeRuntime({ includeSdk: true })
   },
 
   async *run(input: AgentRunInput): AsyncGenerator<NormalizedEvent> {

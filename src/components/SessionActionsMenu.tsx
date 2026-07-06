@@ -39,6 +39,12 @@ function sourceRefFor(source: string, sessionId: string, isGroup: boolean): Hand
   return { kind: 'native-session', source, sessionId }
 }
 
+function sessionAgentOf(source: string): 'codex' | 'claude' | null {
+  if (source === 'codex') return 'codex'
+  if (source === 'claude-code') return 'claude'
+  return null
+}
+
 export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
@@ -47,6 +53,9 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
   const [result, setResult] = useState<HandoffResult | null>(null)
   const [groupChooserOpen, setGroupChooserOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const currentNativeAgent = isGroup ? null : sessionAgentOf(source)
+  const showCodexContinue = currentNativeAgent !== 'codex'
+  const showClaudeContinue = currentNativeAgent !== 'claude'
 
   useEffect(() => {
     if (!open) return
@@ -123,15 +132,21 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
           >
             {isGroup ? '已是群聊' : '转为群聊…'}
           </button>
-          <button role="menuitem" onClick={() => runAction('codex')}>
-            和 Codex 继续
-          </button>
-          <button role="menuitem" onClick={() => runAction('codex-app-server')}>
-            和 Codex 继续(深集成)
-          </button>
-          <button role="menuitem" onClick={() => runAction('claude')}>
-            和 Claude 继续
-          </button>
+          {showCodexContinue && (
+            <>
+              <button role="menuitem" onClick={() => runAction('codex')}>
+                和 Codex 继续
+              </button>
+              <button role="menuitem" onClick={() => runAction('codex-app-server')}>
+                和 Codex 继续(深集成)
+              </button>
+            </>
+          )}
+          {showClaudeContinue && (
+            <button role="menuitem" onClick={() => runAction('claude')}>
+              和 Claude 继续
+            </button>
+          )}
           <button role="menuitem" onClick={() => runAction('handoff')}>
             生成 Handoff
           </button>

@@ -305,6 +305,7 @@ async function handlePostMessage(req: IncomingMessage, res: ServerResponse, id: 
   const summary = await groupThreadStore.readSummary(id)
   const useTools = body.useTools ?? true
   const cliByAgent = body.cliByAgent ?? {}
+  const permissions = normalizeRunPermissions(body.permissions)
 
   const runOne = async (run: ActiveRun) => {
     const agent = resolveAgent(run.agent)
@@ -319,8 +320,15 @@ async function handlePostMessage(req: IncomingMessage, res: ServerResponse, id: 
         targetAgent: run.agent,
         cwd: state.cwd,
         useTools,
+        permissions,
         model: cliByAgent[run.agent]?.model,
         effort: cliByAgent[run.agent]?.effort,
+        // Legacy POST+SSE path has no approval card plumbing. Supplying this keeps
+        // Codex on app-server/read-only while preserving the old safe behavior.
+        requestApproval:
+          run.agent === 'codex'
+            ? async () => 'rejected'
+            : undefined,
         signal: run.controller.signal,
       })) {
         let ev = raw

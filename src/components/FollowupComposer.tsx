@@ -3,11 +3,7 @@ import type { AgentName, ChatAttachment } from '../lib/types'
 import { Icon } from './Icon'
 import { AgentIcon } from './AgentIcon'
 import { AgentPicker } from './AgentPicker'
-import {
-  PREFERENCES_CHANGED_EVENT,
-  readDefaultAgent,
-  setDefaultAgent,
-} from '../lib/preferences'
+import { setDefaultAgent } from '../lib/preferences'
 import { parseMentions } from '../lib/mentions'
 import { AGENT_OPTIONS, labelForAgent } from '../lib/agents'
 import type { ApprovalMode, RunPermissions } from '../lib/types'
@@ -193,7 +189,7 @@ export function FollowupComposer({
   onCancelAll: () => void
 }) {
   const [text, setText] = useState('')
-  const [agent, setAgent] = useState<AgentName>('claude')
+  const [agent, setAgent] = useState<AgentName>(sessionAgent)
   const [mode, setMode] = useState<SendMode>('followup')
   // 按当前 composer 临时记录 model / reasoning 选择。空串 = Default。
   // 不跨 session 持久化,避免新开的会话继承上一次临时挑的模型。
@@ -226,16 +222,8 @@ export function FollowupComposer({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
 
   useEffect(() => {
-    setAgent(readDefaultAgent())
-  }, [])
-
-  useEffect(() => {
-    const onPrefs = () => {
-      setAgent(readDefaultAgent())
-    }
-    window.addEventListener(PREFERENCES_CHANGED_EVENT, onPrefs)
-    return () => window.removeEventListener(PREFERENCES_CHANGED_EVENT, onPrefs)
-  }, [])
+    setAgent(sessionAgent)
+  }, [sessionAgent])
 
   useEffect(() => {
     if (!modelMenuOpen && !attachmentMenuOpen && !advancedMenuOpen && !permissionMenuOpen) return
@@ -444,17 +432,34 @@ export function FollowupComposer({
   const renderModelPicker = (targetAgent: AgentName, withAgent = false) => {
     const targetGroups = CLI_GROUPS[targetAgent] ?? []
     const targetSel = cliByAgent[targetAgent] ?? {}
+    const label = triggerLabel(targetAgent)
+    const hasCustomSelection = label !== 'Default'
+    const isTargeted = groupMode && targets.includes(targetAgent)
     return (
-      <div className={`model-picker ${withAgent ? 'group-model-picker' : ''}`}>
+      <div
+        className={[
+          'model-picker',
+          withAgent ? `group-model-picker agent-${targetAgent}` : '',
+          withAgent && isTargeted ? 'targeted' : '',
+          withAgent && hasCustomSelection ? 'configured' : '',
+        ].filter(Boolean).join(' ')}
+      >
         <button
           className="model-picker-btn"
           onClick={() => setModelMenuOpen((v) => (v === targetAgent ? null : targetAgent))}
-          title={`${labelForAgent(targetAgent)} CLI 参数`}
+          title={`${labelForAgent(targetAgent)} CLI 参数${hasCustomSelection ? `: ${label}` : ''}`}
+          aria-haspopup="menu"
+          aria-expanded={modelMenuOpen === targetAgent}
+          aria-pressed={withAgent ? isTargeted : undefined}
         >
-          <Icon name="settings" size={12} />
+          {!withAgent && <Icon name="settings" size={12} />}
           {withAgent && <AgentIcon agent={targetAgent} size={16} />}
           {withAgent && <span className="model-picker-agent">{labelForAgent(targetAgent)}</span>}
-          <span>{triggerLabel(targetAgent)}</span>
+          {(!withAgent || hasCustomSelection) && (
+            <span className={withAgent ? 'model-picker-selection' : undefined}>
+              {label}
+            </span>
+          )}
           <span className="model-picker-caret">▾</span>
         </button>
         {modelMenuOpen === targetAgent && (

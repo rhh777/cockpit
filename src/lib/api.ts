@@ -26,6 +26,7 @@ export interface ActiveRunDTO {
   sessionId?: string
   groupThreadId?: string
   turnId: string
+  parentTurnId?: string
   agent: string
   startedAt: string
 }
@@ -271,4 +272,12 @@ export interface SettingsDiagnostics {
 
 export function fetchSettingsDiagnostics(): Promise<SettingsDiagnostics> {
   return getJson('/api/settings/diagnostics')
+}
+
+export async function warmupAgent(agent: string): Promise<void> {
+  await fetch('/api/settings/warmup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent }),
+  }).catch(() => {})
 }

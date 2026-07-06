@@ -7,11 +7,11 @@ import type { AgentRunInput, NativeResumeInput, ReviewAgent } from './types'
 import { resolveCodexCommand } from './codex-command'
 import { codexGlobalArgsForPermissions, codexSandboxForPermissions } from '../permissions/adapter-policy'
 import {
-  CodexAppServer,
   codexThreadSettings,
   mapCodexApprovalRequest,
   translateNotification,
 } from './codex-app-server'
+import { codexRuntimeManager, type CodexRuntimeLease } from './codex-runtime-manager'
 
 // `codex exec --json` 输出的是 codex-sdk ThreadEvent JSONL(不是 rollout 会话格式),
 // 顶层 {type:'item.started'|'item.completed'|'item.updated', item:{type:...}}。
@@ -25,6 +25,7 @@ const TOOL_ITEM_TYPES = new Set([
 ])
 
 const CODEX_TRANSIENT_RETRY_ATTEMPTS = 2
+const CODEX_APP_SERVER_INTERRUPT_TIMEOUT_MS = 5000
 
 function isRetryableCodexError(message: string): boolean {
   const m = message.toLowerCase()
@@ -162,75 +163,119 @@ class AsyncEventQueue<T> {
   }
 }
 
-async function initializeCodexAppServer(server: CodexAppServer): Promise<void> {
-  await server.request('initialize', {
-    clientInfo: { name: 'cockpit', title: 'Cockpit', version: '0.1.0' },
-    capabilities: { experimentalApi: true, requestAttestation: false },
-  })
-  server.notify('initialized')
+function notificationThreadId(params: unknown): string | null {
+  if (!params || typeof params !== 'object') return null
+  const value = (params as Record<string, unknown>).threadId
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+function notificationTurnId(params: unknown): string | null {
+  if (!params || typeof params !== 'object') return null
+  const topLevel = (params as Record<string, unknown>).turnId
+  if (typeof topLevel === 'string' && topLevel.length > 0) return topLevel
+  const turn = (params as Record<string, unknown>).turn
+  if (!turn || typeof turn !== 'object') return null
+  const nested = (turn as Record<string, unknown>).id
+  return typeof nested === 'string' && nested.length > 0 ? nested : null
 }
 
 async function* runCodexAppServer(input: AgentRunInput): AsyncGenerator<NormalizedEvent> {
   if (!input.requestApproval) throw new Error('Codex app-server approval requires requestApproval callback')
   const prompt = serializeForAgent(input.contextEvents, input.text, 'codex')
-  const server = new CodexAppServer()
-  await server.spawn()
+  let lease: CodexRuntimeLease | null = null
 
   const queue = new AsyncEventQueue<NormalizedEvent>()
   let threadId: string | null = null
+  let turnId: string | null = null
   let turnDone = false
   let turnError: string | null = null
+  let interruptTimer: NodeJS.Timeout | null = null
   let settle: (() => void) | null = null
   const done = new Promise<void>((resolve) => {
     settle = resolve
   })
 
-  server.onNotification = (n) => {
-    for (const ev of translateNotification(n.method, n.params, threadId)) queue.push(ev)
-    if (n.method === 'turn/completed') {
-      turnDone = true
-      settle?.()
-    } else if (n.method === 'error') {
-      turnError = String((n.params as any)?.error?.message ?? 'app-server error')
-      settle?.()
-    }
-  }
-  server.onServerRequest = (r) => {
-    void (async () => {
-      const mapping = mapCodexApprovalRequest(r.method, r.params)
-      if (!mapping) {
-        server.respond(r.id, {
-          error: { code: -32601, message: `Unsupported Codex server request: ${r.method}` },
-        })
-        return
-      }
-      try {
-        const status = await input.requestApproval!(mapping.operation, mapping.reason)
-        server.respond(r.id, mapping.responseFor(status))
-      } catch (err) {
-        server.respond(r.id, {
-          error: { code: -32000, message: String((err as Error)?.message ?? err) },
-        })
-      }
-    })()
-  }
-
-  const loopP = server.readLoop().catch((err) => {
-    if (!input.signal.aborted) {
-      turnError = String((err as Error)?.message ?? err)
-      settle?.()
-      queue.close(err as Error)
-    }
-  })
-  const onAbort = () => {
-    server.kill()
+  const closeAfterAbortTimeout = () => {
+    if (turnDone) return
+    turnError = 'aborted'
+    lease?.disposeRuntime(new Error('codex app-server interrupt timeout'))
     queue.close(new Error('aborted'))
     settle?.()
+  }
+
+  const interruptActiveTurn = () => {
+    const activeLease = lease
+    if (!activeLease || !threadId || !turnId) {
+      activeLease?.disposeRuntime(new Error('codex app-server aborted before turn id'))
+      queue.close(new Error('aborted'))
+      settle?.()
+      return
+    }
+    void activeLease.server.request('turn/interrupt', { threadId, turnId }).catch((err) => {
+      turnError = String((err as Error)?.message ?? err)
+      activeLease.disposeRuntime(new Error(`codex app-server interrupt failed: ${turnError}`))
+      queue.close(new Error('aborted'))
+      settle?.()
+    })
+    interruptTimer = setTimeout(
+      closeAfterAbortTimeout,
+      CODEX_APP_SERVER_INTERRUPT_TIMEOUT_MS,
+    )
+    interruptTimer.unref?.()
+  }
+
+  const onAbort = () => {
+    interruptActiveTurn()
   }
   input.signal.addEventListener('abort', onAbort, { once: true })
 
   try {
-    await initializeCodexAppServer(server)
+    lease = await codexRuntimeManager.acquire(input.signal)
+    const server = lease.server
+    lease.setHandlers({
+      onNotification(n) {
+        const eventThreadId = notificationThreadId(n.params)
+        const eventTurnId = notificationTurnId(n.params)
+        if (eventThreadId) threadId = threadId ?? eventThreadId
+        if (eventTurnId) turnId = turnId ?? eventTurnId
+
+        for (const ev of translateNotification(n.method, n.params, eventThreadId ?? threadId)) queue.push(ev)
+        if (n.method === 'turn/completed') {
+          turnDone = true
+          if (interruptTimer) clearTimeout(interruptTimer)
+          settle?.()
+        } else if (n.method === 'error') {
+          turnError = String((n.params as any)?.error?.message ?? 'app-server error')
+          if (interruptTimer) clearTimeout(interruptTimer)
+          settle?.()
+        }
+      },
+      onServerRequest(r) {
+        void (async () => {
+          const mapping = mapCodexApprovalRequest(r.method, r.params)
+          if (!mapping) {
+            server.respond(r.id, {
+              error: { code: -32601, message: `Unsupported Codex server request: ${r.method}` },
+            })
+            return
+          }
+          try {
+            const status = await input.requestApproval!(mapping.operation, mapping.reason)
+            server.respond(r.id, mapping.responseFor(status))
+          } catch (err) {
+            server.respond(r.id, {
+              error: { code: -32000, message: String((err as Error)?.message ?? err) },
+            })
+          }
+        })()
+      },
+      onError(err) {
+        turnError = String(err.message ?? err)
+        queue.close(err)
+        settle?.()
+      },
+    })
+
     const settings = codexThreadSettings({
       mode: input.permissions?.mode,
       cwd: input.cwd,
@@ -246,11 +291,12 @@ async function* runCodexAppServer(input: AgentRunInput): AsyncGenerator<Normaliz
     threadId = thread.thread?.id ?? null
     if (!threadId) throw new Error('codex app-server 未返回 threadId')
 
-    await server.request('turn/start', {
+    const turn = (await server.request('turn/start', {
       threadId,
       input: [{ type: 'text', text: prompt, text_elements: [] }],
       ...settings,
-    })
+    })) as { turn?: { id?: string } }
+    turnId = turn.turn?.id ?? turnId
 
     void done.then(() => queue.close())
     for await (const ev of queue) yield ev
@@ -260,8 +306,8 @@ async function* runCodexAppServer(input: AgentRunInput): AsyncGenerator<Normaliz
     if (!turnDone) throw new Error('turn interrupted')
   } finally {
     input.signal.removeEventListener('abort', onAbort)
-    server.kill()
-    await loopP.catch(() => {})
+    if (interruptTimer) clearTimeout(interruptTimer)
+    lease?.release()
   }
 }
 

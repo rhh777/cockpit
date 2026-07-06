@@ -2970,15 +2970,15 @@ body.resizing * {
   gap: 4px;
 }
 .mention-chip {
-  font-size: var(--small-font-size);
-  min-height: 26px;
-  padding: 3px 8px;
+  font-size: var(--compact-font-size);
+  min-height: 30px;
+  padding: 3px 9px;
   border-radius: 6px;
-  font-family: var(--font-mono);
   border: 0.5px solid transparent;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
+  font-weight: 600;
 }
 .mention-chip.agent-claude {
   background: var(--color-claude-bg);
@@ -3003,13 +3003,15 @@ body.resizing * {
 .mention-menu {
   position: absolute;
   left: 14px;
-  bottom: calc(100% - 2px);
-  width: 210px;
-  padding: 4px;
-  border: 0.5px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-background-primary);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
+  bottom: calc(100% + 8px);
+  width: 224px;
+  padding: 6px;
+  border: 0.5px solid color-mix(in srgb, var(--color-border), transparent 8%);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-background-primary) 92%, transparent);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.16), 0 1px 0 rgba(255, 255, 255, 0.46) inset;
+  backdrop-filter: blur(22px) saturate(1.35);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
   z-index: 70;
   display: flex;
   flex-direction: column;
@@ -3019,49 +3021,45 @@ body.resizing * {
   position: relative;
   border: 0.5px solid transparent;
   background: transparent;
-  border-radius: 6px;
+  border-radius: 8px;
   color: var(--color-text-primary);
   cursor: pointer;
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr);
   align-items: center;
-  gap: 7px;
-  padding: 7px 8px;
-  font-size: var(--compact-font-size);
-  font-family: var(--font-mono);
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 8px;
+  font-size: var(--app-font-size);
+  font-weight: 560;
   text-align: left;
 }
 .mention-menu-item:hover {
-  background: var(--color-background-secondary);
+  background: color-mix(in srgb, var(--color-text-primary) 7%, transparent);
 }
 .mention-menu-item.active {
   background: color-mix(in srgb, var(--color-followup) 12%, var(--color-background-primary));
   border-color: color-mix(in srgb, var(--color-followup) 34%, var(--color-border));
-  box-shadow: inset 3px 0 0 var(--color-followup);
 }
 .mention-menu-item.active.agent-claude {
   color: var(--color-claude-fg);
   background: color-mix(in srgb, var(--color-claude-bg) 72%, var(--color-background-primary));
   border-color: color-mix(in srgb, var(--color-claude-fg) 38%, var(--color-border));
-  box-shadow: inset 3px 0 0 var(--color-claude-fg);
 }
 .mention-menu-item.active.agent-codex {
   color: var(--color-codex-fg);
   background: color-mix(in srgb, var(--color-codex-bg) 76%, var(--color-background-primary));
   border-color: color-mix(in srgb, var(--color-codex-fg) 38%, var(--color-border));
-  box-shadow: inset 3px 0 0 var(--color-codex-fg);
 }
 .mention-menu-item.active.agent-opencode {
   color: var(--color-opencode-fg);
   background: color-mix(in srgb, var(--color-opencode-bg) 76%, var(--color-background-primary));
   border-color: color-mix(in srgb, var(--color-opencode-fg) 38%, var(--color-border));
-  box-shadow: inset 3px 0 0 var(--color-opencode-fg);
 }
 .mention-menu-item.active.agent-cursor {
   color: var(--color-cursor-fg);
   background: color-mix(in srgb, var(--color-cursor-bg) 76%, var(--color-background-primary));
   border-color: color-mix(in srgb, var(--color-cursor-fg) 38%, var(--color-border));
-  box-shadow: inset 3px 0 0 var(--color-cursor-fg);
 }
 .mention-menu-label {
   min-width: 0;
@@ -3654,14 +3652,12 @@ body.resizing * {
 .group-model-settings .model-picker {
   margin-left: 0;
 }
-.group-model-picker .model-picker-btn {
-  min-height: 32px;
-  padding: 4px 8px;
-  gap: 6px;
-}
 .model-picker-agent {
   color: var(--color-text-primary);
   font-weight: 650;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .model-picker-btn {
   min-height: 30px;
@@ -3683,6 +3679,64 @@ body.resizing * {
   color: var(--color-followup);
   border-color: color-mix(in srgb, var(--color-followup) 35%, var(--color-border));
   background: color-mix(in srgb, var(--color-followup) 8%, var(--color-background-primary));
+}
+.group-model-picker .model-picker-btn {
+  min-height: 34px;
+  min-width: 118px;
+  max-width: 224px;
+  padding: 4px 8px 4px 9px;
+  gap: 6px;
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-background-primary) 96%, white 4%), var(--color-background-secondary));
+  color: var(--color-text-primary);
+  font-weight: 620;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.58);
+}
+.group-model-picker.configured .model-picker-btn {
+  min-width: 172px;
+}
+.group-model-picker .model-picker-btn:hover,
+.group-model-picker .model-picker-btn[aria-expanded='true'] {
+  border-color: color-mix(in srgb, var(--color-followup) 32%, var(--color-border));
+  background: color-mix(in srgb, var(--color-followup) 7%, var(--color-background-primary));
+  color: var(--color-text-primary);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.07), 0 0 0 2px color-mix(in srgb, var(--color-followup) 9%, transparent);
+}
+.group-model-picker.agent-claude .model-picker-btn:hover,
+.group-model-picker.agent-claude.targeted .model-picker-btn {
+  border-color: color-mix(in srgb, var(--color-claude-fg) 32%, var(--color-border));
+  background: color-mix(in srgb, var(--color-claude-bg) 44%, var(--color-background-primary));
+}
+.group-model-picker.agent-codex .model-picker-btn:hover,
+.group-model-picker.agent-codex.targeted .model-picker-btn {
+  border-color: color-mix(in srgb, var(--color-codex-fg) 32%, var(--color-border));
+  background: color-mix(in srgb, var(--color-codex-bg) 48%, var(--color-background-primary));
+}
+.group-model-picker.agent-opencode .model-picker-btn:hover,
+.group-model-picker.agent-opencode.targeted .model-picker-btn {
+  border-color: color-mix(in srgb, var(--color-opencode-fg) 32%, var(--color-border));
+  background: color-mix(in srgb, var(--color-opencode-bg) 48%, var(--color-background-primary));
+}
+.group-model-picker.agent-cursor .model-picker-btn:hover,
+.group-model-picker.agent-cursor.targeted .model-picker-btn {
+  border-color: color-mix(in srgb, var(--color-cursor-fg) 32%, var(--color-border));
+  background: color-mix(in srgb, var(--color-cursor-bg) 48%, var(--color-background-primary));
+}
+.group-model-picker.targeted .model-picker-btn {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-followup) 10%, transparent), 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+.model-picker-selection {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-secondary);
+  font-weight: 560;
+}
+.model-picker-selection::before {
+  content: '·';
+  margin-right: 6px;
+  color: color-mix(in srgb, var(--color-text-secondary) 62%, transparent);
 }
 .model-picker-caret {
   font-size: 9px;

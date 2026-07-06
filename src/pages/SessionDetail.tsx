@@ -110,10 +110,12 @@ export function SessionDetail() {
   }>({ parentOf: {}, agentOf: {} })
 
   const eventsLenRef = useRef(0)
+  const eventsRef = useRef<EventEnvelope[]>([])
   const seenIds = useRef<Set<string>>(new Set())
   const streamsRef = useRef<ActiveStream[]>([])
   const abortsRef = useRef<Map<string, () => void>>(new Map())
   eventsLenRef.current = events.length
+  eventsRef.current = events
   streamsRef.current = streams
 
   // 去重追加(不变量 12):按 sourceEventId,无 id 用 seenIds 当前大小兜底。
@@ -166,6 +168,14 @@ export function SessionDetail() {
     },
     [resolveApprovalInUi],
   )
+
+  const findParentTurnId = useCallback((turnId: string): string | undefined => {
+    for (const env of eventsRef.current) {
+      if (env.turnId !== turnId) continue
+      if (env.event.type === 'user_text' && env.event.parentTurnId) return env.event.parentTurnId
+    }
+    return undefined
+  }, [])
 
   const attachFollowupRun = useCallback(
     (run: RunRecord, parentTurnId?: string) => {
@@ -422,7 +432,10 @@ export function SessionDetail() {
               if (!alive) return
               for (const run of runs) {
                 if (run.kind === 'native-resume') attachNativeRun(run)
-                else attachFollowupRun(run, undefined)
+                else {
+                  const parentTurnId = run.parentTurnId ?? findParentTurnId(run.turnId)
+                  attachFollowupRun(run, parentTurnId)
+                }
               }
             })
             .catch(() => {})
@@ -432,7 +445,7 @@ export function SessionDetail() {
     return () => {
       alive = false
     }
-  }, [source, id, resetFrom, attachFollowupRun, attachGroupRun, attachNativeRun])
+  }, [source, id, resetFrom, attachFollowupRun, attachGroupRun, attachNativeRun, findParentTurnId])
 
   useEffect(() => {
     const onPrefs = () => setAutoRefresh(readAutoRefreshPreference())
@@ -748,6 +761,9 @@ export function SessionDetail() {
 
   const s = detail.summary
   const groupMode = isGroupSource(source)
+  const hasMainStreams = groupMode
+    ? streams.length > 0
+    : streams.some((s) => s.agent === sessionAgentOf(source))
   const hasReview =
     !groupMode &&
     (partitioned.threads.length > 0 || streams.some((s) => s.agent !== sessionAgentOf(source)))
@@ -899,7 +915,7 @@ export function SessionDetail() {
             />
             <FollowupComposer
               key={`${source}:${id}:composer`}
-              hasActiveStreams={streams.length > 0}
+              hasActiveStreams={hasMainStreams}
               sessionAgent={sessionAgentOf(source)}
               nativeAvailable={!groupMode && canNativeResume(source)}
               groupMode={groupMode}

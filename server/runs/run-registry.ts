@@ -310,6 +310,7 @@ class RunRegistry {
       source: input.source,
       sessionId: input.sessionId,
       turnId,
+      parentTurnId: input.parentTurnId,
       agent: input.targetAgent,
       permissions: input.permissions,
       startedAt,

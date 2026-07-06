@@ -51,6 +51,8 @@ export interface ReviewAgent {
   name: AgentName
   /** 检测本机 CLI 是否可用;不可用时路由返回可展示错误 */
   isAvailable(): Promise<boolean>
+  /** 可选轻量预热:只能做 CLI/SDK/capability 初始化,不能发模型请求或创建原生 session。 */
+  warmup?(): Promise<unknown>
   /** 流式产出 NormalizedEvent(不含 envelope 包装,由路由补 origin/turnId/runId) */
   run(input: AgentRunInput): AsyncIterable<NormalizedEvent>
   /** 是否支持写回对应原生 CLI 会话。只允许同源 session 暴露这个能力。 */

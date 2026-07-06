@@ -23,11 +23,50 @@ async function agentStatus(name: AgentName) {
   }
 }
 
+async function readBody(req: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = []
+  for await (const c of req) chunks.push(c as Buffer)
+  if (chunks.length === 0) return {}
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  } catch {
+    return {}
+  }
+}
+
+async function handleWarmup(req: IncomingMessage, res: ServerResponse) {
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { error: 'method not allowed' })
+    return
+  }
+  const body = (await readBody(req)) as { agent?: AgentName }
+  const agentName = body.agent ?? 'claude'
+  const agent = resolveAgent(agentName)
+  if (!agent.warmup) {
+    sendJson(res, 200, { agent: agentName, warmed: false })
+    return
+  }
+  try {
+    const status = await agent.warmup()
+    sendJson(res, 200, { agent: agentName, warmed: true, status })
+  } catch (err) {
+    sendJson(res, 200, {
+      agent: agentName,
+      warmed: false,
+      error: String((err as Error)?.message ?? err),
+    })
+  }
+}
+
 export async function handleSettingsRoute(
   req: IncomingMessage,
   res: ServerResponse,
   url: URL,
 ): Promise<boolean> {
+  if (url.pathname === '/api/settings/warmup') {
+    await handleWarmup(req, res)
+    return true
+  }
   if (url.pathname !== '/api/settings/diagnostics') return false
   if (req.method !== 'GET') {
     sendJson(res, 405, { error: 'method not allowed' })

@@ -59,6 +59,7 @@ export interface RunRecord {
   sessionId?: string
   groupThreadId?: string
   turnId: string
+  parentTurnId?: string
   agent: string
   permissions?: RunPermissions
   startedAt: string

@@ -16,19 +16,19 @@ import type { NormalizedEvent } from '../loaders/types'
 import type { Operation } from '../permissions/types'
 import { resolveCodexCommand } from './codex-command'
 
-interface JsonRpcRequest {
+export interface JsonRpcRequest {
   jsonrpc: '2.0'
   id: number | string
   method: string
   params: unknown
 }
-interface JsonRpcResponse {
+export interface JsonRpcResponse {
   jsonrpc?: '2.0'
   id: number | string
   result?: unknown
   error?: { code: number; message: string; data?: unknown }
 }
-interface JsonRpcNotification {
+export interface JsonRpcNotification {
   jsonrpc?: '2.0'
   method: string
   params: unknown
@@ -61,20 +61,25 @@ export class CodexAppServer {
   private nextId = 1
   private stderr = ''
   private stopped = false
+  private readonly stderrLimit: number
 
-  async spawn(): Promise<void> {
-    const bin = await resolveCodexCommand()
+  constructor(options: { stderrLimit?: number } = {}) {
+    this.stderrLimit = options.stderrLimit ?? 64 * 1024
+  }
+
+  async spawn(binaryPath?: string): Promise<void> {
+    const bin = binaryPath ?? (await resolveCodexCommand())
     if (!bin) throw new Error('codex CLI 不可用(本机未安装/登录对应 CLI)')
     // `--stdio` 是默认 transport,但显式指定更稳。
     const child = spawn(bin, ['app-server', '--stdio'], {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     this.child = child as ChildProcessByStdio<Writable, Readable, Readable>
-    child.stderr.on('data', (d) => (this.stderr += String(d)))
+    child.stderr.on('data', (d) => this.appendStderr(String(d)))
     child.on('close', () => {
       this.stopped = true
       for (const { reject } of this.pending.values()) {
-        reject(new Error(`codex app-server exited${this.stderr ? `: ${this.stderr.trim()}` : ''}`))
+        reject(new Error(`codex app-server exited${this.stderrText ? `: ${this.stderrText.trim()}` : ''}`))
       }
       this.pending.clear()
     })
@@ -167,6 +172,21 @@ export class CodexAppServer {
 
   get childProcess() {
     return this.child
+  }
+
+  get stderrText() {
+    return this.stderr
+  }
+
+  get isStopped() {
+    return this.stopped
+  }
+
+  private appendStderr(chunk: string) {
+    this.stderr += chunk
+    if (this.stderr.length > this.stderrLimit) {
+      this.stderr = this.stderr.slice(-this.stderrLimit)
+    }
   }
 }
 

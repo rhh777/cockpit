@@ -1,8 +1,21 @@
-import { test } from 'node:test'
+import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import os from 'node:os'
 import path from 'node:path'
-import { claudeAllowPermissionResult, claudeToolOperation, permissionUpdatesForApproval } from './claude-call'
+import {
+  __resetClaudeRuntimeCachesForTest,
+  __setClaudeCommandExistsForTest,
+  __setClaudeSdkImporterForTest,
+  claudeAdapter,
+  claudeAllowPermissionResult,
+  claudeToolOperation,
+  permissionUpdatesForApproval,
+  warmupClaudeRuntime,
+} from './claude-call'
+
+afterEach(() => {
+  __resetClaudeRuntimeCachesForTest()
+})
 
 test('claudeToolOperation maps write/edit/bash/network tools', () => {
   assert.deepEqual(claudeToolOperation('Write', { file_path: '/tmp/a.txt' }), {
@@ -101,4 +114,72 @@ test('claudeAllowPermissionResult includes updatedInput required by SDK runtime 
   assert.equal(result.behavior, 'allow')
   assert.equal(result.toolUseID, 'toolu_1')
   assert.deepEqual(result.updatedInput, toolInput)
+})
+
+test('claudeAdapter.isAvailable caches successful CLI detection within TTL', async () => {
+  let calls = 0
+  __setClaudeCommandExistsForTest(async () => {
+    calls += 1
+    return true
+  })
+
+  assert.equal(await claudeAdapter.isAvailable(), true)
+  assert.equal(await claudeAdapter.isAvailable(), true)
+  assert.equal(calls, 1)
+})
+
+test('claudeAdapter.isAvailable does not long-cache failed CLI detection', async () => {
+  let calls = 0
+  __setClaudeCommandExistsForTest(async () => {
+    calls += 1
+    return calls > 1
+  })
+
+  assert.equal(await claudeAdapter.isAvailable(), false)
+  assert.equal(await claudeAdapter.isAvailable(), true)
+  assert.equal(calls, 2)
+})
+
+test('warmupClaudeRuntime caches Claude Agent SDK dynamic import promise', async () => {
+  let imports = 0
+  __setClaudeCommandExistsForTest(async () => true)
+  __setClaudeSdkImporterForTest(async () => {
+    imports += 1
+    return { query: () => ({}) } as never
+  })
+
+  const [a, b] = await Promise.all([
+    warmupClaudeRuntime({ includeSdk: true }),
+    warmupClaudeRuntime({ includeSdk: true }),
+  ])
+  assert.deepEqual(a, { cliAvailable: true, sdkLoaded: true })
+  assert.deepEqual(b, { cliAvailable: true, sdkLoaded: true })
+  assert.equal(imports, 1)
+
+  assert.deepEqual(await warmupClaudeRuntime({ includeSdk: true }), {
+    cliAvailable: true,
+    sdkLoaded: true,
+  })
+  assert.equal(imports, 1)
+})
+
+test('warmupClaudeRuntime reports SDK import errors without caching the failure forever', async () => {
+  let imports = 0
+  __setClaudeCommandExistsForTest(async () => true)
+  __setClaudeSdkImporterForTest(async () => {
+    imports += 1
+    if (imports === 1) throw new Error('sdk unavailable')
+    return { query: () => ({}) } as never
+  })
+
+  assert.deepEqual(await warmupClaudeRuntime({ includeSdk: true }), {
+    cliAvailable: true,
+    sdkLoaded: false,
+    sdkError: 'sdk unavailable',
+  })
+  assert.deepEqual(await warmupClaudeRuntime({ includeSdk: true }), {
+    cliAvailable: true,
+    sdkLoaded: true,
+  })
+  assert.equal(imports, 2)
 })

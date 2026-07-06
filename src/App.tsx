@@ -6,8 +6,14 @@ import { Splitter } from './components/Splitter'
 import { SettingsPanel } from './components/SettingsPanel'
 import { Icon } from './components/Icon'
 import { useResizable } from './hooks/useResizable'
+import { warmupAgent } from './lib/api'
 import { applyLanguagePreference, useI18n } from './lib/i18n'
-import { applyFontSizePreference, applyThemePreference } from './lib/preferences'
+import {
+  PREFERENCES_CHANGED_EVENT,
+  applyFontSizePreference,
+  applyThemePreference,
+  readDefaultAgent,
+} from './lib/preferences'
 
 export default function App() {
   const { t } = useI18n()
@@ -24,6 +30,15 @@ export default function App() {
     applyThemePreference()
     applyFontSizePreference()
     applyLanguagePreference()
+  }, [])
+
+  useEffect(() => {
+    const warmupDefaultAgent = () => {
+      void warmupAgent(readDefaultAgent())
+    }
+    warmupDefaultAgent()
+    window.addEventListener(PREFERENCES_CHANGED_EVENT, warmupDefaultAgent)
+    return () => window.removeEventListener(PREFERENCES_CHANGED_EVENT, warmupDefaultAgent)
   }, [])
 
   return (
