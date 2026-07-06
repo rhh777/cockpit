@@ -40,6 +40,20 @@ class FakeCodexRuntimeServer implements CodexRuntimeServer {
   }
 }
 
+class FailableReadLoopCodexRuntimeServer extends FakeCodexRuntimeServer {
+  private rejectReadLoop: ((err: Error) => void) | null = null
+
+  readLoop(): Promise<void> {
+    return new Promise((_resolve, reject) => {
+      this.rejectReadLoop = reject
+    })
+  }
+
+  failReadLoop(message = 'read loop failed'): void {
+    this.rejectReadLoop?.(new Error(message))
+  }
+}
+
 function createTestManager(server: FakeCodexRuntimeServer, now: () => number) {
   return new CodexRuntimeManager({
     autoSweep: false,
@@ -119,6 +133,33 @@ test('CodexRuntimeManager removes aborted waiters from refcount', async () => {
   assert.equal(manager.getSessionSnapshot()[0]?.refCount, 1)
   lease1.release()
   assert.equal(manager.getSessionSnapshot()[0]?.refCount, 0)
+  await manager.disposeAll()
+})
+
+test('CodexRuntimeManager rebuilds the process after readLoop failure', async () => {
+  const servers: FailableReadLoopCodexRuntimeServer[] = []
+  const manager = new CodexRuntimeManager({
+    autoSweep: false,
+    createServer: () => {
+      const server = new FailableReadLoopCodexRuntimeServer()
+      servers.push(server)
+      return server
+    },
+    resolveCommand: async () => '/tmp/fake-codex',
+    now: () => 0,
+  })
+
+  const lease1 = await manager.acquire(new AbortController().signal)
+  lease1.release()
+  servers[0].failReadLoop()
+  await new Promise((resolve) => setImmediate(resolve))
+
+  const lease2 = await manager.acquire(new AbortController().signal)
+  lease2.release()
+
+  assert.equal(servers.length, 2)
+  assert.equal(servers[0].killCalls, 1)
+  assert.equal(servers[1].spawnCalls, 1)
   await manager.disposeAll()
 })
 

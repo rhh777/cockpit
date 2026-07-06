@@ -3,19 +3,35 @@ import { randomUUID } from 'node:crypto'
 import type { AgentName, ChatAttachment, EventEnvelope, NormalizedEvent, Source } from '../loaders/types'
 import { resolveAgent } from '../adapters/registry'
 import { filterToolResult, redactSecrets } from '../adapters/sensitive'
+import { projectContextEvents } from '../adapters/context-projector'
 import { loadSessionDetail } from '../sessions-service'
 import { threadStore } from '../store/thread-store'
 import { groupThreadStore } from '../store/group-thread-store'
 import type { RunRecord, RunStatus } from './run-store'
 import { runStore } from './run-store'
 import { nativeShadowStore } from './native-shadow-store'
-import { CodexAppServer, translateNotification } from '../adapters/codex-app-server'
+import { translateNotification } from '../adapters/codex-app-server'
+import { codexRuntimeManager, type CodexRuntimeLease } from '../adapters/codex-runtime-manager'
 import type { NativeWriteMode } from '../adapters/types'
 import { approvalStore } from '../approvals/approval-store'
 import type { ApprovalRequest, Operation, RunPermissions } from '../permissions/types'
 
+const CODEX_CONTINUATION_INTERRUPT_TIMEOUT_MS = 5_000
+
+export type RunPhase =
+  | 'queued'
+  | 'warming_runtime'
+  | 'runtime_ready'
+  | 'building_context'
+  | 'starting_turn'
+  | 'streaming'
+  | 'waiting_approval'
+  | 'completed'
+  | 'failed'
+
 export type RunStreamMessage =
   | { kind: 'meta'; turnId: string; runId: string; native?: boolean }
+  | { kind: 'run_phase'; turnId: string; runId: string; phase: RunPhase }
   | { kind: 'event'; envelope: EventEnvelope }
   | { kind: 'done'; turnId: string; status: string }
   | { kind: 'aborted'; turnId: string; status: string; message?: string }
@@ -28,6 +44,7 @@ export type RunStreamMessage =
       baseEventSeq: number
       runs: { agent: AgentName; runId: string }[]
     }
+  | { kind: 'run_phase'; groupTurnId: string; runId: string; agent: AgentName; phase: RunPhase }
   | { kind: 'event'; groupTurnId: string; runId?: string; agent?: AgentName; envelope: EventEnvelope }
   | {
       kind: 'run_done'
@@ -182,6 +199,30 @@ function runPermissionsMeta(source: Source, turnId: string, runId: string, permi
   }
 }
 
+function emitPhase(handle: RunHandle, phase: RunPhase) {
+  const { turnId, runId, agent, groupThreadId } = handle.record
+  if (groupThreadId) {
+    handle.write({ kind: 'run_phase', groupTurnId: turnId, runId, agent, phase })
+  } else {
+    handle.write({ kind: 'run_phase', turnId, runId, phase })
+  }
+}
+
+function notificationTurnId(params: unknown): string | null {
+  if (!params || typeof params !== 'object') return null
+  const record = params as Record<string, unknown>
+  const camel = record.turnId
+  if (typeof camel === 'string' && camel.length > 0) return camel
+  const snake = record.turn_id
+  if (typeof snake === 'string' && snake.length > 0) return snake
+  const turn = record.turn
+  if (turn && typeof turn === 'object') {
+    const nested = (turn as Record<string, unknown>).id
+    if (typeof nested === 'string' && nested.length > 0) return nested
+  }
+  return null
+}
+
 function sessionAgentOf(source: string): 'claude' | 'codex' | null {
   if (source === 'claude-code') return 'claude'
   if (source === 'codex') return 'codex'
@@ -216,6 +257,18 @@ function withAttachments(text: string, attachments?: ChatAttachment[]): string {
   return [text, '', ...lines].join('\n')
 }
 
+const GROUP_MESSAGE_HEAD_CHARS = 800
+const GROUP_MESSAGE_TAIL_CHARS = 400
+const GROUP_MESSAGE_MAX_CHARS = GROUP_MESSAGE_HEAD_CHARS + GROUP_MESSAGE_TAIL_CHARS + 200
+
+function clipGroupMessage(text: string): string {
+  if (text.length <= GROUP_MESSAGE_MAX_CHARS) return text
+  const head = text.slice(0, GROUP_MESSAGE_HEAD_CHARS)
+  const tail = text.slice(text.length - GROUP_MESSAGE_TAIL_CHARS)
+  const omitted = text.length - GROUP_MESSAGE_HEAD_CHARS - GROUP_MESSAGE_TAIL_CHARS
+  return `${head}\n...[omitted ${omitted} chars]...\n${tail}`
+}
+
 function projectGroupContext(
   events: EventEnvelope[],
   summary: string,
@@ -228,11 +281,12 @@ function projectGroupContext(
     .slice(-30)
     .map((env) => {
       const e = env.event
-      if (e.type === 'user_text') return [`[User]: ${e.text || '(no text)'}`, ...renderAttachmentLines(e.attachments)].join('\n')
-      if (e.type === 'assistant_text') return `[${agentName(e.agent)}]: ${e.text}`
+      if (e.type === 'user_text')
+        return [`[User]: ${clipGroupMessage(e.text || '(no text)')}`, ...renderAttachmentLines(e.attachments)].join('\n')
+      if (e.type === 'assistant_text') return `[${agentName(e.agent)}]: ${clipGroupMessage(e.text)}`
       if (e.type === 'tool_use') return `[${agentName(e.agent)} tool]: ${e.name}`
       if (e.type === 'tool_result') return `[Tool result]: ${e.isError ? 'error' : 'ok'}`
-      if (e.type === 'thinking') return `[${agentName(targetAgent)} thinking]: ${e.text}`
+      if (e.type === 'thinking') return `[${agentName(targetAgent)} thinking]: ${clipGroupMessage(e.text)}`
       return null
     })
     .filter((x): x is string => x != null)
@@ -338,6 +392,7 @@ class RunRegistry {
 
     const handle = new RunHandle(record)
     handle.write({ kind: 'meta', turnId, runId })
+    emitPhase(handle, 'queued')
     handle.write({ kind: 'event', envelope: userEnvelope })
     handle.write({ kind: 'event', envelope: permissionsEnvelope })
     this.runs.set(runId, handle)
@@ -404,6 +459,7 @@ class RunRegistry {
     const handles = records.map((record) => {
       const handle = new RunHandle(record)
       handle.write({ kind: 'meta', groupTurnId, baseEventSeq, runs: records.map(({ agent, runId }) => ({ agent, runId })) })
+      emitPhase(handle, 'queued')
       handle.write({ kind: 'event', groupTurnId, envelope: userEnvelope })
       handle.write({ kind: 'event', groupTurnId, envelope: turnStart })
       this.runs.set(record.runId, handle)
@@ -465,6 +521,7 @@ class RunRegistry {
     }
     await nativeShadowStore.append(input.source, input.sessionId, runId, userEnvelope)
     handle.write({ kind: 'meta', turnId, runId, native: true })
+    emitPhase(handle, 'queued')
     handle.write({ kind: 'event', envelope: userEnvelope })
     this.runs.set(runId, handle)
     void this.executeNativeResume(handle, input, detail.summary.cwd)
@@ -484,30 +541,21 @@ class RunRegistry {
     const runId = `native_cont_run_${randomUUID()}`
     const startedAt = new Date().toISOString()
 
-    const server = new CodexAppServer()
-    await server.spawn()
-    // native-continuation 目前不接审批 UI:遇到 server-initiated request(审批弹窗等)
-    // 直接以 -32601 回错误,避免 app-server 阻塞等待。
-    server.onServerRequest = (r) => {
-      server.respond(r.id, {
-        error: {
-          code: -32601,
-          message: `Native continuation does not support server request: ${r.method}`,
-        },
-      })
-    }
-    const loopP = server.readLoop().catch(() => {})
-
-    // initialize
-    try {
-      await server.request('initialize', {
-        clientInfo: { name: 'cockpit', title: 'Cockpit', version: '0.0.1' },
-        capabilities: null,
-      })
-    } catch (e) {
-      server.kill()
-      throw new Error(`codex app-server initialize 失败: ${(e as Error).message}`)
-    }
+    const startupController = new AbortController()
+    const lease = await codexRuntimeManager.acquire(startupController.signal)
+    const server = lease.server
+    lease.setHandlers({
+      onNotification() {},
+      onServerRequest(r) {
+        server.respond(r.id, {
+          error: {
+            code: -32601,
+            message: `Native continuation does not support server request: ${r.method}`,
+          },
+        })
+      },
+      onError() {},
+    })
 
     // thread/start,拿 threadId
     let threadId: string | null = null
@@ -517,11 +565,11 @@ class RunRegistry {
       })) as { thread?: { id?: string } }
       threadId = res?.thread?.id ?? null
     } catch (e) {
-      server.kill()
+      lease.release()
       throw new Error(`codex app-server thread/start 失败: ${(e as Error).message}`)
     }
     if (!threadId) {
-      server.kill()
+      lease.release()
       throw new Error('codex app-server 未返回 threadId')
     }
 
@@ -533,13 +581,19 @@ class RunRegistry {
       agent: 'codex',
       startedAt,
     }
-    await runStore.append(record)
+    let handle: RunHandle
+    try {
+      await runStore.append(record)
+      handle = new RunHandle(record)
+      handle.write({ kind: 'meta', turnId, runId, native: true })
+      emitPhase(handle, 'queued')
+      this.runs.set(runId, handle)
+    } catch (err) {
+      lease.release()
+      throw err
+    }
 
-    const handle = new RunHandle(record)
-    handle.write({ kind: 'meta', turnId, runId, native: true })
-    this.runs.set(runId, handle)
-
-    void this.executeCodexContinuation(handle, server, loopP, threadId, input)
+    void this.executeCodexContinuation(handle, lease, threadId, input)
     return { record, threadId }
   }
 
@@ -616,6 +670,7 @@ class RunRegistry {
         }, turnId, runId)
     await input.persist(required)
     input.stream(required)
+    emitPhase(handle, 'waiting_approval')
     handle.write({ kind: 'approval_required', approval })
 
     const status = await new Promise<'approved' | 'rejected'>((resolve) => {
@@ -660,14 +715,19 @@ class RunRegistry {
     const { runId, turnId } = handle.record
     try {
       const agent = resolveAgent(input.targetAgent)
+      emitPhase(handle, 'warming_runtime')
       if (!(await agent.isAvailable())) {
         throw new Error(`agent "${input.targetAgent}" 不可用(本机未安装/登录对应 CLI)`)
       }
+      emitPhase(handle, 'runtime_ready')
+      emitPhase(handle, 'building_context')
       const detail = await loadSessionDetail(input.source, input.sessionId, input.filePath)
       const toolInputById = new Map<string, unknown>()
+      let sawStream = false
+      emitPhase(handle, 'starting_turn')
       for await (const raw of agent.run({
         text: withAttachments(input.text, input.attachments),
-        contextEvents: detail?.events ?? [],
+        contextEvents: projectContextEvents(detail?.events ?? []),
         targetAgent: input.targetAgent,
         cwd: detail?.summary.cwd ?? null,
         useTools: input.useTools,
@@ -690,6 +750,10 @@ class RunRegistry {
             : undefined,
         signal: handle.controller.signal,
       })) {
+        if (!sawStream) {
+          sawStream = true
+          emitPhase(handle, 'streaming')
+        }
         let ev = raw
         if (ev.type === 'tool_use') {
           toolInputById.set(ev.id, ev.input)
@@ -706,6 +770,7 @@ class RunRegistry {
       }
 
       if (await handle.finish('completed')) {
+        emitPhase(handle, 'completed')
         await threadStore.appendTurnStatus(input.source, input.sessionId, turnId, runId, 'completed')
         handle.write({ kind: 'done', turnId, status: 'completed' })
       }
@@ -714,6 +779,7 @@ class RunRegistry {
       const status = aborted ? 'aborted' : 'failed'
       const message = aborted ? 'aborted' : String((err as Error)?.message ?? err)
       if (await handle.finish(status, aborted ? undefined : message)) {
+        emitPhase(handle, 'failed')
         await threadStore.appendTurnStatus(input.source, input.sessionId, turnId, runId, status, aborted ? undefined : message)
         handle.write({ kind: aborted ? 'aborted' : 'error', turnId, status, message })
       }
@@ -736,7 +802,12 @@ class RunRegistry {
     const agent = resolveAgent(agentNameForRun)
     const toolInputById = new Map<string, unknown>()
     try {
+      emitPhase(handle, 'warming_runtime')
       if (!(await agent.isAvailable())) throw new Error(`agent "${agentNameForRun}" 不可用(本机未安装/登录对应 CLI)`)
+      emitPhase(handle, 'runtime_ready')
+      emitPhase(handle, 'building_context')
+      let sawStream = false
+      emitPhase(handle, 'starting_turn')
       for await (const raw of agent.run({
         text: input.text,
         contextEvents: projectGroupContext(transcript, summary, input.text, agentNameForRun, input.attachments ?? []),
@@ -762,6 +833,10 @@ class RunRegistry {
             : undefined,
         signal: handle.controller.signal,
       })) {
+        if (!sawStream) {
+          sawStream = true
+          emitPhase(handle, 'streaming')
+        }
         let ev = raw
         if (ev.type === 'tool_use') {
           toolInputById.set(ev.id, ev.input)
@@ -778,6 +853,7 @@ class RunRegistry {
         handle.write({ kind: 'event', groupTurnId: turnId, runId, agent: agentNameForRun, envelope })
       }
       if (await handle.finish('completed')) {
+        emitPhase(handle, 'completed')
         await groupThreadStore.appendTurnStatus(input.id, turnId, runId, agentNameForRun, baseEventSeq, 'completed')
         handle.write({ kind: 'run_done', groupTurnId: turnId, runId, agent: agentNameForRun, status: 'completed' })
       }
@@ -786,6 +862,7 @@ class RunRegistry {
       const status = aborted ? 'aborted' : 'failed'
       const message = aborted ? undefined : String((err as Error)?.message ?? err)
       if (await handle.finish(status, message)) {
+        emitPhase(handle, 'failed')
         await groupThreadStore.appendTurnStatus(input.id, turnId, runId, agentNameForRun, baseEventSeq, status, message)
         handle.write({
           kind: 'run_done',
@@ -805,18 +882,36 @@ class RunRegistry {
 
   private async executeCodexContinuation(
     handle: RunHandle,
-    server: CodexAppServer,
-    loopP: Promise<void>,
+    lease: CodexRuntimeLease,
     threadId: string,
     input: NativeContinuationInput,
   ) {
     const { runId, turnId } = handle.record
+    const server = lease.server
     let turnDone = false
     let turnErr: string | null = null
+    let providerTurnId: string | null = null
+    let interruptTimer: NodeJS.Timeout | null = null
+    let sawStream = false
+    let settle: (() => void) | null = null
     const done = new Promise<void>((resolve) => {
-      server.onNotification = (n) => {
+      settle = resolve
+    })
+
+    const finishFromError = (err: Error) => {
+      turnErr = String(err.message ?? err)
+      settle?.()
+    }
+
+    lease.setHandlers({
+      onNotification(n) {
+        providerTurnId = providerTurnId ?? notificationTurnId(n.params)
         const events = translateNotification(n.method, n.params, threadId)
         for (const ev of events) {
+          if (!sawStream) {
+            sawStream = true
+            emitPhase(handle, 'streaming')
+          }
           const envelope: EventEnvelope = {
             origin: 'native',
             source: 'codex',
@@ -829,31 +924,64 @@ class RunRegistry {
         }
         if (n.method === 'turn/completed') {
           turnDone = true
-          resolve()
+          if (interruptTimer) clearTimeout(interruptTimer)
+          settle?.()
         } else if (n.method === 'error') {
           const message = (n.params as any)?.error?.message ?? 'app-server error'
           turnErr = String(message)
-          resolve()
+          if (interruptTimer) clearTimeout(interruptTimer)
+          settle?.()
         }
-      }
+      },
+      onServerRequest(r) {
+        server.respond(r.id, {
+          error: {
+            code: -32601,
+            message: `Native continuation does not support server request: ${r.method}`,
+          },
+        })
+      },
+      onError: finishFromError,
     })
 
-    // abort:kill 子进程
-    const onAbort = () => server.kill()
+    const interruptActiveTurn = () => {
+      if (!providerTurnId) {
+        lease.disposeRuntime(new Error('codex native continuation aborted before turn id'))
+        settle?.()
+        return
+      }
+      void server.request('turn/interrupt', { threadId, turnId: providerTurnId }).catch((err) => {
+        turnErr = String((err as Error)?.message ?? err)
+        lease.disposeRuntime(new Error(`codex native continuation interrupt failed: ${turnErr}`))
+        settle?.()
+      })
+      interruptTimer = setTimeout(() => {
+        turnErr = 'aborted'
+        lease.disposeRuntime(new Error('codex native continuation interrupt timeout'))
+        settle?.()
+      }, CODEX_CONTINUATION_INTERRUPT_TIMEOUT_MS)
+      interruptTimer.unref?.()
+    }
+
+    const onAbort = () => interruptActiveTurn()
     handle.controller.signal.addEventListener('abort', onAbort, { once: true })
 
     try {
+      emitPhase(handle, 'runtime_ready')
+      emitPhase(handle, 'starting_turn')
       // 发送 turn。cwd 覆盖只用于必要时;默认沿用 thread cwd。
-      await server.request('turn/start', {
+      const turn = (await server.request('turn/start', {
         threadId,
         input: [{ type: 'text', text: input.prompt, text_elements: [] }],
         ...(input.cwd ? { cwd: input.cwd } : {}),
-      })
+      })) as { turn?: { id?: string } }
+      providerTurnId = turn.turn?.id ?? providerTurnId
       await done
       if (turnErr) throw new Error(turnErr)
       if (!turnDone) throw new Error('turn interrupted')
 
       if (await handle.finish('completed')) {
+        emitPhase(handle, 'completed')
         handle.write({ kind: 'done', turnId, status: 'completed' })
       }
     } catch (err) {
@@ -861,12 +989,13 @@ class RunRegistry {
       const status = aborted ? 'aborted' : 'failed'
       const message = aborted ? 'aborted' : String((err as Error)?.message ?? err)
       if (await handle.finish(status, aborted ? undefined : message)) {
+        emitPhase(handle, 'failed')
         handle.write({ kind: aborted ? 'aborted' : 'error', turnId, status, message })
       }
     } finally {
       handle.controller.signal.removeEventListener('abort', onAbort)
-      server.kill()
-      await loopP.catch(() => {})
+      if (interruptTimer) clearTimeout(interruptTimer)
+      lease.release()
       setTimeout(() => {
         if (this.runs.get(runId) === handle) this.runs.delete(runId)
       }, 5 * 60 * 1000).unref?.()

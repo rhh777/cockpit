@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AgentName, EventEnvelope } from '../lib/types'
 import { labelForAgent } from '../lib/agents'
+import type { RunPhase } from '../lib/sse'
 
 export interface ActiveStream {
   clientId: string
@@ -9,6 +10,19 @@ export interface ActiveStream {
   /** 旁路 thread 的根 turnId(发起时若指定 parentTurnId 即设;否则 meta 到达后落自身 turnId)。 */
   rootTurnId?: string
   startedAt: number
+  phase?: RunPhase
+}
+
+const PHASE_LABELS: Record<RunPhase, { icon: string; text: string }> = {
+  queued: { icon: '⏳', text: '等待开始…' },
+  warming_runtime: { icon: '⏳', text: '正在预热运行时…' },
+  runtime_ready: { icon: '✓', text: '运行时已就绪…' },
+  building_context: { icon: '🧩', text: '正在整理上下文…' },
+  starting_turn: { icon: '⏳', text: '正在启动本轮回复…' },
+  streaming: { icon: '✍️', text: '正在生成回复…' },
+  waiting_approval: { icon: '⏸', text: '等待操作审批…' },
+  completed: { icon: '✓', text: '已完成' },
+  failed: { icon: '!', text: '运行失败' },
 }
 
 function latestActivityForTurn(
@@ -50,8 +64,9 @@ export function StreamingStatus({
     <div className="streaming-status-list">
       {streams.map((s) => {
         const act = latestActivityForTurn(events, s.turnId)
-        const headline = act ? act.text : '正在连接 agent…'
-        const icon = act?.icon ?? '⏳'
+        const phase = s.phase ? PHASE_LABELS[s.phase] : null
+        const headline = act ? act.text : phase?.text ?? '正在连接 agent…'
+        const icon = act?.icon ?? phase?.icon ?? '⏳'
         const agentLabel = labelForAgent(s.agent)
         const elapsed = Math.max(0, Math.floor((Date.now() - s.startedAt) / 1000))
         return (

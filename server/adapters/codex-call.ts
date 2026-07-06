@@ -423,6 +423,17 @@ export const codexAdapter: ReviewAgent = {
     return (await resolveCodexCommand()) !== null
   },
 
+  async warmup() {
+    // 预热 app-server 长驻进程:spawn + initialize,不发 turn,不创建 thread。
+    // 触发点:/api/settings/warmup(app 启动、session focus、AgentPicker 切到 Codex)。
+    try {
+      await codexRuntimeManager.warmup()
+      return { ok: true as const }
+    } catch (err) {
+      return { ok: false as const, error: String((err as Error)?.message ?? err) }
+    }
+  },
+
   async *run(input: AgentRunInput): AsyncGenerator<NormalizedEvent> {
     if (input.requestApproval) {
       yield* runCodexAppServer(input)

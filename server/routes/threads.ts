@@ -5,6 +5,7 @@ import { loadSessionDetail } from '../sessions-service'
 import { threadStore } from '../store/thread-store'
 import { resolveAgent } from '../adapters/registry'
 import { filterToolResult, redactSecrets } from '../adapters/sensitive'
+import { projectContextEvents } from '../adapters/context-projector'
 import { resolveSafe } from './resolve'
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
@@ -118,7 +119,7 @@ async function handlePostMessage(
     const detail = await loadSessionDetail(source, id, filePath)
     const input = {
       text,
-      contextEvents: detail?.events ?? [],
+      contextEvents: projectContextEvents(detail?.events ?? []),
       targetAgent,
       cwd: detail?.summary.cwd ?? null,
       useTools,

@@ -244,6 +244,8 @@ export function SessionDetail() {
                   : s,
               ),
             )
+          } else if (msg.kind === 'run_phase' && !('groupTurnId' in msg)) {
+            setStreams((prev) => prev.map((s) => (s.clientId === clientId ? { ...s, phase: msg.phase } : s)))
           } else if (msg.kind === 'event' && !('groupTurnId' in msg)) {
             const list: EventEnvelope[] = []
             if (agent === sessionAgentOf(source)) {
@@ -315,6 +317,8 @@ export function SessionDetail() {
             setStreams((prev) =>
               prev.map((s) => (s.clientId === clientId ? { ...s, turnId: msg.groupTurnId, rootTurnId: msg.groupTurnId } : s)),
             )
+          } else if (msg.kind === 'run_phase' && 'groupTurnId' in msg && msg.runId === run.runId) {
+            setStreams((prev) => prev.map((s) => (s.clientId === clientId ? { ...s, phase: msg.phase } : s)))
           } else if (msg.kind === 'event' && 'groupTurnId' in msg) {
             appendEnvelopes([msg.envelope])
           } else if (msg.kind === 'approval_required') {
@@ -380,6 +384,8 @@ export function SessionDetail() {
             setStreams((prev) =>
               prev.map((s) => (s.clientId === clientId ? { ...s, turnId: msg.turnId, rootTurnId: msg.turnId } : s)),
             )
+          } else if (msg.kind === 'run_phase' && !('groupTurnId' in msg)) {
+            setStreams((prev) => prev.map((s) => (s.clientId === clientId ? { ...s, phase: msg.phase } : s)))
           } else if (msg.kind === 'event' && !('groupTurnId' in msg)) {
             appendEnvelopes([msg.envelope])
           } else if (msg.kind === 'done' && 'turnId' in msg) {

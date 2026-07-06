@@ -429,16 +429,16 @@ RunRegistry 通过 SSE 推 `run_phase` meta。前端可在 `StreamingStatus`、s
 
 ### P0 — 立刻能被用户感知(优先做)
 
-1. **Phase 5 run phase SSE + UI 阶段状态**
+1. ~~**Phase 5 run phase SSE + UI 阶段状态**~~ 已完成
    - 落 `RunPhase` 枚举、`run_phase` meta event、`StreamingStatus` / composer / group member 一致渲染。
    - 触发点见 Phase 5 章节;Codex 走 manager acquire,Claude 走 SDK warmup / spawn。
    - 对 Claude 冷启动感知提升最大,不依赖任何 provider 能力。
-2. **Phase 3A — Claude warmup + capability TTL cache**
+2. ~~**Phase 3A — Claude warmup + capability TTL cache**~~ 已完成
    - `loadClaudeAgentSdk()` 加 module-level promise cache。
    - `claudeAdapter.isAvailable()` 增加 30–60s TTL cache,失败不长缓存。
    - 新增 `warmupClaude()`:`claude --version` + SDK import,不发模型请求、不创建 session。
    - 触发点:app 启动、session focus、AgentPicker 切到 Claude。
-3. **Phase 4 最小子集 — 大 tool output 摘要化 + group summary 复用**
+3. ~~**Phase 4 最小子集 — 大 tool output 摘要化 + group summary 复用**~~ 已完成
    - 只做"不重复塞大 tool output 原文"和"group chat 复用 `summary.md`"这两条。
    - 不引入 provider thread,不改变 `serializeForAgent` 契约,纯粹减少输入 tokens。
    - Claude / Codex 都直接受益。
@@ -447,8 +447,8 @@ RunRegistry 通过 SSE 推 `run_phase` meta。前端可在 `StreamingStatus`、s
 
 4. 调研 Codex app-server notification payload 是否稳定包含 thread id;记录不带 thread id 的方法清单。
 5. 决定 Phase 2 是否允许非 ephemeral provider thread 复用及其 UI/文档语义;未定前禁止透明 thread 复用。
-6. 完成 `CodexRuntimeManager` 剩余单测(idle TTL、refCount、readLoop 失败重建、stderr 上限)。
-7. 将 handoff native continuation 的 Codex app-server 生命周期迁到同一 manager。
+6. ~~完成 `CodexRuntimeManager` 剩余单测(idle TTL、refCount、readLoop 失败重建、stderr 上限)。~~ 已完成。
+7. ~~将 handoff native continuation 的 Codex app-server 生命周期迁到同一 manager。~~ 已完成:native continuation 复用 `CodexRuntimeManager` lease,后台 turn 结束后释放,取消优先走 `turn/interrupt`。
 8. 若 Phase 2 选择允许 thread 复用,增加 `ProviderThreadLink` store 和 `persistence` 语义。
 9. 将 group member Codex run 接入已批准的 thread/link 策略。
 
@@ -462,6 +462,12 @@ RunRegistry 通过 SSE 推 `run_phase` meta。前端可在 `StreamingStatus`、s
 - `CodexAppServer` stderr 环形缓冲(64 KB)。
 - `CodexRuntimeManager` 基础版本 + `turn/interrupt` 取消路径。
 - `runCodexAppServer` 复用 manager,每轮仍新建 ephemeral thread。
+- handoff native continuation 复用同一个 `CodexRuntimeManager`,不再自建 app-server/readLoop。
+- Claude warmup / SDK import promise cache / availability TTL cache。
+- `run_phase` SSE + `StreamingStatus` 阶段展示,覆盖 follow-up、group member、native resume、Codex native continuation。
+- 大 tool output context projector,在 follow-up 和 legacy `/threads` 路径进入 agent 前裁剪长输出。
+- Codex adapter `warmup()`(接 `/api/settings/warmup`):触发 `codexRuntimeManager.warmup()` 预热 app-server,不发 turn。
+- `notificationTurnId` 兼容 `turn_id` snake_case,避免 abort 时因识别不到 provider turn id 而回退到 disposeRuntime。
 
 ## Claude 侧收益预期(供开发对齐)
 

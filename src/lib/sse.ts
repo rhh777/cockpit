@@ -1,8 +1,20 @@
 import type { ApprovalRequest, ChatAttachment, EventEnvelope, RunPermissions } from './types'
 
+export type RunPhase =
+  | 'queued'
+  | 'warming_runtime'
+  | 'runtime_ready'
+  | 'building_context'
+  | 'starting_turn'
+  | 'streaming'
+  | 'waiting_approval'
+  | 'completed'
+  | 'failed'
+
 // POST + SSE。EventSource 不支持 POST body,用 fetch + ReadableStream 手解析 text/event-stream。
 export type StreamMessage =
   | { kind: 'meta'; turnId: string; runId: string }
+  | { kind: 'run_phase'; turnId: string; runId: string; phase: RunPhase }
   | { kind: 'event'; envelope: EventEnvelope }
   | { kind: 'done'; turnId: string; status: string }
   | { kind: 'aborted'; turnId: string; status: string; message?: string }
@@ -22,6 +34,7 @@ export type GroupStreamMessage =
       baseEventSeq: number
       runs: { agent: string; runId: string }[]
     }
+  | { kind: 'run_phase'; groupTurnId: string; runId: string; agent: string; phase: RunPhase }
   | { kind: 'event'; groupTurnId: string; runId?: string; agent?: string; envelope: EventEnvelope }
   | {
       kind: 'run_done'
