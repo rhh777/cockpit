@@ -84,35 +84,56 @@ export function buildTimeline(events: EventEnvelope[]): TimelineModel {
   const pairs: ToolPair[] = []
   // 同 streamId 的 delta 合并为一条流式 assistant_text 行:占用 rows 里同一个槽,文本随
   // delta 增长。第一条 delta 出现时插入占位行,后续 delta 把它的文本接长。
+  //
+  // 兜底:同一个 turn/run/agent 内,如果两次 delta 的 streamId 不同(Claude CLI 有时会在
+  // 一次流式回复里发多个 message_start,导致 msgId 变化;Codex app-server 也可能 itemId
+  // 缺失),但它们「相邻」——中间没有 tool_use / thinking 等非 delta 事件——就并到同一
+  // 个流式气泡里,避免出现「介」「绍俄罗斯…」这种拆成两个 bubble 的现象。
   const deltaRowIndex = new Map<string, number>()
+  const rowTurnKey = (env: EventEnvelope): string =>
+    `${env.turnId ?? ''}:${env.runId ?? ''}:${('agent' in env.event && env.event.agent) || ''}`
   for (const e of events) {
     const ev = e.event
     if (ev.type === 'tool_result') continue // 折进配对的 tool_use 卡
     if (isNoiseEvent(e)) continue // 不让噪音事件占用虚拟列表槽位
-    if (ev.type === 'assistant_text' && ev.delta && ev.streamId) {
-      const turnKey = streamTurnKey.get(ev.streamId)
-      const finalText = turnKey ? finalTextByTurnKey.get(turnKey) : undefined
-      const deltaText = deltaTextByStreamId.get(ev.streamId) ?? ''
-      if (
-        finalizedStreamIds.has(ev.streamId) ||
-        (deltaText.length > 0 && finalText?.includes(deltaText))
-      ) {
-        continue // 终态已到,丢弃 delta
-      }
-      const existing = deltaRowIndex.get(ev.streamId)
-      if (existing != null) {
-        const prev = rows[existing].envelope
-        const prevEv = prev.event as Extract<NormalizedEvent, { type: 'assistant_text' }>
-        rows[existing] = {
-          envelope: {
-            ...prev,
-            event: { ...prevEv, text: prevEv.text + ev.text },
-          },
+    if (ev.type === 'assistant_text' && ev.delta) {
+      const sid = ev.streamId
+      if (sid) {
+        const turnKey = streamTurnKey.get(sid)
+        const finalText = turnKey ? finalTextByTurnKey.get(turnKey) : undefined
+        const deltaText = deltaTextByStreamId.get(sid) ?? ''
+        if (
+          finalizedStreamIds.has(sid) ||
+          (deltaText.length > 0 && finalText?.includes(deltaText))
+        ) {
+          continue // 终态已到,丢弃 delta
         }
-      } else {
-        deltaRowIndex.set(ev.streamId, rows.length)
-        rows.push({ envelope: e })
+        const existing = deltaRowIndex.get(sid)
+        if (existing != null) {
+          const prev = rows[existing].envelope
+          const prevEv = prev.event as Extract<NormalizedEvent, { type: 'assistant_text' }>
+          rows[existing] = {
+            envelope: { ...prev, event: { ...prevEv, text: prevEv.text + ev.text } },
+          }
+          continue
+        }
       }
+      // 尾行是同一个 turn/run/agent 的流式 assistant_text → 直接接上,不新起气泡。
+      const last = rows[rows.length - 1]
+      if (
+        last &&
+        last.envelope.event.type === 'assistant_text' &&
+        rowTurnKey(last.envelope) === rowTurnKey(e)
+      ) {
+        const prevEv = last.envelope.event as Extract<NormalizedEvent, { type: 'assistant_text' }>
+        rows[rows.length - 1] = {
+          envelope: { ...last.envelope, event: { ...prevEv, text: prevEv.text + ev.text } },
+        }
+        if (sid) deltaRowIndex.set(sid, rows.length - 1)
+        continue
+      }
+      if (sid) deltaRowIndex.set(sid, rows.length)
+      rows.push({ envelope: e })
       continue
     }
     if (ev.type === 'tool_use') {
