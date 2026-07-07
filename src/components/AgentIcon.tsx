@@ -22,7 +22,7 @@ export function agentLabel(agent: AgentName | Source | string | undefined): stri
 export function AgentIcon({
   agent,
   source,
-  size = 18,
+  size = 25,
   className = '',
 }: {
   agent?: AgentName | string

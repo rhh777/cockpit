@@ -95,7 +95,7 @@ function AssistantNarrativeRow({
   return (
     <div className={`narr-row narr-assistant ${expanded ? 'is-expanded' : ''}`} data-agent={agent}>
       <span className={`narr-avatar narr-avatar-${agent ?? 'assistant'}`}>
-        <AgentIcon agent={agent as 'claude' | 'codex' | undefined} size={16} />
+        <AgentIcon agent={agent as 'claude' | 'codex' | undefined} size={22} />
       </span>
       <button className="narr-summary" onClick={onToggle} aria-expanded={expanded}>
         <span className="narr-caret">{expanded ? '▾' : '▸'}</span>

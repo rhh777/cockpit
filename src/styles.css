@@ -4966,7 +4966,7 @@ body.resizing * {
   min-width: 0;
   min-height: 32px;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
+  grid-template-columns: 25px minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 7px;
   padding: 0 10px;
@@ -4978,7 +4978,7 @@ body.resizing * {
   min-width: 0;
   min-height: 32px;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 24px 24px;
+  grid-template-columns: 25px minmax(0, 1fr) 24px 24px;
   align-items: center;
   column-gap: 7px;
   padding: 0 0 0 10px;

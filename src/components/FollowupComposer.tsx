@@ -469,7 +469,7 @@ export function FollowupComposer({
           aria-pressed={withAgent ? isTargeted : undefined}
         >
           {!withAgent && <Icon name="settings" size={12} />}
-          {withAgent && <AgentIcon agent={targetAgent} size={16} />}
+          {withAgent && <AgentIcon agent={targetAgent} size={20} />}
           {withAgent && <span className="model-picker-agent">{labelForAgent(targetAgent)}</span>}
           {(!withAgent || hasCustomSelection) && (
             <span className={withAgent ? 'model-picker-selection' : undefined}>
@@ -564,7 +564,7 @@ export function FollowupComposer({
             </div>
           ) : usingNative ? (
             <span className={`native-agent-pill agent-${sessionAgent}`}>
-              <AgentIcon agent={sessionAgent} size={16} /> {agentLabel}
+              <AgentIcon agent={sessionAgent} size={20} /> {agentLabel}
             </span>
           ) : usingMentions ? (
             <div className="mention-chips">

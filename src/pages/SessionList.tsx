@@ -414,7 +414,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
             {isGroup ? (
               <Icon name="users" size={14} className="project-session-icon" />
             ) : (
-              <AgentIcon source={s.source} size={16} className="project-session-icon" />
+              <AgentIcon source={s.source} size={30} className="project-session-icon" />
             )}
             <span className="project-session-title" title={s.title}>
               {displayTitle(s.title, 60, locale)}
@@ -489,7 +489,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
             aria-label={item.label}
             aria-pressed={viewMode === item.key}
           >
-            {item.icon ? <Icon name={item.icon} size={18} /> : <AgentIcon source={item.key} size={22} />}
+            {item.icon ? <Icon name={item.icon} size={18} /> : <AgentIcon source={item.key} size={24} />}
           </button>
         ))}
       </div>

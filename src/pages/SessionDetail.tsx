@@ -816,7 +816,7 @@ export function SessionDetail() {
               className={`badge ${s.source} badge-icon`}
               title={sourceLabel(s.source as Source)}
             >
-              <AgentIcon source={s.source} size={18} />
+              <AgentIcon source={s.source} size={30} />
             </span>
             <span className="detail-title-text" title={`${s.title}${s.cwd ? `\n${s.cwd}` : ''}`}>
               {displayTitle(s.title)}
