@@ -144,26 +144,143 @@ export function SessionDetail() {
   eventsRef.current = events
   streamsRef.current = streams
 
+  // 打字机 pacer:每个流式 assistant_text(按 turn/run/agent 分组)对应一个占位 envelope,
+  // 后续 delta 的文本进入 buffered 队列,rAF 按帧吐几字符出来,视觉更顺滑。
+  // - 非 delta assistant_text 到达 → 立刻 flush 该 key 的剩余 buffer(避免终态一坨盖过来)
+  // - 切 session / reset → 全部 flush + 清空
+  // - 队列积压过大时倍速追赶,保证总时长不落后 API 太多
+  type PacerEntry = { envelopeId: string; buffered: string; displayed: string }
+  const pacerByKey = useRef<Map<string, PacerEntry>>(new Map())
+  const rafRef = useRef<number | null>(null)
+
+  const streamKeyOf = (env: EventEnvelope): string => {
+    const ev = env.event
+    const agent = 'agent' in ev ? ev.agent ?? '' : ''
+    return `${env.turnId ?? ''}:${env.runId ?? ''}:${agent}`
+  }
+
+  const applyPacerUpdates = useCallback((updates: Map<string, string>) => {
+    if (updates.size === 0) return
+    setEvents((prev) =>
+      prev.map((e) => {
+        const key = e.sourceEventId ? updates.get(e.sourceEventId) : undefined
+        if (key === undefined) return e
+        const ev = e.event
+        if (ev.type !== 'assistant_text') return e
+        return { ...e, event: { ...ev, text: key } }
+      }),
+    )
+  }, [])
+
+  const drainPacer = useCallback(() => {
+    rafRef.current = null
+    const updates = new Map<string, string>()
+    let stillActive = false
+    for (const p of pacerByKey.current.values()) {
+      if (p.buffered.length === 0) continue
+      const backlog = p.buffered.length
+      // 目标 ~4ms/字符(60fps 下约 4 字/帧);积压 > 120 追平,> 40 半速,少也保底 3 字/帧
+      const take =
+        backlog > 120
+          ? backlog
+          : backlog > 40
+            ? Math.max(4, Math.ceil(backlog / 2))
+            : Math.max(3, Math.ceil(backlog / 6))
+      const chunk = p.buffered.slice(0, take)
+      p.buffered = p.buffered.slice(take)
+      p.displayed += chunk
+      updates.set(p.envelopeId, p.displayed)
+      if (p.buffered.length > 0) stillActive = true
+    }
+    applyPacerUpdates(updates)
+    if (stillActive) rafRef.current = requestAnimationFrame(drainPacer)
+  }, [applyPacerUpdates])
+
+  const kickPacer = useCallback(() => {
+    if (rafRef.current == null) rafRef.current = requestAnimationFrame(drainPacer)
+  }, [drainPacer])
+
+  const flushPacer = useCallback(
+    (onlyKey?: string) => {
+      const updates = new Map<string, string>()
+      const keys = onlyKey ? [onlyKey] : Array.from(pacerByKey.current.keys())
+      for (const k of keys) {
+        const p = pacerByKey.current.get(k)
+        if (!p) continue
+        if (p.buffered.length > 0) {
+          p.displayed += p.buffered
+          p.buffered = ''
+          updates.set(p.envelopeId, p.displayed)
+        }
+        pacerByKey.current.delete(k)
+      }
+      applyPacerUpdates(updates)
+    },
+    [applyPacerUpdates],
+  )
+
   // 去重追加(不变量 12):按 sourceEventId,无 id 用 seenIds 当前大小兜底。
   // 注意:seenIds 必须在 setState 之外更新——React StrictMode 会把 updater 跑两次,
   // 若在 updater 里 add,第二次跑就把刚追加的事件当成"已见过"丢掉,UI 看似永远收不到。
-  const appendEnvelopes = useCallback((incoming: EventEnvelope[]) => {
-    if (incoming.length === 0) return
-    const fresh: EventEnvelope[] = []
-    for (const e of incoming) {
-      const k = e.sourceEventId ?? `#${seenIds.current.size}`
-      if (seenIds.current.has(k)) continue
-      seenIds.current.add(k)
-      fresh.push(e)
-    }
-    if (fresh.length === 0) return
-    setEvents((prev) => [...prev, ...fresh])
-  }, [])
+  const appendEnvelopes = useCallback(
+    (incoming: EventEnvelope[]) => {
+      if (incoming.length === 0) return
+      const fresh: EventEnvelope[] = []
+      let bufferedSomething = false
+      for (const e of incoming) {
+        const k = e.sourceEventId ?? `#${seenIds.current.size}`
+        if (seenIds.current.has(k)) continue
+        seenIds.current.add(k)
+
+        const ev = e.event
+        if (ev.type === 'assistant_text' && ev.delta) {
+          const key = streamKeyOf(e)
+          const existing = pacerByKey.current.get(key)
+          if (existing) {
+            existing.buffered += ev.text
+          } else {
+            // 首条 delta:压入一个 text 为空的占位 envelope,后续 delta 只喂 buffer
+            pacerByKey.current.set(key, {
+              envelopeId: k,
+              buffered: ev.text,
+              displayed: '',
+            })
+            fresh.push({ ...e, sourceEventId: k, event: { ...ev, text: '' } })
+          }
+          bufferedSomething = true
+          continue
+        }
+        // 非 delta assistant_text(终态)到达 → 立刻把该 key 的 buffer 吐完再插入
+        if (ev.type === 'assistant_text' && !ev.delta) {
+          flushPacer(streamKeyOf(e))
+        }
+        fresh.push(e)
+      }
+      if (fresh.length > 0) setEvents((prev) => [...prev, ...fresh])
+      if (bufferedSomething) kickPacer()
+    },
+    [flushPacer, kickPacer],
+  )
 
   const resetFrom = useCallback((d: SessionDetailDTO) => {
+    if (rafRef.current != null) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+    pacerByKey.current.clear()
     setDetail(d)
     setEvents(d.events)
     seenIds.current = new Set(d.events.map((e, i) => e.sourceEventId ?? `#${i}`))
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (rafRef.current != null) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
+      }
+      pacerByKey.current.clear()
+    }
   }, [])
 
   const noteApproval = useCallback((approval: ApprovalRequest) => {
