@@ -93,7 +93,9 @@ export function normalizeClaudeLine(o: Record<string, unknown>): NormalizedEvent
       for (const p of content as Record<string, unknown>[]) {
         if (p?.type === 'text' && typeof p.text === 'string') {
           out.push({ type: 'assistant_text', text: p.text, ts, agent: 'claude' })
-        } else if (p?.type === 'thinking' && typeof p.thinking === 'string') {
+        } else if (p?.type === 'thinking' && typeof p.thinking === 'string' && p.thinking.trim()) {
+          // 明文为空(通常伴随 signature-only redacted_thinking)不 emit,
+          // 避免 UI 走「加密 reasoning,无明文」占位分支。
           out.push({ type: 'thinking', text: p.thinking, ts })
         } else if (p?.type === 'tool_use') {
           out.push({

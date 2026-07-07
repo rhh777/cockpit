@@ -234,18 +234,21 @@ export function normalizeCodexLine(o: Record<string, unknown>): NormalizedEvent[
       ]
     }
     case 'reasoning': {
-      // Codex 也有加密 reasoning:summary 为空、payload 里只剩 encrypted_content。
-      // 同样发一条空 text thinking,UI 会渲染「加密 reasoning,无明文」占位,而不是默默丢掉。
+      // Codex 有加密 reasoning:summary 为空、payload 里只剩 encrypted_content。
+      // 之前 emit 空 text thinking + UI 「加密 reasoning,无明文」占位,实测在群聊
+      // (codex 走 app-server 时更根本没 reasoning notification)大量产生误导性空节点。
+      // 现在明文为空就直接丢弃,timeline 索性不显示该 step。
       const summary = p.summary
       if (Array.isArray(summary) && summary.length > 0) {
         const text = summary
           .map((s) =>
-            typeof s === 'string' ? s : (s as Record<string, unknown>)?.text ?? JSON.stringify(s),
+            typeof s === 'string' ? s : (s as Record<string, unknown>)?.text ?? '',
           )
+          .filter(Boolean)
           .join('\n')
-        return [{ type: 'thinking', text: String(text), ts }]
+        if (text.trim()) return [{ type: 'thinking', text, ts }]
       }
-      return [{ type: 'thinking', text: '', ts }]
+      return []
     }
     case 'token_count': {
       const info = (p.info ?? p) as Record<string, unknown>

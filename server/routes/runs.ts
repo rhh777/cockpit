@@ -84,7 +84,7 @@ async function handleStartNative(req: IncomingMessage, res: ServerResponse, sour
     sendJson(res, 404, { error: 'session not found' })
     return
   }
-  const body = (await readBody(req)) as { text?: string; attachments?: AttachmentDraft[]; writeMode?: unknown }
+  const body = (await readBody(req)) as { text?: string; attachments?: AttachmentDraft[]; writeMode?: unknown; effort?: string }
   const text = (body.text ?? '').trim()
   const attachments = await normalizeAttachments(threadAttachmentsDir(source, id), body.attachments)
   if (!text && attachments.length === 0) {
@@ -92,6 +92,9 @@ async function handleStartNative(req: IncomingMessage, res: ServerResponse, sour
     return
   }
   const writeMode = body.writeMode === 'trusted' ? 'trusted' : 'read-only'
+  // Native resume 默认 medium,保证 thinking/reasoning 事件能被下游 CLI 吐出来。
+  // 前端未来暴露 effort 选择器时,body.effort 会覆盖这里的默认值。
+  const effort = body.effort?.trim() || 'medium'
   try {
     const started = await runRegistry.startNativeResume({
       source,
@@ -100,6 +103,7 @@ async function handleStartNative(req: IncomingMessage, res: ServerResponse, sour
       text,
       attachments: attachments.length ? attachments : undefined,
       writeMode,
+      effort,
     })
     sendJson(res, 202, {
       run: started.record,

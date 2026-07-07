@@ -199,9 +199,14 @@ export function FollowupComposer({
   const [mode, setMode] = useState<SendMode>('followup')
   // 按当前 composer 临时记录 model / reasoning 选择。空串 = Default。
   // 不跨 session 持久化,避免新开的会话继承上一次临时挑的模型。
+  //
+  // claude/codex 的 effort 默认 medium,原因:两家 CLI 不设 effort 时不会开启 extended
+  // thinking / reasoning summary,timeline 上就只能看到「加密 reasoning,无明文」占位。
+  // 和 native resume 的服务端默认对齐(见 server/routes/runs.ts handleStartNative)。
+  // opencode 的 `effort` 字段语义是 variant,不能塞 'medium';cursor 没有 effort。
   const [cliByAgent, setCliByAgent] = useState<Record<AgentName, CliSelection>>({
-    claude: {},
-    codex: {},
+    claude: { effort: 'medium' },
+    codex: { effort: 'medium' },
     opencode: {},
     cursor: {},
   })

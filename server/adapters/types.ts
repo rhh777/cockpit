@@ -54,6 +54,9 @@ export interface NativeResumeInput {
    *  没有中间"逐工具审批"档 —— CLI headless 接不住 approval,详见 docs/10。
    *  默认 read-only,trusted 必须由用户在 UI 里显式勾选、每次都要重勾。 */
   writeMode: NativeWriteMode
+  /** 推理强度:透传给底层 CLI(claude `--effort`、codex `-c model_reasoning_effort`)。
+   *  缺省时由路由默认成 `medium`,保证原生续写也能看到 thinking/reasoning 事件。 */
+  effort?: string
   signal: AbortSignal
 }
 

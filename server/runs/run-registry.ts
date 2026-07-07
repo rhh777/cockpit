@@ -110,6 +110,8 @@ interface NativeStartInput {
   attachments?: ChatAttachment[]
   /** Native resume 只有两档;缺省 read-only。 */
   writeMode?: NativeWriteMode
+  /** 推理强度;缺省由路由决定(当前默认 medium)。 */
+  effort?: string
 }
 
 interface NativeContinuationInput {
@@ -1075,6 +1077,7 @@ class RunRegistry {
         filePath: input.filePath,
         cwd,
         writeMode: input.writeMode ?? 'read-only',
+        effort: input.effort,
         signal: handle.controller.signal,
       })) {
         let ev = raw

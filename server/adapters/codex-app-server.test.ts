@@ -119,6 +119,7 @@ test('codexThreadSettings maps permission modes to app-server settings', () => {
     approvalPolicy: 'on-request',
     approvalsReviewer: 'user',
     sandboxPolicy: { type: 'readOnly', networkAccess: false },
+    reasoningSummary: 'auto',
   })
   assert.equal(codexThreadSettings({ mode: 'auto-safe' }).approvalsReviewer, 'auto_review')
   assert.deepEqual(codexThreadSettings({ mode: 'full-access' }).sandboxPolicy, { type: 'dangerFullAccess' })

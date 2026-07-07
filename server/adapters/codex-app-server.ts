@@ -308,6 +308,9 @@ export function codexThreadSettings(input: {
     sandboxPolicy,
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
+    // 强制 auto,让 app-server 在 item/completed 里推 reasoning。app-server 若不识别
+    // 该字段会忽略,不影响 thread/start;识别到的话就能保证 timeline 有 💡 节点。
+    reasoningSummary: 'auto',
   }
 }
 
@@ -338,8 +341,22 @@ export function translateNotification(method: string, params: any, threadId: str
         return events
       }
       if (item.type === 'reasoning') {
-        const text = Array.isArray(item.content) ? item.content.join('\n') : String(item.content ?? '')
-        events.push({ type: 'thinking', text, ts })
+        // 说明:Codex app-server 实测(gpt-5.5 + effort=medium + reasoningSummary=auto)
+        // 完全不 emit reasoning 类 notification —— 只有 userMessage/agentMessage[+delta]。
+        // 保留兼容读取 `summary`/`content`,以防未来版本开始 emit;明文为空时不吐事件,
+        // 避免 UI 出现空 thinking 占位("加密 reasoning,无明文")误导用户以为是加密态。
+        const source =
+          Array.isArray(item.summary) ? item.summary :
+          Array.isArray(item.content) ? item.content : null
+        const text = source
+          ? source
+              .map((s: unknown) =>
+                typeof s === 'string' ? s : (s as Record<string, unknown>)?.text ?? '',
+              )
+              .filter(Boolean)
+              .join('\n')
+          : String(item.summary ?? item.content ?? '')
+        if (text.trim()) events.push({ type: 'thinking', text, ts })
         return events
       }
       // 工具类:如果 started 没发出 tool_use(容错),这里补一条。

@@ -58,13 +58,15 @@ async function handlePostNativeMessage(
   id: string,
   filePath: string,
 ) {
-  const body = (await readBody(req)) as { text?: string; writeMode?: unknown }
+  const body = (await readBody(req)) as { text?: string; writeMode?: unknown; effort?: string }
   const text = (body.text ?? '').trim()
   if (!text) {
     sendJson(res, 400, { error: 'empty message' })
     return
   }
   const writeMode = parseWriteMode(body.writeMode)
+  // Native resume 默认 medium(见 runs.ts 同名字段的说明)。
+  const effort = body.effort?.trim() || 'medium'
 
   const agentName = sessionAgentOf(source)
   if (!agentName) {
@@ -128,6 +130,7 @@ async function handlePostNativeMessage(
       filePath,
       cwd: detail.summary.cwd,
       writeMode,
+      effort,
       signal: ac.signal,
     })) {
       let ev = raw
