@@ -113,6 +113,26 @@ Claude 侧能力需要按本机实际支持检测:
 
 Claude 和 Codex 不需要做成对称能力。Codex 可以通过 workspace path 读取 bundle;Claude Desktop 可能不能读本地文件,而 `claude://` URL 又有长度上限,所以 Claude 的默认路径必须是可复制的 self-contained prompt。
 
+### 已知限制:Codex native resume 不逐 token 流
+
+`codex exec resume --json <sessionId>` 是目前唯一能真正写回**已有** Codex 原生 session 文件的通道(不变量 2)。实测(2026-07,codex-tui 0.140.0)只吐:
+
+```
+thread.started → turn.started → item.completed(整段 agent_message) → turn.completed
+```
+
+**没有 `item.started` / `item.updated` 的中间态**,前端在整个 turn 结束前看不到任何文字增量。这不是 Cockpit adapter 的问题,是上游 CLI 本身不 stream。
+
+三条不可行的绕路,以及为什么现在不做:
+
+- **换 app-server**:app-server 的 `thread/start` 只能新建 thread,不支持"以既有 sessionId 恢复到该 rollout 文件"。硬用 `thread/start(ephemeral:false)` 会新开一条 native session,和原文件断链,违反"回到原会话"语义。
+- **CLI 加流参数**:codex CLI 没暴露类似 `--stream-partial-output` 的开关,`--verbose` 也不改事件流形状。
+- **手工按 item.updated 拼**:实验证实事件不存在,没得拼。
+
+后续要真正流式,需要**上游** codex CLI 补齐(观察 release notes),或者接受"重定义官方写回通道 = app-server + provider-thread-link 表",届时要同步更新 [CLAUDE.md](../CLAUDE.md) 不变量 2 的措辞。
+
+单一 turn 完成后前端会重新从 `~/.codex/sessions/**/*.jsonl` 拉最新事件,展示不受影响,只是"打字机效果"缺席。
+
 ## 类型来源
 
 | 类型 | 出处 |

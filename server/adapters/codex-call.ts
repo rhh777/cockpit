@@ -5,7 +5,6 @@ import type { NormalizedEvent } from '../loaders/types'
 import { serializeForAgent } from './serialize'
 import type { AgentRunInput, NativeResumeInput, ReviewAgent } from './types'
 import { resolveCodexCommand } from './codex-command'
-import { codexGlobalArgsForPermissions, codexSandboxForPermissions } from '../permissions/adapter-policy'
 import {
   codexThreadSettings,
   mapCodexApprovalRequest,
@@ -30,36 +29,7 @@ const TOOL_ITEM_TYPES = new Set([
   'web_search',
 ])
 
-const CODEX_TRANSIENT_RETRY_ATTEMPTS = 2
 const CODEX_APP_SERVER_INTERRUPT_TIMEOUT_MS = 5000
-
-function isRetryableCodexError(message: string): boolean {
-  const m = message.toLowerCase()
-  return (
-    m.includes('tls handshake eof') ||
-    m.includes('stream disconnected before completion') ||
-    m.includes('reconnecting') ||
-    m.includes('connection reset') ||
-    m.includes('connection closed') ||
-    m.includes('network') ||
-    m.includes('timeout')
-  )
-}
-
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.reject(new Error('aborted'))
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(resolve, ms)
-    signal.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(t)
-        reject(new Error('aborted'))
-      },
-      { once: true },
-    )
-  })
-}
 
 function toolUseFromItem(item: Record<string, any>, ts: string): NormalizedEvent | null {
   const id = String(item.id ?? `codex_${Date.now()}`)
@@ -196,7 +166,9 @@ function toLinkScope(input: AgentRunInput): CockpitScope | null {
 }
 
 async function* runCodexAppServer(input: AgentRunInput): AsyncGenerator<NormalizedEvent> {
-  if (!input.requestApproval) throw new Error('Codex app-server approval requires requestApproval callback')
+  // full-access 模式没有 requestApproval,但 app-server 偶发也会发起权限询问(比如 shell 网络):
+  // 自动放行以保持"用户已经在 UI 上明确选择 full-access"的语义。有回调时优先走回调。
+  const requestApproval = input.requestApproval ?? (async () => 'approved' as const)
   const prompt = serializeForAgent(input.contextEvents, input.text, 'codex')
   let lease: CodexRuntimeLease | null = null
   const linkScope = toLinkScope(input)
@@ -289,7 +261,7 @@ async function* runCodexAppServer(input: AgentRunInput): AsyncGenerator<Normaliz
             return
           }
           try {
-            const status = await input.requestApproval!(mapping.operation, mapping.reason)
+            const status = await requestApproval(mapping.operation, mapping.reason)
             server.respond(r.id, mapping.responseFor(status))
           } catch (err) {
             server.respond(r.id, {
@@ -398,110 +370,6 @@ async function* runCodexAppServer(input: AgentRunInput): AsyncGenerator<Normaliz
   }
 }
 
-async function* runCodexExec(input: AgentRunInput): AsyncGenerator<NormalizedEvent> {
-  const prompt = serializeForAgent(input.contextEvents, input.text, 'codex')
-  const codex = await resolveCodexCommand()
-  if (!codex) throw new Error('codex CLI 不可用(本机未安装/登录对应 CLI)')
-
-  // 权限档位映射到 Codex 官方 sandbox / approval policy;ask 保持 read-only。
-  const args = [
-    ...codexGlobalArgsForPermissions(input.permissions),
-    'exec',
-    '--json',
-    '--ephemeral',
-    '--sandbox',
-    codexSandboxForPermissions(input.permissions),
-    '--skip-git-repo-check',
-    ...(input.model ? ['--model', input.model] : []),
-    // `-c key=value`,value 走 TOML 解析:用带引号字符串避免 "high" / "low" 被当作裸 token。
-    ...(input.effort ? ['-c', `model_reasoning_effort="${input.effort}"`] : []),
-    '-C',
-    input.cwd ?? process.cwd(),
-    ...(input.writableRoots ?? []).flatMap((dir) => ['--add-dir', dir]),
-    prompt,
-  ]
-
-  const child = spawn(codex, args, {
-    cwd: input.cwd ?? process.cwd(),
-    stdio: ['ignore', 'pipe', 'pipe'],
-    signal: input.signal,
-  })
-
-  let stderr = ''
-  child.stderr.on('data', (d) => (stderr += String(d)))
-
-  const rl = readline.createInterface({ input: child.stdout, crlfDelay: Infinity })
-  let turnError: string | null = null
-  // 已经 emit 过 tool_use 的 item id —— 防止 started+completed 双发。
-  const toolUseEmitted = new Set<string>()
-
-  for await (const line of rl) {
-    if (!line.trim()) continue
-    let o: Record<string, any>
-    try {
-      o = JSON.parse(line)
-    } catch {
-      continue // 非 JSON 提示行(如 "Reading additional input from stdin...")
-    }
-    const ts = new Date().toISOString()
-    switch (o.type) {
-      case 'item.started':
-        if (o.item && TOOL_ITEM_TYPES.has(o.item.type)) {
-          const id = String(o.item.id ?? `codex_${Date.now()}`)
-          const ev = toolUseFromItem(o.item, ts)
-          if (ev) {
-            toolUseEmitted.add(id)
-            yield ev
-          }
-        }
-        break
-      case 'item.completed':
-        if (o.item) {
-          if (TOOL_ITEM_TYPES.has(o.item.type)) {
-            const id = String(o.item.id ?? `codex_${Date.now()}`)
-            // started 没追到时兜底:补一条 tool_use,免得结果孤儿。
-            if (!toolUseEmitted.has(id)) {
-              const use = toolUseFromItem(o.item, ts)
-              if (use) yield use
-            }
-            const result = toolResultFromItem(o.item, ts)
-            if (result) yield result
-          } else {
-            for (const ev of translateCompletedNonTool(o.item, ts)) yield ev
-          }
-        }
-        break
-      case 'turn.completed':
-        if (o.usage) {
-          yield {
-            type: 'usage',
-            inputTokens: Number(o.usage.input_tokens ?? 0),
-            outputTokens: Number(o.usage.output_tokens ?? 0),
-            ts: new Date().toISOString(),
-            agent: 'codex',
-          }
-        }
-        break
-      case 'turn.failed':
-        turnError = String(o.error?.message ?? 'codex turn failed')
-        break
-      case 'error':
-        turnError = String(o.message ?? 'codex error')
-        break
-      // thread.started / turn.started / item.started / item.updated 忽略
-    }
-  }
-
-  const code: number = await new Promise((resolve) => {
-    if (child.exitCode != null) return resolve(child.exitCode)
-    child.on('close', (c) => resolve(c ?? 0))
-  })
-
-  if (input.signal.aborted) throw new Error('aborted')
-  if (turnError) throw new Error(turnError)
-  if (code !== 0) throw new Error(stderr.trim() || `codex exited ${code}`)
-}
-
 export const codexAdapter: ReviewAgent = {
   name: 'codex',
 
@@ -522,39 +390,9 @@ export const codexAdapter: ReviewAgent = {
   },
 
   async *run(input: AgentRunInput): AsyncGenerator<NormalizedEvent> {
-    if (input.requestApproval) {
-      yield* runCodexAppServer(input)
-      return
-    }
-    for (let attempt = 1; attempt <= CODEX_TRANSIENT_RETRY_ATTEMPTS; attempt++) {
-      let emitted = 0
-      try {
-        for await (const ev of runCodexExec(input)) {
-          emitted++
-          yield ev
-        }
-        return
-      } catch (err) {
-        if (input.signal.aborted) throw err
-        const message = String((err as Error)?.message ?? err)
-        const canRetry =
-          attempt < CODEX_TRANSIENT_RETRY_ATTEMPTS &&
-          emitted === 0 &&
-          isRetryableCodexError(message)
-        if (!canRetry) throw err
-        yield {
-          type: 'meta',
-          key: 'codex_retry',
-          value: {
-            attempt: attempt + 1,
-            maxAttempts: CODEX_TRANSIENT_RETRY_ATTEMPTS,
-            reason: message,
-          },
-          ts: new Date().toISOString(),
-        }
-        await sleep(800 * attempt, input.signal)
-      }
-    }
+    // 统一走 app-server:文字逐 token(agentMessage/delta)、工具事件立刻可见,和群聊 / 有审批
+    // follow-up 一致。full-access 由 runCodexAppServer 内部自动放行 approval。
+    yield* runCodexAppServer(input)
   },
 
   canResumeNative(source: string) {
@@ -576,6 +414,9 @@ export const codexAdapter: ReviewAgent = {
     const globalArgs = trusted
       ? ['--dangerously-bypass-approvals-and-sandbox']
       : ['--sandbox', 'read-only']
+    // Native resume 也要能吐 reasoning:effort + summary 两个开关都要打开,不能只靠
+    // 用户 ~/.codex/config.toml 的默认值,否则 timeline 大概率看不到 thinking 节点。
+    const effort = input.effort ?? 'medium'
     const args = [
       ...globalArgs,
       '--cd',
@@ -584,6 +425,8 @@ export const codexAdapter: ReviewAgent = {
       'resume',
       '--json',
       '--skip-git-repo-check',
+      '-c', `model_reasoning_effort="${effort}"`,
+      '-c', 'model_reasoning_summary="auto"',
       input.sessionId,
       '-',
     ]

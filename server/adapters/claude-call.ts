@@ -281,7 +281,8 @@ function normalizeClaudeFinalMessage(
         agent: 'claude',
         streamId: `${msgId}:${idx}`,
       })
-    } else if (p?.type === 'thinking' && typeof p.thinking === 'string') {
+    } else if (p?.type === 'thinking' && typeof p.thinking === 'string' && p.thinking.trim()) {
+      // 空明文跳过 —— redacted/signature-only 时 UI 显示占位反而误导。
       out.push({ type: 'thinking', text: p.thinking, ts })
     } else if (p?.type === 'tool_use') {
       out.push({
@@ -473,7 +474,8 @@ function normalizeSdkMessage(message: SDKMessage, streamedTextMsgIds: Set<string
         if (!streamedTextMsgIds.has(streamId)) {
           out.push({ type: 'assistant_text', text: part.text, ts, agent: 'claude', streamId })
         }
-      } else if (part.type === 'thinking' && typeof part.thinking === 'string') {
+      } else if (part.type === 'thinking' && typeof part.thinking === 'string' && part.thinking.trim()) {
+        // 空明文跳过 —— 见 normalizeClaudeFinalMessage 的同名分支说明。
         out.push({ type: 'thinking', text: part.thinking, ts })
       } else if (part.type === 'tool_use') {
         out.push({
@@ -578,9 +580,19 @@ async function* runClaudeSdk(input: AgentRunInput): AsyncGenerator<NormalizedEve
       cwd: input.cwd ?? process.cwd(),
       pathToClaudeCodeExecutable: 'claude',
       ...(input.model ? { model: input.model } : {}),
+      // SDK 的 effort 直接映射到 CLI `--effort`,是启用 extended thinking 的开关。
+      // 不传时 thinking block 根本不会产生,timeline 上就没有 💡 节点。
+      ...(input.effort ? { effort: input.effort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}),
       ...(input.writableRoots?.length ? { additionalDirectories: input.writableRoots.map(expandHome) } : {}),
       permissionMode: 'default',
       tools: { type: 'preset', preset: 'claude_code' },
+      // 不开这个开关,SDK 只在每轮末发整段 assistant,UI 看上去是"一坨蹦出来";
+      // 打开后走 stream_event / content_block_delta,和 CLI --include-partial-messages 语义一致。
+      includePartialMessages: true,
+      // 关键:SDK persistSession 默认 true —— 不显式关掉,cockpit 的 ask/群聊每 turn 都会往
+      // ~/.claude/projects/<hash>/*.jsonl 写一份原生 session,污染原生目录,违反不变量 1。
+      // CLI 路径靠 --no-session-persistence 达到同样效果。
+      persistSession: false,
       canUseTool,
       env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: 'cockpit/0.1.0' },
     },
@@ -654,6 +666,8 @@ export const claudeAdapter: ReviewAgent = {
       input.writeMode === 'trusted'
         ? { mode: 'full-access' as const, allowNetwork: true, allowWorkspaceWrite: true, allowOutsideWorkspaceWrite: true, allowShell: true }
         : undefined
+    // Native resume 显式带 effort:没 --effort 时 Claude Code CLI 不会启用 extended thinking,
+    // UI 上就看不到 💡 thinking 节点。默认由路由层给到 medium。
     yield* runClaudeWithRetry(
       () =>
         runClaudePrint(
@@ -662,7 +676,7 @@ export const claudeAdapter: ReviewAgent = {
           input,
           true,
           undefined,
-          undefined,
+          input.effort,
           permissions,
         ),
       input.signal,
