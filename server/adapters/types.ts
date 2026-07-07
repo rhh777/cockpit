@@ -25,6 +25,16 @@ export interface AgentRunInput {
   effort?: string
   /** Runtime 发起真实副作用操作时的审批回调。没有回调的 adapter 必须保持只读/安全模式。 */
   requestApproval?: (operation: Operation, reason?: string) => Promise<'approved' | 'rejected'>
+  /**
+   * Phase 2 opt-in:用户已知悉「本 thread 会通过官方 runtime 产生原生 session 副作用」时,
+   * adapter 可以在 provider-thread-link store 里查/建对应 thread,后续轮复用。
+   * 未设置时保持默认 ephemeral 行为。目前仅 Codex app-server 消费。
+   */
+  nativeLinked?: {
+    scope:
+      | { kind: 'followup'; source: string; sessionId: string; agent: AgentName }
+      | { kind: 'group-member'; groupThreadId: string; agent: AgentName }
+  }
   signal: AbortSignal
 }
 

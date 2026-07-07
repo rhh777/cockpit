@@ -62,6 +62,12 @@ export interface SendFollowupBody {
   attachments?: ChatAttachmentDraft[]
   /** run 级权限档位。默认 ask。 */
   permissions?: RunPermissions
+  /**
+   * Phase 2 opt-in:「加速模式」—— 仅 Codex 生效,让本 thread 通过官方 runtime 复用 provider thread。
+   * 会导致 Cockpit follow-up 在官方 Codex 侧产生原生 session 副作用(落 ~/.codex/sessions)。
+   * 默认关闭,由用户在 composer 里显式勾选、per-thread 记忆。
+   */
+  codexAcceleratedMode?: boolean
 }
 
 export interface RunRecord {
@@ -191,6 +197,8 @@ export async function startGroupRun(
     cliByAgent?: Partial<Record<string, { model?: string; effort?: string }>>
     attachments?: ChatAttachmentDraft[]
     permissions?: RunPermissions
+    /** Phase 2 opt-in:仅 Codex 群聊成员消费,per-group-thread 记忆。 */
+    codexAcceleratedMode?: boolean
   },
 ): Promise<{
   groupTurnId: string
@@ -286,6 +294,7 @@ export async function postGroupMessageStream(
     useTools?: boolean
     cliByAgent?: Partial<Record<string, { model?: string; effort?: string }>>
     attachments?: ChatAttachmentDraft[]
+    codexAcceleratedMode?: boolean
   },
   onMessage: (msg: GroupStreamMessage) => void,
   signal: AbortSignal,

@@ -13,3 +13,11 @@ export function followupsFile(source: Source, id: string): string {
 export function threadAttachmentsDir(source: Source, id: string): string {
   return path.join(threadDir(source, id), 'attachments')
 }
+
+export function threadContextStateFile(source: Source, id: string): string {
+  return path.join(threadDir(source, id), 'context-state.json')
+}
+
+export function threadSummaryFile(source: Source, id: string): string {
+  return path.join(threadDir(source, id), 'summary.md')
+}

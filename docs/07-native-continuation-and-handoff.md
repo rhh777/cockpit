@@ -16,6 +16,7 @@
 - **打开原生工具是 bridge**,不是事实源迁移。
 - **上下文事实源在 Cockpit**,原生 thread 只保存自己的后续历史或入口 prompt。
 - **Handoff 默认是一次性快照**,source 后续变化只让 handoff 变 stale,不会自动变成活引用。
+- **Codex 加速模式(Phase 2 opt-in)** 是 native-linked 变种:普通 follow-up 仍是 ephemeral,不落原生;用户在 composer 高级菜单显式勾选后,官方 Codex runtime 会为该 thread 落一个非 ephemeral session,后续轮 `turn/start(existingThreadId)` 复用。link 记在 `~/.cockpit/runtime-links/codex.jsonl`,权限/model/cwd/writable roots 变化即 stale。UI 必须让用户知道会产生原生 session 副作用。
 
 ## 术语
 

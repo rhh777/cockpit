@@ -109,6 +109,32 @@ export function SessionDetail() {
     agentOf: Record<string, AgentName>
   }>({ parentOf: {}, agentOf: {} })
 
+  // Phase 2 opt-in:per-thread 记忆「Codex 加速模式(native-linked)」开关。
+  // 只影响 Codex agent 的 follow-up。默认关闭,LocalStorage per (source, id) 持久化。
+  const codexAccelStorageKey = source && id ? `cockpit:codex-accel:${source}:${id}` : null
+  const [codexAcceleratedMode, setCodexAcceleratedModeState] = useState(false)
+  useEffect(() => {
+    if (!codexAccelStorageKey) return
+    try {
+      setCodexAcceleratedModeState(window.localStorage.getItem(codexAccelStorageKey) === '1')
+    } catch {
+      /* SSR / storage 不可用时忽略 */
+    }
+  }, [codexAccelStorageKey])
+  const setCodexAcceleratedMode = useCallback(
+    (next: boolean) => {
+      setCodexAcceleratedModeState(next)
+      if (!codexAccelStorageKey) return
+      try {
+        if (next) window.localStorage.setItem(codexAccelStorageKey, '1')
+        else window.localStorage.removeItem(codexAccelStorageKey)
+      } catch {
+        /* ignore */
+      }
+    },
+    [codexAccelStorageKey],
+  )
+
   const eventsLenRef = useRef(0)
   const eventsRef = useRef<EventEnvelope[]>([])
   const seenIds = useRef<Set<string>>(new Set())
@@ -589,6 +615,7 @@ export function SessionDetail() {
       cli?: { model?: string; effort?: string },
       attachments?: AttachmentDraft[],
       permissions?: RunPermissions,
+      extras?: { codexAcceleratedMode?: boolean },
     ) => {
       if (!source || !id || agents.length === 0) return
       setSendError(null)
@@ -610,6 +637,8 @@ export function SessionDetail() {
             effort: cli?.effort,
             attachments,
             permissions,
+            // Phase 2:仅 Codex 目标 agent 消费该开关。
+            codexAcceleratedMode: agent === 'codex' ? extras?.codexAcceleratedMode === true : undefined,
           })
           .then(({ run, userEnvelope }) => {
             appendEnvelopes([userEnvelope])
@@ -638,6 +667,7 @@ export function SessionDetail() {
       options?: CliSelection | CliSelectionByAgent,
       attachments?: AttachmentDraft[],
       permissions?: RunPermissions,
+      extras?: { codexAcceleratedMode?: boolean },
     ) => {
       if (!id) return
       setSendError(null)
@@ -650,6 +680,9 @@ export function SessionDetail() {
           cliByAgent: options as CliSelectionByAgent | undefined,
           attachments,
           permissions,
+          // Phase 2:仅当 targets 中含 codex 且用户开启时,后端 executeGroupMember 才会为 codex member 建 link。
+          codexAcceleratedMode:
+            extras?.codexAcceleratedMode === true && agents.includes('codex') ? true : undefined,
         },
       )
         .then(({ records, userEnvelope, turnStart }) => {
@@ -925,13 +958,15 @@ export function SessionDetail() {
               sessionAgent={sessionAgentOf(source)}
               nativeAvailable={!groupMode && canNativeResume(source)}
               groupMode={groupMode}
-              onSend={(t, a, options, attachments, permissions) =>
+              onSend={(t, a, options, attachments, permissions, extras) =>
                 groupMode
-                  ? handleGroupSend(t, a, options as CliSelectionByAgent | undefined, attachments, permissions)
-                  : handleSend(t, a, undefined, options as CliSelection | undefined, attachments, permissions)
+                  ? handleGroupSend(t, a, options as CliSelectionByAgent | undefined, attachments, permissions, extras)
+                  : handleSend(t, a, undefined, options as CliSelection | undefined, attachments, permissions, extras)
               }
               onNativeSend={handleNativeSend}
               onCancelAll={handleCancelAll}
+              codexAcceleratedMode={codexAcceleratedMode}
+              onCodexAcceleratedModeChange={setCodexAcceleratedMode}
             />
           </div>
         </div>

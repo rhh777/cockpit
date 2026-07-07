@@ -222,6 +222,7 @@ async function handlePostMessage(req: IncomingMessage, res: ServerResponse, id: 
     cliByAgent?: Partial<Record<AgentName, { model?: string; effort?: string }>>
     attachments?: AttachmentDraft[]
     permissions?: unknown
+    codexAcceleratedMode?: boolean
   }
   const text = (body.text ?? '').trim()
   const attachments = await normalizeAttachments(groupAttachmentsDir(id), body.attachments)
@@ -314,6 +315,16 @@ async function handlePostMessage(req: IncomingMessage, res: ServerResponse, id: 
       if (!(await agent.isAvailable())) {
         throw new Error(`agent "${run.agent}" 不可用(本机未安装/登录对应 CLI)`)
       }
+      const nativeLinked =
+        run.agent === 'codex' && body.codexAcceleratedMode === true
+          ? {
+              scope: {
+                kind: 'group-member' as const,
+                groupThreadId: id,
+                agent: 'codex' as const,
+              },
+            }
+          : undefined
       for await (const raw of agent.run({
         text,
         contextEvents: projectContext(transcript, summary, text, run.agent, attachments),
@@ -323,6 +334,7 @@ async function handlePostMessage(req: IncomingMessage, res: ServerResponse, id: 
         permissions,
         model: cliByAgent[run.agent]?.model,
         effort: cliByAgent[run.agent]?.effort,
+        nativeLinked,
         // Legacy POST+SSE path has no approval card plumbing. Supplying this keeps
         // Codex on app-server/read-only while preserving the old safe behavior.
         requestApproval:
@@ -402,6 +414,7 @@ async function handleStartRun(req: IncomingMessage, res: ServerResponse, id: str
     cliByAgent?: Partial<Record<AgentName, { model?: string; effort?: string }>>
     attachments?: AttachmentDraft[]
     permissions?: unknown
+    codexAcceleratedMode?: boolean
   }
   const text = (body.text ?? '').trim()
   const attachments = await normalizeAttachments(groupAttachmentsDir(id), body.attachments)
@@ -422,6 +435,7 @@ async function handleStartRun(req: IncomingMessage, res: ServerResponse, id: str
       permissions: normalizeRunPermissions(body.permissions),
       cliByAgent: body.cliByAgent,
       attachments,
+      codexAcceleratedMode: body.codexAcceleratedMode === true,
     })
     if (state.title.trim() === 'Group Chat' && text) {
       const title = cleanTitle(text, 36)

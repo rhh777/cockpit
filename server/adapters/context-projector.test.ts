@@ -53,3 +53,91 @@ test('projectContextEvents leaves small tool_result object identity unchanged', 
   ]
   assert.equal(projectContextEvents(events, { largeToolResultChars: 30 })[0], events[0])
 })
+
+function makeUser(id: string, text: string): EventEnvelope {
+  return {
+    origin: 'native',
+    source: 'claude-code',
+    sourceEventId: id,
+    event: { type: 'user_text', text, ts: '2026-01-01T00:00:00.000Z' },
+  }
+}
+function makeAssistant(id: string, text: string): EventEnvelope {
+  return {
+    origin: 'native',
+    source: 'claude-code',
+    sourceEventId: id,
+    event: { type: 'assistant_text', text, agent: 'claude', ts: '2026-01-01T00:00:00.000Z' },
+  }
+}
+function makeBoundary(): EventEnvelope {
+  return {
+    origin: 'cockpit',
+    source: 'claude-code',
+    sourceEventId: 'boundary',
+    event: { type: 'followup_boundary', ts: '2026-01-01T00:00:00.000Z' },
+  }
+}
+
+test('projectContextEvents incremental replaces pre-checkpoint native block with summary meta', () => {
+  const events: EventEnvelope[] = [
+    makeUser('u1', '第一轮问题'),
+    makeAssistant('a1', '第一轮回答'),
+    makeUser('u2', '第二轮问题'),
+    makeAssistant('a2', '第二轮回答'),
+    makeBoundary(),
+    makeUser('f1', 'follow-up 提问'),
+  ]
+
+  const projected = projectContextEvents(events, {
+    incremental: { summary: 'session 摘要正文', upToSourceEventId: 'a2' },
+  })
+
+  // 原生段被替换为一条 meta.context_summary + 边界 + follow-up。
+  assert.equal(projected.length, 3)
+  assert.equal(projected[0].event.type, 'meta')
+  if (projected[0].event.type === 'meta') {
+    assert.equal(projected[0].event.key, 'context_summary')
+    assert.deepEqual(projected[0].event.value, { summary: 'session 摘要正文' })
+  }
+  assert.equal(projected[1].event.type, 'followup_boundary')
+  assert.equal(projected[2].sourceEventId, 'f1')
+})
+
+test('projectContextEvents incremental falls back to full when checkpoint missing', () => {
+  const events: EventEnvelope[] = [
+    makeUser('u1', 'q'),
+    makeAssistant('a1', 'r'),
+  ]
+  const projected = projectContextEvents(events, {
+    incremental: { summary: 's', upToSourceEventId: 'not-found' },
+  })
+  assert.equal(projected.length, 2)
+  assert.equal(projected[0].sourceEventId, 'u1')
+  assert.equal(projected[1].sourceEventId, 'a1')
+})
+
+test('projectContextEvents incremental only slices native, keeps follow-up section untouched', () => {
+  const events: EventEnvelope[] = [
+    makeUser('u1', 'q1'),
+    makeAssistant('a1', 'r1'),
+    makeBoundary(),
+    // followup_boundary 之后即便 sourceEventId 命中,也不作为 anchor:incremental 只裁原生段。
+    { ...makeUser('trap', 'follow'), sourceEventId: 'a1' },
+  ]
+  const projected = projectContextEvents(events, {
+    incremental: { summary: 's', upToSourceEventId: 'a1' },
+  })
+  // 命中的是原生段的 a1;follow-up 段那条 sourceEventId=a1 的 trap 不应被吞。
+  assert.equal(projected[0].event.type, 'meta')
+  assert.equal(projected[projected.length - 1].event.type, 'user_text')
+})
+
+test('projectContextEvents incremental with empty summary falls back to full', () => {
+  const events: EventEnvelope[] = [makeUser('u1', 'q'), makeAssistant('a1', 'r')]
+  const projected = projectContextEvents(events, {
+    incremental: { summary: '   ', upToSourceEventId: 'u1' },
+  })
+  assert.equal(projected.length, 2)
+  assert.equal(projected[0].sourceEventId, 'u1')
+})

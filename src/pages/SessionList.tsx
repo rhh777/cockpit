@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
 import { Link, useMatch, useNavigate } from 'react-router-dom'
 import {
   createGroupThread,
@@ -150,6 +150,8 @@ export function SessionList({ style }: { style?: CSSProperties }) {
   const [editingTitle, setEditingTitle] = useState('')
   const [busyGroupId, setBusyGroupId] = useState<string | null>(null)
   const [activeBySession, setActiveBySession] = useState<Map<string, ActiveRunDTO[]>>(new Map())
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; session: SessionSummaryDTO } | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement | null>(null)
   const navigate = useNavigate()
   const match = useMatch('/:source/:id')
   const selSource = match?.params.source
@@ -172,6 +174,27 @@ export function SessionList({ style }: { style?: CSSProperties }) {
   useEffect(() => {
     writeGroupMode(groupMode)
   }, [groupMode])
+
+  useEffect(() => {
+    if (!contextMenu) return
+    const close = () => setContextMenu(null)
+    const onDown = (e: MouseEvent) => {
+      if (!contextMenuRef.current?.contains(e.target as Node)) setContextMenu(null)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setContextMenu(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [contextMenu])
 
   useEffect(() => {
     let alive = true
@@ -330,10 +353,16 @@ export function SessionList({ style }: { style?: CSSProperties }) {
       activeAgents.length === 1
         ? `${labelForAgent(activeAgents[0])} 回答中`
         : `${activeAgents.length} 个 agent 回答中`
+    const openContextMenu = (e: ReactMouseEvent) => {
+      e.preventDefault()
+      if (editing) return
+      setContextMenu({ x: e.clientX, y: e.clientY, session: s })
+    }
     return (
       <div
-        className={`project-session-row ${isGroup ? 'group-row' : ''} ${selected ? 'selected' : ''} ${editing ? 'editing' : ''} ${isRunning ? 'running' : ''}`}
+        className={`project-session-row ${isGroup ? 'group-row' : ''} ${selected ? 'selected' : ''} ${editing ? 'editing' : ''} ${isRunning ? 'running' : ''} ${isPinned ? 'pinned' : ''}`}
         key={key}
+        onContextMenu={openContextMenu}
       >
         {editing ? (
           <form
@@ -400,47 +429,21 @@ export function SessionList({ style }: { style?: CSSProperties }) {
             )}
           </Link>
         )}
-        {isGroup && !editing && (
-          <button
-            className="project-row-action"
-            title={t('sessions.renameGroup')}
-            aria-label={t('sessions.renameGroup')}
-            disabled={busy}
-            onClick={() => startRename(s)}
-          >
-            <Icon name="edit" size={12} />
-          </button>
-        )}
-        {isGroup && !editing && (
-          <button
-            className="project-row-action danger"
-            title={t('sessions.deleteGroup')}
-            aria-label={t('sessions.deleteGroup')}
-            disabled={busy}
-            onClick={() => void removeGroup(s)}
-          >
-            <Icon name="trash" size={12} />
-          </button>
-        )}
-        {!editing && (
-          <button
-            className={`session-pin project-pin ${isPinned ? 'active' : ''}`}
-            title={isPinned ? t('sessions.unpin') : t('sessions.pin')}
-            aria-label={isPinned ? t('sessions.unpin') : t('sessions.pin')}
-            onClick={() =>
-              setPinned((prev) => {
-                const next = new Set(prev)
-                if (next.has(key)) next.delete(key)
-                else next.add(key)
-                return next
-              })
-            }
-          >
-            <Icon name="pin" size={12} />
-          </button>
+        {isPinned && !editing && (
+          <Icon name="pin" size={11} className="project-session-pinned-indicator" />
         )}
       </div>
     )
+  }
+
+  const togglePin = (s: SessionSummaryDTO) => {
+    const key = sessionKey(s)
+    setPinned((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
   }
 
   return (
@@ -589,6 +592,62 @@ export function SessionList({ style }: { style?: CSSProperties }) {
           )
         })}
       </div>
+      {contextMenu && (() => {
+        const s = contextMenu.session
+        const key = sessionKey(s)
+        const isGroup = s.source === 'cockpit'
+        const isPinned = pinned.has(key)
+        const menuWidth = 180
+        const menuHeight = isGroup ? 108 : 40
+        const x = Math.min(contextMenu.x, window.innerWidth - menuWidth - 8)
+        const y = Math.min(contextMenu.y, window.innerHeight - menuHeight - 8)
+        return (
+          <div
+            ref={contextMenuRef}
+            className="session-context-menu"
+            style={{ left: x, top: y }}
+            role="menu"
+          >
+            <button
+              type="button"
+              className="session-context-item"
+              onClick={() => {
+                togglePin(s)
+                setContextMenu(null)
+              }}
+            >
+              <Icon name="pin" size={13} />
+              <span>{isPinned ? t('sessions.unpin') : t('sessions.pin')}</span>
+            </button>
+            {isGroup && (
+              <button
+                type="button"
+                className="session-context-item"
+                onClick={() => {
+                  startRename(s)
+                  setContextMenu(null)
+                }}
+              >
+                <Icon name="edit" size={13} />
+                <span>{t('sessions.renameGroup')}</span>
+              </button>
+            )}
+            {isGroup && (
+              <button
+                type="button"
+                className="session-context-item danger"
+                onClick={() => {
+                  setContextMenu(null)
+                  void removeGroup(s)
+                }}
+              >
+                <Icon name="trash" size={13} />
+                <span>{t('sessions.deleteGroup')}</span>
+              </button>
+            )}
+          </div>
+        )
+      })()}
     </aside>
   )
 }

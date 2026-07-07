@@ -4893,7 +4893,7 @@ body.resizing * {
 .project-session-list {
   display: grid;
   gap: 2px;
-  margin: 0 0 0 24px;
+  margin: 0 0 0 8px;
 }
 
 .project-recent {
@@ -4969,13 +4969,9 @@ body.resizing * {
   grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 7px;
-  padding: 0 34px 0 10px;
+  padding: 0 10px;
   text-decoration: none;
   color: inherit;
-}
-
-.project-session-row.group-row .project-session-link {
-  padding-right: 82px;
 }
 
 .project-session-edit {
@@ -5033,17 +5029,12 @@ body.resizing * {
   font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
-  opacity: 0;
-  transform: translateX(2px);
-  transition:
-    opacity 120ms ease,
-    transform 120ms ease;
+  display: none;
 }
 
 .project-session-row:hover .project-session-time,
 .project-session-row:focus-within .project-session-time {
-  opacity: 1;
-  transform: translateX(0);
+  display: inline-block;
 }
 
 .project-session-running {
@@ -5095,6 +5086,61 @@ body.resizing * {
 
 .project-pin {
   opacity: 0;
+}
+
+.project-session-pinned-indicator {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  color: var(--color-text-secondary);
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+.project-session-row:hover .project-session-pinned-indicator,
+.project-session-row:focus-within .project-session-pinned-indicator {
+  display: none;
+}
+
+.session-context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 180px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.session-context-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: var(--app-font-size);
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-context-item:hover {
+  background: var(--color-background-tertiary);
+}
+
+.session-context-item.danger {
+  color: var(--color-text-danger);
+}
+
+.session-context-item.danger:hover {
+  background: var(--color-background-danger);
 }
 
 .project-row-action {

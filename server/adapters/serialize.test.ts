@@ -49,6 +49,26 @@ test('serialize 超长从中段截断,钉住部分保留', () => {
   assert.ok(out.length < 8000)
 })
 
+test('serialize 渲染 context_summary meta 为独立块', () => {
+  const events: EventEnvelope[] = [
+    {
+      origin: 'cockpit',
+      source: SRC,
+      event: {
+        type: 'meta',
+        key: 'context_summary',
+        value: { summary: 'earlier session gist here' },
+        ts: 't',
+      },
+    },
+    nat({ type: 'user_text', text: 'new question', ts: 't' }),
+    nat({ type: 'assistant_text', text: 'answer', ts: 't' }),
+  ]
+  const out = serializeForAgent(events, 'follow up', 'claude')
+  assert.match(out, /\[Session summary of earlier history\]/)
+  assert.match(out, /earlier session gist here/)
+})
+
 test('redactSecrets 屏蔽密钥行,保留普通行', () => {
   const r = redactSecrets('normal line\naws_secret_access_key=AKIAIOSFODNN7EXAMPLE\nok')
   assert.match(r.text, /normal line/)

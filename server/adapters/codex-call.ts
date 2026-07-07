@@ -12,6 +12,12 @@ import {
   translateNotification,
 } from './codex-app-server'
 import { codexRuntimeManager, type CodexRuntimeLease } from './codex-runtime-manager'
+import {
+  providerThreadLinkStore,
+  type CockpitScope,
+  type ProviderThreadLink,
+} from '../store/provider-thread-link-store'
+import type { Source } from '../loaders/types'
 
 // `codex exec --json` 输出的是 codex-sdk ThreadEvent JSONL(不是 rollout 会话格式),
 // 顶层 {type:'item.started'|'item.completed'|'item.updated', item:{type:...}}。
@@ -179,10 +185,33 @@ function notificationTurnId(params: unknown): string | null {
   return typeof nested === 'string' && nested.length > 0 ? nested : null
 }
 
+// Phase 2:native-linked 模式下把 Cockpit scope 映射成 provider-thread-link scope。
+function toLinkScope(input: AgentRunInput): CockpitScope | null {
+  const s = input.nativeLinked?.scope
+  if (!s) return null
+  if (s.kind === 'followup') {
+    return { kind: 'followup', source: s.source as Source, sessionId: s.sessionId, agent: s.agent }
+  }
+  return { kind: 'group-member', groupThreadId: s.groupThreadId, agent: s.agent }
+}
+
 async function* runCodexAppServer(input: AgentRunInput): AsyncGenerator<NormalizedEvent> {
   if (!input.requestApproval) throw new Error('Codex app-server approval requires requestApproval callback')
   const prompt = serializeForAgent(input.contextEvents, input.text, 'codex')
   let lease: CodexRuntimeLease | null = null
+  const linkScope = toLinkScope(input)
+  const threadKey = {
+    cwd: input.cwd,
+    model: input.model,
+    effort: input.effort,
+    permissionMode: input.permissions?.mode,
+    writableRoots: input.writableRoots,
+  }
+  // native-linked 模式且已有 active link → 尝试直接复用 thread;失败会回退到新建。
+  let reusedLink: ProviderThreadLink | null = null
+  if (linkScope) {
+    reusedLink = await providerThreadLinkStore.findActive('codex', linkScope, threadKey)
+  }
 
   const queue = new AsyncEventQueue<NormalizedEvent>()
   let threadId: string | null = null
@@ -283,19 +312,77 @@ async function* runCodexAppServer(input: AgentRunInput): AsyncGenerator<Normaliz
       effort: input.effort,
       writableRoots: input.writableRoots,
     })
-    const thread = (await server.request('thread/start', {
-      ...settings,
-      sandbox: input.permissions?.mode === 'full-access' ? 'danger-full-access' : input.permissions?.mode === 'auto-safe' ? 'workspace-write' : 'read-only',
-      ephemeral: true,
-    })) as { thread?: { id?: string } }
-    threadId = thread.thread?.id ?? null
-    if (!threadId) throw new Error('codex app-server 未返回 threadId')
+    const sandbox =
+      input.permissions?.mode === 'full-access'
+        ? 'danger-full-access'
+        : input.permissions?.mode === 'auto-safe'
+          ? 'workspace-write'
+          : 'read-only'
 
-    const turn = (await server.request('turn/start', {
-      threadId,
-      input: [{ type: 'text', text: prompt, text_elements: [] }],
-      ...settings,
-    })) as { turn?: { id?: string } }
+    // native-linked 模式:非 ephemeral,让官方 runtime 落原生 session,后续轮可复用。
+    // 普通 follow-up:ephemeral=true,不产生原生副作用(docs/11 §Phase 2 A/B 边界)。
+    const ephemeral = !linkScope
+
+    if (reusedLink) {
+      // 复用已有 thread。跳过 thread/start;失败时 (thread not found) 会重建。
+      threadId = reusedLink.nativeThreadId
+    } else {
+      const thread = (await server.request('thread/start', {
+        ...settings,
+        sandbox,
+        ephemeral,
+      })) as { thread?: { id?: string } }
+      threadId = thread.thread?.id ?? null
+      if (!threadId) throw new Error('codex app-server 未返回 threadId')
+      if (linkScope) {
+        await providerThreadLinkStore.upsert({
+          provider: 'codex',
+          scope: linkScope,
+          threadKey,
+          nativeThreadId: threadId,
+          persistence: 'native-linked',
+          sourceFingerprint: { eventCount: input.contextEvents.length },
+        })
+      }
+    }
+
+    let turn: { turn?: { id?: string } }
+    try {
+      turn = (await server.request('turn/start', {
+        threadId,
+        input: [{ type: 'text', text: prompt, text_elements: [] }],
+        ...settings,
+      })) as { turn?: { id?: string } }
+    } catch (err) {
+      // native-linked 复用时如果 thread not found,标记 link failed 并重建一次。
+      const msg = String((err as Error)?.message ?? err).toLowerCase()
+      const threadMissing =
+        reusedLink != null && (msg.includes('not found') || msg.includes('unknown thread') || msg.includes('no such thread'))
+      if (!threadMissing) throw err
+      await providerThreadLinkStore.markStatus('codex', reusedLink!.id, 'failed')
+      const rebuilt = (await server.request('thread/start', {
+        ...settings,
+        sandbox,
+        ephemeral: false,
+      })) as { thread?: { id?: string } }
+      threadId = rebuilt.thread?.id ?? null
+      if (!threadId) throw new Error('codex app-server 未返回 threadId(重建后)')
+      if (linkScope) {
+        await providerThreadLinkStore.upsert({
+          provider: 'codex',
+          scope: linkScope,
+          threadKey,
+          nativeThreadId: threadId,
+          persistence: 'native-linked',
+          sourceFingerprint: { eventCount: input.contextEvents.length },
+        })
+      }
+      turn = (await server.request('turn/start', {
+        threadId,
+        input: [{ type: 'text', text: prompt, text_elements: [] }],
+        ...settings,
+      })) as { turn?: { id?: string } }
+    }
     turnId = turn.turn?.id ?? turnId
 
     void done.then(() => queue.close())

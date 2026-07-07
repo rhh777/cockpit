@@ -459,6 +459,8 @@ RunRegistry 通过 SSE 推 `run_phase` meta。前端可在 `StreamingStatus`、s
 
 ### 已完成
 
+- Phase 2 opt-in 版:`~/.cockpit/runtime-links/codex.jsonl` 落盘 provider-thread link;`FollowupComposer` 高级菜单加「Codex 加速(native-linked)」toggle,per-thread LocalStorage 记忆,首次开启弹 confirm;后端 `runCodexAppServer` 命中 link 直接 `turn/start(existingThreadId)`,未命中且 opt-in 时 `ephemeral: false` 新建 thread 并写 link;权限/model/cwd/writable roots 变化 → `threadKeyHash` 变 → 旧 link stale 自动新建;`thread not found` 标 failed 并重建一次。**同时覆盖群聊**:每个 Codex 群聊 member 使用独立 scope(`{ kind: 'group-member', groupThreadId, agent: 'codex' }`),legacy `/messages` 和 approval `/runs` 两条路径都接入。默认关闭,不影响普通 follow-up 的 ephemeral 语义。
+- Phase 4 full 版:`~/.cockpit/threads/<src>/<id>/{summary.md, context-state.json}` 落盘 + 启发式 summary generator + 每轮末异步刷新;`projectContextEvents` 支持 `incremental` 选项,在 follow-up (routes/threads) 和 run-registry 双入口按事件数/文本量阈值(>50 或 >12K chars)自动切换。回退安全:checkpoint stale 静默走 full。
 - `CodexAppServer` stderr 环形缓冲(64 KB)。
 - `CodexRuntimeManager` 基础版本 + `turn/interrupt` 取消路径。
 - `runCodexAppServer` 复用 manager,每轮仍新建 ephemeral thread。

@@ -4,6 +4,8 @@ import type { AgentName, ChatAttachment, EventEnvelope, NormalizedEvent, Source 
 import { resolveAgent } from '../adapters/registry'
 import { filterToolResult, redactSecrets } from '../adapters/sensitive'
 import { projectContextEvents } from '../adapters/context-projector'
+import { threadContextStore } from '../store/thread-context-store'
+import { scheduleSummaryRefresh } from '../adapters/summary-refresh'
 import { loadSessionDetail } from '../sessions-service'
 import { threadStore } from '../store/thread-store'
 import { groupThreadStore } from '../store/group-thread-store'
@@ -17,6 +19,22 @@ import { approvalStore } from '../approvals/approval-store'
 import type { ApprovalRequest, Operation, RunPermissions } from '../permissions/types'
 
 const CODEX_CONTINUATION_INTERRUPT_TIMEOUT_MS = 5_000
+
+// Phase 4 incremental 门槛,与 threads.ts 保持一致(改动时同步更新)。
+const INCREMENTAL_EVENT_THRESHOLD = 50
+const INCREMENTAL_TEXT_THRESHOLD = 12000
+
+function shouldUseIncrementalForRegistry(events: EventEnvelope[]): boolean {
+  if (events.length > INCREMENTAL_EVENT_THRESHOLD) return true
+  let chars = 0
+  for (const env of events) {
+    const e = env.event
+    if (e.type === 'user_text' || e.type === 'assistant_text' || e.type === 'thinking') chars += e.text.length
+    else if (e.type === 'tool_result') chars += e.output.length
+    if (chars > INCREMENTAL_TEXT_THRESHOLD) return true
+  }
+  return false
+}
 
 export type RunPhase =
   | 'queued'
@@ -68,6 +86,8 @@ interface FollowupStartInput {
   model?: string
   effort?: string
   attachments?: ChatAttachment[]
+  // Phase 2 opt-in:仅 Codex 消费,非 Codex 忽略。
+  codexAcceleratedMode?: boolean
 }
 
 interface GroupTurnStartInput {
@@ -78,6 +98,8 @@ interface GroupTurnStartInput {
   permissions: RunPermissions
   cliByAgent?: Partial<Record<AgentName, { model?: string; effort?: string }>>
   attachments?: ChatAttachment[]
+  // Phase 2 opt-in:仅 Codex 消费。开启后 Codex member 复用 provider thread,产生原生 session 副作用。
+  codexAcceleratedMode?: boolean
 }
 
 interface NativeStartInput {
@@ -722,18 +744,44 @@ class RunRegistry {
       emitPhase(handle, 'runtime_ready')
       emitPhase(handle, 'building_context')
       const detail = await loadSessionDetail(input.source, input.sessionId, input.filePath)
+      const detailEvents = detail?.events ?? []
+      let incrementalOpt: { summary: string; upToSourceEventId: string } | undefined
+      if (shouldUseIncrementalForRegistry(detailEvents)) {
+        const state = await threadContextStore.readState(input.source, input.sessionId)
+        if (state?.checkpoint.upToSourceEventId) {
+          const summary = await threadContextStore.readSummary(input.source, input.sessionId)
+          if (summary && summary.trim().length > 0) {
+            incrementalOpt = { summary, upToSourceEventId: state.checkpoint.upToSourceEventId }
+          }
+        }
+      }
       const toolInputById = new Map<string, unknown>()
       let sawStream = false
       emitPhase(handle, 'starting_turn')
+      const nativeLinked =
+        input.targetAgent === 'codex' && input.codexAcceleratedMode
+          ? {
+              scope: {
+                kind: 'followup' as const,
+                source: input.source,
+                sessionId: input.sessionId,
+                agent: 'codex' as const,
+              },
+            }
+          : undefined
       for await (const raw of agent.run({
         text: withAttachments(input.text, input.attachments),
-        contextEvents: projectContextEvents(detail?.events ?? []),
+        contextEvents: projectContextEvents(
+          detailEvents,
+          incrementalOpt ? { incremental: incrementalOpt } : undefined,
+        ),
         targetAgent: input.targetAgent,
         cwd: detail?.summary.cwd ?? null,
         useTools: input.useTools,
         permissions: input.permissions,
         model: input.model,
         effort: input.effort,
+        nativeLinked,
         requestApproval:
           (input.targetAgent === 'codex' || input.targetAgent === 'claude') &&
           input.permissions.mode !== 'full-access'
@@ -774,6 +822,7 @@ class RunRegistry {
         await threadStore.appendTurnStatus(input.source, input.sessionId, turnId, runId, 'completed')
         handle.write({ kind: 'done', turnId, status: 'completed' })
       }
+      scheduleSummaryRefresh(input.source, input.sessionId, input.filePath)
     } catch (err) {
       const aborted = handle.controller.signal.aborted
       const status = aborted ? 'aborted' : 'failed'
@@ -783,6 +832,7 @@ class RunRegistry {
         await threadStore.appendTurnStatus(input.source, input.sessionId, turnId, runId, status, aborted ? undefined : message)
         handle.write({ kind: aborted ? 'aborted' : 'error', turnId, status, message })
       }
+      scheduleSummaryRefresh(input.source, input.sessionId, input.filePath)
     } finally {
       setTimeout(() => {
         if (this.runs.get(runId) === handle) this.runs.delete(runId)
@@ -808,6 +858,16 @@ class RunRegistry {
       emitPhase(handle, 'building_context')
       let sawStream = false
       emitPhase(handle, 'starting_turn')
+      const nativeLinked =
+        agentNameForRun === 'codex' && input.codexAcceleratedMode
+          ? {
+              scope: {
+                kind: 'group-member' as const,
+                groupThreadId: input.id,
+                agent: 'codex' as const,
+              },
+            }
+          : undefined
       for await (const raw of agent.run({
         text: input.text,
         contextEvents: projectGroupContext(transcript, summary, input.text, agentNameForRun, input.attachments ?? []),
@@ -817,6 +877,7 @@ class RunRegistry {
         permissions: input.permissions,
         model: input.cliByAgent?.[agentNameForRun]?.model,
         effort: input.cliByAgent?.[agentNameForRun]?.effort,
+        nativeLinked,
         requestApproval:
           (agentNameForRun === 'codex' || agentNameForRun === 'claude') &&
           input.permissions.mode !== 'full-access'

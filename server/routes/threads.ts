@@ -6,7 +6,26 @@ import { threadStore } from '../store/thread-store'
 import { resolveAgent } from '../adapters/registry'
 import { filterToolResult, redactSecrets } from '../adapters/sensitive'
 import { projectContextEvents } from '../adapters/context-projector'
+import { threadContextStore } from '../store/thread-context-store'
+import { scheduleSummaryRefresh } from '../adapters/summary-refresh'
 import { resolveSafe } from './resolve'
+
+// Phase 4:incremental 门槛。原生事件 > 50 或估算文本 > 12000 chars 才切换到 summary 前缀模式。
+// 短 session 全量已够,增量反而丢细节。
+const INCREMENTAL_EVENT_THRESHOLD = 50
+const INCREMENTAL_TEXT_THRESHOLD = 12000
+
+function shouldUseIncremental(events: import('../loaders/types').EventEnvelope[]): boolean {
+  if (events.length > INCREMENTAL_EVENT_THRESHOLD) return true
+  let chars = 0
+  for (const env of events) {
+    const e = env.event
+    if (e.type === 'user_text' || e.type === 'assistant_text' || e.type === 'thinking') chars += e.text.length
+    else if (e.type === 'tool_result') chars += e.output.length
+    if (chars > INCREMENTAL_TEXT_THRESHOLD) return true
+  }
+  return false
+}
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status
@@ -63,6 +82,8 @@ async function handlePostMessage(
     parentTurnId?: string
     model?: string
     effort?: string
+    // Phase 2 opt-in:用户显式勾选后由前端 per-thread 记忆并透传。
+    codexAcceleratedMode?: boolean
   }
   const text = (body.text ?? '').trim()
   const targetAgent = body.targetAgent ?? 'claude'
@@ -70,6 +91,7 @@ async function handlePostMessage(
   const parentTurnId = body.parentTurnId?.trim() || undefined
   const model = body.model?.trim() || undefined
   const effort = body.effort?.trim() || undefined
+  const codexAcceleratedMode = body.codexAcceleratedMode === true
   if (!text) {
     sendJson(res, 400, { error: 'empty message' })
     return
@@ -117,14 +139,33 @@ async function handlePostMessage(
       throw new Error(`agent "${targetAgent}" 不可用(本机未安装/登录对应 CLI)`)
     }
     const detail = await loadSessionDetail(source, id, filePath)
+    const events = detail?.events ?? []
+    let incremental: { summary: string; upToSourceEventId: string } | undefined
+    if (shouldUseIncremental(events)) {
+      const state = await threadContextStore.readState(source, id)
+      if (state?.checkpoint.upToSourceEventId) {
+        const summary = await threadContextStore.readSummary(source, id)
+        if (summary && summary.trim().length > 0) {
+          incremental = { summary, upToSourceEventId: state.checkpoint.upToSourceEventId }
+        }
+      }
+    }
+    // Phase 2 opt-in 只对 Codex 生效;其他 agent 忽略。
+    const nativeLinked =
+      targetAgent === 'codex' && codexAcceleratedMode
+        ? {
+            scope: { kind: 'followup' as const, source, sessionId: id, agent: 'codex' as const },
+          }
+        : undefined
     const input = {
       text,
-      contextEvents: projectContextEvents(detail?.events ?? []),
+      contextEvents: projectContextEvents(events, incremental ? { incremental } : undefined),
       targetAgent,
       cwd: detail?.summary.cwd ?? null,
       useTools,
       model,
       effort,
+      nativeLinked,
       signal: ac.signal,
     }
 
@@ -154,6 +195,7 @@ async function handlePostMessage(
     await threadStore.appendTurnStatus(source, id, turnId, runId, 'completed')
     sseWrite(res, { kind: 'done', turnId, status: 'completed' })
     res.end()
+    scheduleSummaryRefresh(source, id, filePath)
   } catch (err) {
     finished = true
     const aborted = ac.signal.aborted
@@ -164,6 +206,7 @@ async function handlePostMessage(
       sseWrite(res, { kind: aborted ? 'aborted' : 'error', turnId, status, message })
       res.end()
     }
+    scheduleSummaryRefresh(source, id, filePath)
   }
 }
 

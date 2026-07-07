@@ -49,6 +49,7 @@ async function handleStartFollowup(req: IncomingMessage, res: ServerResponse, so
     effort?: string
     attachments?: AttachmentDraft[]
     permissions?: unknown
+    codexAcceleratedMode?: boolean
   }
   const text = (body.text ?? '').trim()
   const attachments = await normalizeAttachments(threadAttachmentsDir(source, id), body.attachments)
@@ -69,6 +70,7 @@ async function handleStartFollowup(req: IncomingMessage, res: ServerResponse, so
     model: body.model?.trim() || undefined,
     effort: body.effort?.trim() || undefined,
     attachments: attachments.length ? attachments : undefined,
+    codexAcceleratedMode: body.codexAcceleratedMode === true,
   })
   sendJson(res, 202, {
     run: started.record,

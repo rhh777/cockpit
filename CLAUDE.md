@@ -80,9 +80,10 @@ pnpm electron:build    # 打 macOS dmg
 
 | 类型 | 路径 |
 |---|---|
-| 单 session follow-up | `~/.cockpit/threads/<src>/<id>/followups.jsonl` |
+| 单 session follow-up | `~/.cockpit/threads/<src>/<id>/{followups.jsonl, summary.md, context-state.json}` |
 | 群聊 | `~/.cockpit/group-threads/<id>/{transcript.jsonl, summary.md, state.json, attachments/}` |
 | Handoff | `~/.cockpit/handoffs/<id>/{manifest.json, *.md}` |
+| Provider thread 链接(Phase 2 opt-in) | `~/.cockpit/runtime-links/{codex,claude}.jsonl` |
 | discovery 缓存 | `~/.cockpit/cache/`(可删可重建) |
 
 群聊附件(图片)落 `group-threads/<id>/attachments/`,**不进原生 CLI 目录**;`file`/`directory` 附件只校验存在性,不复制。

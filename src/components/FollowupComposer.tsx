@@ -168,6 +168,8 @@ export function FollowupComposer({
   onNativeSend,
   onCancelAll,
   groupMode = false,
+  codexAcceleratedMode = false,
+  onCodexAcceleratedModeChange,
 }: {
   hasActiveStreams: boolean
   sessionAgent: AgentName
@@ -180,6 +182,7 @@ export function FollowupComposer({
     options?: CliSelection | CliSelectionByAgent,
     attachments?: AttachmentDraft[],
     permissions?: RunPermissions,
+    extras?: { codexAcceleratedMode?: boolean },
   ) => void
   onNativeSend: (
     text: string,
@@ -187,6 +190,9 @@ export function FollowupComposer({
     writeMode?: 'read-only' | 'trusted',
   ) => void
   onCancelAll: () => void
+  /** Phase 2 opt-in:「Codex 加速模式」当前 thread 是否已启用。由 SessionDetail per-thread 持久化。 */
+  codexAcceleratedMode?: boolean
+  onCodexAcceleratedModeChange?: (next: boolean) => void
 }) {
   const [text, setText] = useState('')
   const [agent, setAgent] = useState<AgentName>(sessionAgent)
@@ -291,7 +297,12 @@ export function FollowupComposer({
       // 单 agent 场景按当前 agent 偏好透传;@mentions 多目标下让 caller 走默认,避免一个
       // 模型设置被错配到另一个 agent。
       const options = groupMode ? cliByAgent : !usingMentions ? cliByAgent[agent] : undefined
-      onSend(t, targets, options, outgoing, permissionsForMode(permissionMode))
+      // Phase 2 加速模式:targets 中含 codex 且开关开启时透传(单聊、群聊都适用)。
+      const extras =
+        codexAcceleratedMode && targets.includes('codex')
+          ? { codexAcceleratedMode: true }
+          : undefined
+      onSend(t, targets, options, outgoing, permissionsForMode(permissionMode), extras)
     }
     setText('')
     setAttachments([])
@@ -766,6 +777,31 @@ export function FollowupComposer({
                       <Icon name="sparkle" size={13} />
                       <span>Review</span>
                     </button>
+                    {(agent === 'codex' || targets.includes('codex')) && onCodexAcceleratedModeChange && (
+                      <button
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          const next = !codexAcceleratedMode
+                          if (next) {
+                            const ok = window.confirm(
+                              'Codex 加速模式会通过官方 Codex runtime 复用 provider thread,\n' +
+                                '在 ~/.codex/sessions/ 生成/追加原生 session 文件。\n\n' +
+                                '仅本 thread 生效,可随时关闭。确定开启?',
+                            )
+                            if (!ok) return
+                          }
+                          onCodexAcceleratedModeChange(next)
+                        }}
+                        title={
+                          codexAcceleratedMode
+                            ? '关闭后,后续 Codex follow-up 恢复 ephemeral,不写原生 session'
+                            : '开启后,Codex follow-up 会复用官方 thread,速度更快,但会写 ~/.codex/sessions'
+                        }
+                      >
+                        <Icon name="sparkle" size={13} />
+                        <span>{codexAcceleratedMode ? '✓ Codex 加速(native-linked)' : 'Codex 加速(native-linked)'}</span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

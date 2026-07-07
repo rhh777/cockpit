@@ -82,6 +82,15 @@ function renderEvent(env: EventEnvelope, opts: SerializeOptions): string | null 
       const prefix = e.isError ? '[tool error]' : '[tool result]'
       return `${prefix}: ${clip(redactSecrets(e.output).text, opts.maxToolOutputChars)}`
     }
+    case 'meta': {
+      // Phase 4 增量:context-projector 用 meta.context_summary 承载已被 summary 覆盖的历史。
+      if (e.key === 'context_summary') {
+        const v = e.value as { summary?: string } | undefined
+        const summary = typeof v?.summary === 'string' ? v.summary : ''
+        return summary ? `[Session summary of earlier history]\n${summary}` : null
+      }
+      return null
+    }
     default:
       return null
   }
