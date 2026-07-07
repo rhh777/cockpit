@@ -7,7 +7,7 @@
 | **形态** | Vite + React 单页应用,可选 Electron 桌面壳 |
 | **运行** | 纯本地。Node 后端(或 Vite middleware)负责读盘 + 调本机 CLI Adapter;前端只负责渲染 |
 | **数据源(只读)** | `~/.claude/projects/**/*.jsonl` 和 `~/.codex/sessions/**/*.jsonl` |
-| **数据源(读写)** | `~/.cockpit/threads/<source>/<originalSessionId>/followups.jsonl` —— cockpit 自己的 follow-up 对话 |
+| **数据源(读写)** | `~/.cockpit/` 下:`threads/<source>/<originalSessionId>/`(followups.jsonl / summary.md / context-state.json / attachments/)、`group-threads/<id>/`、`handoffs/<id>/`、`runs/`、`runtime-links/`、`cache/` |
 | **状态** | URL 路由 + 内存。Follow-up 持久化到上面那个目录,format 仿原生 JSONL；session 列表可有轻量 cache,原生文件仍是事实来源 |
 | **依赖** | React · Vite · 本机已安装并登录的 `claude` / `codex` CLI |
 
@@ -31,18 +31,24 @@
                             ↑↓ HTTP / SSE
 ┌────────────────────────────────────────────────────────────┐
 │  L3 · App Server (Node, Vite middleware)                   │
+│  核心(session + follow-up):                                │
 │  - GET  /api/sessions                  列表                 │
 │  - GET  /api/sessions/:src/:id         原始 session + 已有  │
 │                                        follow-up 合并返回   │
-│  - GET  /api/sessions/:src/:id/changes 增量检查(游标式)   │
+│  - GET  /api/sessions/:src/:id/stream  SSE 增量(默认路径) │
+│         ?since=N                                            │
+│  - GET  /api/sessions/:src/:id/changes 一次性 JSON,轮询兜底 │
 │  - POST /api/threads/:src/:id/messages 发一条 follow-up     │
 │         (SSE 流式返回 agent 响应,完成后落盘)              │
 │  - DELETE /api/threads/:src/:id        清空 follow-up       │
 │  - DELETE /api/threads/:src/:id/turns/:turnId  删除某一轮   │
-│         (支持失败轮重试)                                   │
 │  - POST /api/native/:src/:id/messages  回到原会话续写        │
 │         (由官方 CLI 子进程 append 原生 jsonl,cockpit       │
 │          仅做 SSE 转发与刷新触发,见 §十)                   │
+│  周边(见 §六模块树):                                     │
+│  - /api/attachments · /api/approvals · /api/native-dialog   │
+│  - /api/git · /api/runs · /api/handoffs                     │
+│  - /api/group-threads · /api/settings                       │
 └────────────────────────────────────────────────────────────┘
 
 **所有 `:id` 参数必须先校验再用于解析 filePath**(防路径穿越):见 §十安全。
@@ -65,8 +71,11 @@
 │   ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl             │
 │   ~/.codex/session_index.jsonl   ← 现成索引                │
 │  读写:                                                     │
-│   ~/.cockpit/threads/<source>/<id>/followups.jsonl      │
-│   ~/.cockpit/group-threads/<id>/{transcript.jsonl,summary.md,attachments/} │
+│   ~/.cockpit/threads/<source>/<id>/{followups.jsonl,summary.md,context-state.json,attachments/} │
+│   ~/.cockpit/group-threads/<id>/{transcript.jsonl,summary.md,state.json,attachments/} │
+│   ~/.cockpit/handoffs/<id>/{manifest.json,*.md}           │
+│   ~/.cockpit/runs/native-shadow/<src>/<id>/<runId>.jsonl  │
+│   ~/.cockpit/runtime-links/{codex,claude}.jsonl (opt-in)  │
 │   ~/.cockpit/cache/session-index.json (可删可重建)       │
 └────────────────────────────────────────────────────────────┘
 ```
@@ -78,9 +87,9 @@
 **统一事件类型**(Loader 出口 / UI 入口):
 
 ```typescript
-type Source = 'claude-code' | 'codex' | string  // 开放枚举,新来源扩展
-type AgentName = 'claude' | 'codex' | string    // follow-up 的 target agent
-type Origin = 'native' | 'cockpit'           // 事件来自原始 CLI 还是 cockpit follow-up
+type Source = 'claude-code' | 'codex' | 'cockpit' | (string & {})  // 开放枚举,新来源扩展
+type AgentName = 'claude' | 'codex' | (string & {})               // follow-up 的 target agent
+type Origin = 'native' | 'cockpit'                                // 事件来自原始 CLI 还是 cockpit follow-up
 
 interface SessionSummary {
   id: string                  // session uuid
@@ -98,14 +107,33 @@ interface SessionSummary {
 }
 
 type NormalizedEvent =
-  | { type: 'user_text'; text: string; ts: string; targetAgent?: AgentName }
-  | { type: 'assistant_text'; text: string; ts: string; agent?: AgentName }
+  | {
+      type: 'user_text'; text: string; ts: string
+      targetAgent?: AgentName
+      targetAgents?: AgentName[]            // 群聊 @多 agent
+      mentions?: AgentName[]                // 文本中的 @mention 记录
+      parentTurnId?: string                 // 回复关系
+      attachments?: ChatAttachment[]        // 文件/目录/图片附件
+    }
+  | {
+      type: 'assistant_text'; text: string; ts: string
+      agent?: AgentName
+      // 流式 delta:同 streamId 的多条 delta 拼接出最终文本;server 不落盘,UI 端 buildTimeline 合并
+      streamId?: string
+      delta?: boolean
+    }
   | { type: 'thinking'; text: string; ts: string }
-  | { type: 'tool_use'; id: string; name: string; input: unknown; ts: string }
+  | { type: 'tool_use'; id: string; name: string; input: unknown; ts: string; agent?: AgentName }
   | { type: 'tool_result'; toolUseId: string; output: string; isError: boolean; ts: string }
   | { type: 'usage'; inputTokens: number; outputTokens: number; ts: string; agent?: AgentName }
   | { type: 'followup_boundary'; ts: string }    // 原始 session 与 follow-up 的分隔符
   | { type: 'meta'; key: string; value: unknown; ts: string }   // 兜底
+
+// 附件类型(user_text.attachments 用到)
+type ChatAttachment =
+  | { kind: 'file'; path: string; name: string }
+  | { kind: 'directory'; path: string; name: string }
+  | { kind: 'image'; path?: string; dataUrl?: string; name: string; mimeType: string }
 
 // 每个事件都额外带:
 //   origin: 'native' | 'cockpit'
@@ -213,7 +241,9 @@ interface SessionRegistry {
 
 ```
 用户打开 session 详情页
-  → 前端 EventSource 订阅 GET /api/sessions/:source/:id/changes?sinceEventCount=N
+  → 前端 EventSource 订阅 GET /api/sessions/:source/:id/stream?since=N   (SSE 主路径)
+      同一路径下还提供 GET /api/sessions/:source/:id/changes?sinceEventCount=N,
+      作为一次性 JSON 轮询兜底(不升级 SSE)
   → Server subscribeWatcher:多 client 共享同一文件 watcher(fs.watch,引用计数到 0 关闭)
   → watcher 检测到文件变化 → 重读 → 推 {type:'append'|'reset', total, newEvents}
   → 前端按 sourceEventId 去重后,把 newEvents 追加到 timeline,保持滚动位置
@@ -239,11 +269,23 @@ cockpit/
 ├── vite.config.ts
 ├── tsconfig.json
 ├── server/                          ← Node 侧
-│   ├── index.ts                     ← Vite middleware 注册 API
+│   ├── index.ts                     ← Vite middleware 注册 API,顺序分发到 routes/*
+│   ├── config.ts                    ← 数据源根目录 + 白名单常量
+│   ├── sessions-service.ts          ← 打开 session:loader + threadStore 合并
+│   ├── changes-service.ts           ← /changes 一次性 JSON(/stream SSE 在 routes/sessions)
 │   ├── routes/
-│   │   ├── sessions.ts              ← GET /api/sessions, /api/sessions/:src/:id
-│   │   └── threads.ts               ← POST /api/threads/:src/:id/messages (SSE)
-│   │                                  DELETE /api/threads/:src/:id
+│   │   ├── sessions.ts              ← /api/sessions[/:src/:id[/stream|/changes]]
+│   │   ├── threads.ts               ← follow-up 收发(SSE)、DELETE 清空/回删
+│   │   ├── native.ts                ← 回到原会话续写(官方 CLI 子进程)
+│   │   ├── native-dialog.ts         ← 桌面壳原生对话框
+│   │   ├── group-threads.ts         ← 群聊:from-session / PATCH / /messages(legacy) / /runs
+│   │   ├── handoffs.ts              ← Handoff bundle + capabilities/refresh/open-native
+│   │   ├── runs.ts                  ← 后台运行注册(GET/POST /runs,SSE /runs/:id/stream)
+│   │   ├── approvals.ts             ← Adapter 侧工具审批
+│   │   ├── attachments.ts           ← 群聊/线程附件读取
+│   │   ├── git.ts                   ← 只读 git 状态
+│   │   ├── settings.ts              ← 后端可读设置
+│   │   └── resolve.ts               ← :id → filePath 校验 + 白名单守卫
 │   ├── loaders/                     ← 读原生 CLI(只读)
 │   │   ├── types.ts                 ← 共享类型 + SessionSourceLoader interface
 │   │   ├── claude-loader.ts
@@ -252,28 +294,38 @@ cockpit/
 │   ├── registry/
 │   │   └── session-registry.ts      ← source:id → filePath/cache
 │   ├── store/                       ← 读写 cockpit 自己的数据
+│   │   ├── paths.ts                 ← ~/.cockpit/ 路径常量
 │   │   ├── thread-store.ts          ← follow-up 读/写/append/abort 恢复
-│   │   └── paths.ts                 ← ~/.cockpit/ 路径常量
-│   ├── adapters/                    ← 调本机 CLI
-│   │   ├── types.ts                 ← ReviewAgent interface (即使叫 follow-up agent)
-│   │   ├── claude-call.ts
-│   │   ├── codex-call.ts
-│   │   └── serialize.ts             ← events[] → CLI 输入序列化
-│   └── config.ts
+│   │   ├── thread-context-store.ts  ← context-state.json 缓存(docs/11)
+│   │   ├── group-thread-store.ts    ← 群聊 state / transcript / summary
+│   │   ├── handoff-store.ts         ← handoff manifest 落盘
+│   │   └── provider-thread-link-store.ts  ← Codex/Claude runtime thread 复用(Phase 2 opt-in)
+│   ├── adapters/                    ← 调本机 CLI / Agent SDK
+│   │   ├── types.ts / registry.ts / serialize.ts / sensitive.ts
+│   │   ├── claude-call.ts           ← claude:CLI + Agent SDK 两条路径
+│   │   ├── codex-call.ts            ← codex follow-up 走 app-server,resume 走 codex exec
+│   │   ├── codex-app-server.ts / codex-runtime-manager.ts / codex-command.ts
+│   │   ├── context-projector.ts     ← 增量 context 投影(docs/11)
+│   │   ├── summary-generator.ts / summary-refresh.ts
+│   │   ├── cursor-call.ts / opencode-call.ts / mock-adapter.ts
+│   │   ├── json-cli-events.ts / cli-utils.ts
+│   ├── runs/                        ← 后台运行注册中心
+│   │   ├── run-registry.ts          ← runId 管理 + SSE 多客户端 fan-out
+│   │   ├── run-store.ts             ← RunRecord 落盘
+│   │   └── native-shadow-store.ts   ← 原生 resume 的影子日志
+│   ├── handoffs/                    ← Handoff 生成 / 消费
+│   ├── approvals/                   ← Adapter 侧审批状态机
+│   ├── permissions/                 ← adapter-policy(mode → CLI 参数映射)
+│   ├── watcher/                     ← 共享 fs.watch 引用计数
+│   └── util/
 └── src/                             ← React 前端
-    ├── main.tsx
-    ├── App.tsx
-    ├── pages/
-    │   ├── SessionList.tsx
-    │   └── SessionDetail.tsx
-    ├── components/
-    │   ├── EventTimeline.tsx        ← 灰白分段渲染
-    │   ├── EventItem.tsx            ← 按 type 分发
-    │   ├── ToolCallCard.tsx
-    │   └── FollowupComposer.tsx     ← 输入框 + agent 选择器 + 快捷模板
+    ├── main.tsx / App.tsx
+    ├── pages/                       ← SessionList / SessionDetail / 群聊 / 设置
+    ├── components/                  ← Timeline / Composer / Picker / ReviewPanel 等,详见 docs/04 §六
+    ├── hooks/                       ← useSessionStream / useApprovals 等
     ├── lib/
-    │   ├── api.ts
-    │   └── sse.ts                   ← SSE 客户端 wrapper
+    │   ├── agents.ts                ← agent 列表 / 图标 / 默认值(共享事实来源)
+    │   └── api.ts / sse.ts / ...
     └── styles.css
 ```
 

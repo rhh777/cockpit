@@ -23,13 +23,15 @@ Cockpit follow-up 当前默认只读。Agent 可以读取原生 session、生成
 - Run stream 已预留 `approval_required` / `approval_resolved` 消息。
 - UI 已能渲染待审批卡片。
 
-尚未完成的关键部分:
+真实 adapter 审批也已接通:
 
-- Codex follow-up 仍主要走 `codex exec`,没有接 app-server 的 server-initiated approval request。
-- Claude follow-up 仍主要走 `claude -p`,没有接 SDK `canUseTool` 或 CLI hook。
-- `ApprovalRequest` 目前还没有被真实 adapter operation 触发,所以 UI 卡片不会在实际写盘前稳定出现。
+- **Codex follow-up 已全量走 `codex app-server --stdio`**(见 `server/adapters/codex-call.ts` `run()` → `runCodexAppServer`),通过 `mapCodexApprovalRequest` 把 `item/commandExecution/requestApproval` / `item/fileChange/requestApproval` / `item/permissions/requestApproval` 映射为 Cockpit `Operation` 并驱动前端 approval 卡片;full-access 模式自动放行,不建 UI 卡片。`codex exec` 只保留给 `resumeNative` / native continuation。
+- **Claude follow-up 有 SDK 路径**:当调用方(follow-up / group / native continuation)传入 `requestApproval` 回调时,`claude-call.ts` `run()` 走 `runClaudeSdk`,通过 Agent SDK 的 `canUseTool` 触发 approval;没有回调时仍走 `claude -p` CLI。
 
-因此当前不是“功能完成”,而是“权限 UI/API scaffold 完成,真实工具审批 adapter 未完成”。
+仍在演进的关键部分:
+
+- 网络访问 / MCP 工具的细粒度审批仍以 adapter 默认策略为准,Cockpit 尚未提供独立的 policy 面板。
+- Claude CLI hook 方案作为 SDK 不可用时的备份,当前未实现,仅保留在设计里。
 
 ## 设计原则
 
@@ -352,34 +354,18 @@ UI 不展示“你刚才说了要写文件所以要批准”这种文案,只展�
 - 保留 approval store/routes/UI。✅
 - 更新本计划文档。✅
 
-### Phase 2: Codex app-server approval
+### Phase 2: Codex app-server approval ✅
 
-- 扩展 JSON-RPC client 支持 server request response。
-- `initialize` 增加 `experimentalApi` 并发送 `initialized`。
-- follow-up/group 中 Codex 写权限模式切到 app-server adapter。
-- 实现现代 request:
-  - `item/commandExecution/requestApproval`
-  - `item/fileChange/requestApproval`
-  - `item/permissions/requestApproval`
-- 实现 legacy request:
-  - `execCommandApproval`
-  - `applyPatchApproval`
-- 完成 approve/reject -> app-server response。
-- 增加 unit tests:request -> ApprovalRequest -> response decision。
-- 增加 integration smoke test:触发写文件,拒绝时不创建,允许时创建。
+- Codex follow-up / group 全量走 `codex app-server --stdio`(`server/adapters/codex-app-server.ts` + `codex-call.ts`)。
+- JSON-RPC server-initiated request → `mapCodexApprovalRequest` → Cockpit `Operation` → 前端卡片。
+- 已覆盖 `item/{commandExecution,fileChange,permissions}/requestApproval` 与 legacy `execCommandApproval` / `applyPatchApproval`。
+- 剩余增量:更完整的 policy engine(Phase 4)与 audit log。
 
-### Phase 3: Claude runtime approval
+### Phase 3: Claude runtime approval ✅(SDK 路径)
 
-- 调研并选择 SDK 或 hook。
-- 若 SDK 可行:
-  - 新增 SDK adapter。
-  - 接 `canUseTool`。
-  - 转换 SDK stream events。
-- 若 SDK 不可行:
-  - 新增临时 hook settings。
-  - hook 通过 local endpoint/IPC 等待 Cockpit 审批。
-  - 处理 hook trust/timeout。
-- 增加 smoke test:写文件拒绝/允许。
+- SDK 路径已上:`runClaudeSdk` 通过 `canUseTool` 触发 approval(`claude-call.ts:545`)。
+- 触发条件:调用方传入 `requestApproval` 回调时进入 SDK 路径,否则回落 `claude -p` CLI(不做写盘审批)。
+- Hook 备份方案暂不落地,只在 SDK 不适用的极端场景才评估。
 
 ### Phase 4: PolicyEngine
 

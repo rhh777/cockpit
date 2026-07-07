@@ -41,10 +41,17 @@
 
 ### Realtime
 
-- Session 详情页通过 `GET /api/sessions/:source/:id/changes?sinceEventCount=N` 订阅 SSE 增量。
+- Session 详情页通过 `GET /api/sessions/:source/:id/stream?since=N`(SSE)订阅增量;`GET /api/sessions/:source/:id/changes?sinceEventCount=N` 提供一次性 JSON 轮询兜底。
 - 后端通过 `fs.watch` 监听原生 JSONL 与 cockpit follow-up JSONL,多个前端订阅共享 watcher。
 - 只推 `append`/`reset` 增量,不反复回传完整 session。
 - 如果原生历史在 `followup_boundary` 前增长,服务端推 `reset`,前端重拉全量,保证 timeline 顺序正确。
+
+### 后台运行(Background Runs)
+
+- Agent run 由 `RunRegistry` 托管,页面切走 / SSE 断开后仍会继续跑;重新打开可 attach 回既有 runId。
+- 相关端点:`GET/POST /api/sessions/:src/:id/runs`、`POST /api/native/:src/:id/runs`、`POST /api/group-threads/:id/runs`、SSE `GET /api/runs/:runId/stream`。
+- native resume 的影子日志落 `~/.cockpit/runs/native-shadow/<src>/<id>/<runId>.jsonl`。
+- 详细设计见 `docs/06-background-runs-design.md`。
 
 ### Desktop
 
@@ -62,7 +69,6 @@
 - 不允许 follow-up agent 写盘;写权限与审批层留作后续扩展。
 - 不做产物/补丁管理,review 输出目前仍是 timeline 中的 markdown。
 - 不做跨 session 全文搜索。
-- 不做后台运行:当前页面切走或连接关闭会 abort 对应 CLI 子进程。设计见 `docs/06-background-runs-design.md`。
 
 ## 关键风险与约束
 
@@ -85,8 +91,7 @@
 
 | 方向 | 说明 |
 |---|---|
-| 后台运行与重连 | agent run 脱离页面生命周期,切换 session 后继续跑并可重新 attach |
-| 原生 Handoff | 从原生 session 或群聊生成 context bundle,并用 deep link / app-server / CLI 在 Claude 或 Codex 中继续 |
+| 原生 Handoff Phase 2+ | Codex app-server 复用与 Claude runtime thread 复用(见 docs/07 / docs/11) |
 | 写权限与审批层 | 允许 follow-up agent 修改文件,但必须有明确审批、diff 展示和回滚边界 |
 | 产物/补丁管理 | 把 patch、报告、导出文件等从普通 markdown 回复中结构化管理 |
 | 全文搜索 | 跨 Claude/Codex/cockpit 会话搜索标题、正文、工具调用和路径 |

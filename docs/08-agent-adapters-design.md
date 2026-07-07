@@ -67,12 +67,18 @@ POST /api/sessions/:source/:id/runs
 
 Cockpit follow-up 当前默认只读。各 adapter 尽量使用 CLI 原生的只读/分析模式:
 
-| Agent | 当前策略 |
-|---|---|
-| Claude | `--permission-mode default` + 只允许 `Read/Grep/Glob`,或禁用写/exec/web 类工具 |
-| Codex | `codex exec --sandbox read-only --ephemeral` |
-| OpenCode | `opencode run --agent plan` |
-| Cursor | `cursor-agent -p --mode ask` |
+权限映射统一收敛在 `server/permissions/adapter-policy.ts`,mode ∈ `read-only` / `auto-safe` / `full-access`:
+
+| Agent | read-only(默认) | auto-safe | full-access |
+|---|---|---|---|
+| Claude | `--permission-mode default --allowedTools Read,Grep,Glob`;`useTools=false` 时改成 `--disallowedTools Bash,Edit,Write,MultiEdit,WebFetch,WebSearch` | `--permission-mode acceptEdits` | `--permission-mode bypassPermissions` |
+| Codex | `--sandbox read-only` + `--ask-for-approval never` | `--sandbox workspace-write` + `--ask-for-approval untrusted --search` | `--sandbox danger-full-access` + `--dangerously-bypass-approvals-and-sandbox --search` |
+| OpenCode | `opencode run --agent plan` | `--agent plan` | `--dangerously-skip-permissions` |
+| Cursor | `cursor-agent -p --mode ask` | `--auto-review --trust` | `--force --trust --sandbox disabled` |
+
+Codex follow-up 不再走 `codex exec`——走 `codex app-server --stdio`(JSON-RPC 长连接),
+所有权限参数以启动时的 `newConversation` payload(`sandboxPolicy` 等)传入;
+`codex exec` 只在 `resumeNative` / native continuation 里使用。
 
 注意:这些是 CLI 层面的 best-effort。不同 CLI 对“只读”的定义并不完全一致。Cockpit 仍会在序列化输入和 tool_result 回显/落盘前做敏感路径过滤。
 
@@ -92,7 +98,7 @@ opencode --version
 opencode run \
   --format json \
   --dir <cwd> \
-  --agent plan \
+  # 权限映射:read-only/auto-safe → --agent plan;full-access → --dangerously-skip-permissions
   [--model <provider/model>] \
   [--variant <effort>] \
   <serialized prompt>
@@ -129,7 +135,7 @@ agent --version
 cursor-agent -p \
   --output-format stream-json \
   --stream-partial-output \
-  --mode ask \
+  # 权限映射:read-only → --mode ask;auto-safe → --auto-review --trust;full-access → --force --trust --sandbox disabled
   [--model <model>] \
   <serialized prompt>
 ```

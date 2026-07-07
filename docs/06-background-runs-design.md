@@ -72,15 +72,16 @@ interface RunRecord {
   source?: Source
   sessionId?: string
   groupThreadId?: string
-  handoffId?: string
-  nativeProvider?: 'codex' | 'claude'
-  nativeThreadId?: string
   turnId: string
+  parentTurnId?: string
   agent: AgentName
+  permissions?: RunPermissions
   startedAt: string
   endedAt?: string
   error?: string
 }
+// 注:handoff / native thread 的关联通过 handoff manifest / provider-thread-link 记录,
+// 不进 RunRecord。见 docs/07 §NativeLink 与 docs/11 §Phase 2。
 ```
 
 RunRegistry 负责:
@@ -97,34 +98,32 @@ RunRegistry 负责:
 ```txt
 POST   /api/runs/:runId/cancel
 GET    /api/runs/:runId/stream
-GET    /api/sessions/:source/:id/runs?status=running
-GET    /api/group-threads/:id/runs?status=running
-GET    /api/handoffs/:handoffId/runs?status=running
+GET    /api/runs?status=running                       # 全局 active runs
+GET    /api/sessions/:source/:id/runs?status=running  # 已实现
+# 说明:群聊 / handoff 的 active runs 目前由客户端从 /api/runs 全量过滤;
+# GET /api/group-threads/:id/runs 与 /api/handoffs/:handoffId/runs 尚未实现。
 ```
 
-启动 run 可以复用现有 message endpoints,也可以新增显式 start endpoints:
+启动 run 全部走独立的 start endpoints,`/messages` 只保留为 legacy 兜底:
 
 ```txt
-POST /api/sessions/:source/:id/runs
-POST /api/group-threads/:id/runs
-POST /api/native/:source/:id/runs
-POST /api/handoffs/:handoffId/open-native
+POST /api/sessions/:source/:id/runs        # follow-up run
+POST /api/native/:source/:id/runs          # native resume run
+POST /api/group-threads/:id/runs           # group member runs(一次调用可产生多 run)
+POST /api/handoffs/:handoffId/open-native  # native continuation run
 ```
-
-推荐新增 start endpoints,让“启动任务”和“订阅任务”语义分离。
 
 ## 存储
 
 ```txt
 ~/.cockpit/runs/index.jsonl
 ~/.cockpit/runs/native-shadow/<source>/<id>/<runId>.jsonl
-~/.cockpit/runs/native-continuation/<handoffId>/<runId>.jsonl
 ```
 
 - `index.jsonl` 记录 run 元数据和终态。
 - follow-up/group events 继续写原有 thread/transcript。
 - native shadow 只用于运行中展示和失败审计,不混入最终 timeline。
-- native continuation log 只用于 Cockpit 运行中展示和失败审计;原生 thread 后续历史仍由原生工具维护。
+- native continuation run **不落独立 log**:事件通过 `RunRegistry` fan-out,原生 thread 后续历史由原生工具维护;handoff manifest 的 NativeLink 记录 thread id / 状态。
 
 服务启动时扫描 `status=running` 的旧记录,统一降级为 `interrupted`。
 

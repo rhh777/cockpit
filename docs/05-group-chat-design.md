@@ -23,8 +23,11 @@
 interface GroupThreadState {
   id: string
   kind: 'group-chat'
+  title: string
   cwd: string | null
   agents: AgentName[]
+  startedAt: string
+  updatedAt: string
   summaryUpdatedAt: string | null
   summaryRevision: number
 }
@@ -153,8 +156,12 @@ interface GroupTurnMeta {
 ```txt
 GET    /api/group-threads
 POST   /api/group-threads
+POST   /api/group-threads/from-session          # 从原生 session 复制上下文创建群聊
 GET    /api/group-threads/:id
-POST   /api/group-threads/:id/messages
+PATCH  /api/group-threads/:id                   # 目前用于修改 title
+POST   /api/group-threads/:id/runs              # 主发送路径,返回 202 + { groupTurnId, records, userEnvelope, turnStart };
+                                                # SSE 流通过 GET /api/runs/:runId/stream 消费
+POST   /api/group-threads/:id/messages          # legacy 同步 SSE 路径,仍保留但前端已切到 /runs
 POST   /api/group-threads/:id/turns/:groupTurnId/cancel
 DELETE /api/group-threads/:id
 ```
@@ -167,10 +174,15 @@ interface SendGroupMessageBody {
   mode?: 'parallel'
   targetAgents?: AgentName[]
   useTools?: boolean
+  attachments?: ChatAttachment[]
 }
 ```
 
-SSE:
+`/runs` 走两段式:先 `POST /runs` 拿到 `{ groupTurnId, records: [{ runId, agent }] }`,再对每个 `runId`
+分别 `GET /api/runs/:runId/stream` 订阅事件,断线可重连(见 docs/06)。`/messages` 的同步 SSE
+保留用于兜底,输出结构仍是下面的 `GroupSseMessage`。
+
+SSE(`/messages` legacy 与 `/runs` 单 run 通用):
 
 ```ts
 type GroupSseMessage =

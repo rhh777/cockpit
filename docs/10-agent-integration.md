@@ -32,7 +32,7 @@
 
 | | Follow-up 单聊 | Group chat 群聊 | Native resume 写回原生 | Handoff open-native |
 |---|---|---|---|---|
-| **claude** | ⓐ ask/read-only → **Agent SDK** `query()`(本机 `claude` bin)<br>ⓑ full-access → CLI `claude -p --output-format stream-json --include-partial-messages` | Agent SDK `query()` | CLI `claude -p --resume <sessionId>` | `manual`:只返回 prompt,让用户自己贴进 Claude Code / Desktop |
+| **claude** | 按有无 `requestApproval` 回调分岔(与权限档正交):ⓐ 有回调(逐工具审批,通常是 `ask` / `auto-safe`) → **Agent SDK** `query()`(本机 `claude` bin,`canUseTool` 拦截工具);ⓑ 无回调(纯生成,或 full-access 不打算弹审批) → CLI `claude -p --output-format stream-json --include-partial-messages` | 同左规则(路由是否传 `requestApproval`) | CLI `claude -p --resume <sessionId>` | `manual`:只返回 prompt,让用户自己贴进 Claude Code / Desktop |
 | **codex** | **`codex app-server --stdio` JSON-RPC**(所有权限档统一走这条,full-access 时 approval 自动放行) | 同左 | CLI `codex {--sandbox read-only \| --dangerously-bypass-approvals-and-sandbox} --cd <cwd> exec resume --json <sessionId> -` | ⓐ `deeplink` → `codex://threads/new?path=&prompt=`<br>ⓑ `app-server` → `codex app-server --stdio`,`thread/start` 拿 threadId,后续 `turn/start`<br>ⓒ `cli`(预留) |
 | **opencode** | CLI `opencode run --format json --dir <cwd> [--variant effort]` | — | — | — |
 | **cursor** | CLI `cursor-agent -p --output-format stream-json --stream-partial-output` | — | — | — |

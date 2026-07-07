@@ -156,14 +156,25 @@ Agent 相关 UI 是全局组件体系,不是单聊/群聊各自发挥的局部�
 | `EventTimeline.tsx` | 灰白分段 + 虚拟化 + 去重追加 |
 | `EventItem.tsx` | 按 `NormalizedEvent.type` 分发渲染 |
 | `ToolCallCard.tsx` | tool_use + tool_result 配对折叠 + 只读标 |
-| `ToolActivitySummary.tsx` | 调用/失败/文件 chip |
-| `TimelineFilter.tsx` | 只看工具/错误/thinking/关键词 |
+| `ToolActivityBar.tsx` | 调用/失败/文件 chip(工具活动摘要栏) |
 | `FollowupComposer.tsx` | textarea + 双模式开关(Cockpit 追问 / 回到原会话)+ @mention 多 agent + Review 模板 + 只读标 + CLI 提示 |
 | `WarningsBanner.tsx` | loader warnings 折叠展示 |
 | `ReviewPanel.tsx` | 右侧抽屉,展示结构化 review 结论 |
 | `TraceDrawer.tsx` | 底部抽屉,某轮次的 raw 事件流 |
 | `Splitter.tsx` + `useResizable.ts` | 三栏宽度拖拽 + localStorage 持久化 |
 | `StreamingStatus.tsx` | 进行中流式轮次的状态指示 |
+| `AgentIcon.tsx` | agent 头像/字母 badge 的唯一入口 |
+| `AgentPicker.tsx` | agent 选择器(单聊 / 群聊共用) |
+| `SessionActionsMenu.tsx` | session 卡片操作菜单(handoff / 删除 follow-up 等) |
+| `SettingsPanel.tsx` | 全局设置面板 |
+| `NarrativeTimeline.tsx` | timeline 的叙事式简化视图 |
+| `PatchDiffView.tsx` | Codex `apply_patch` diff 渲染 |
+| `Markdown.tsx` + `CodeBlock.tsx` | Markdown 渲染与代码高亮包装 |
+| `FilesHeatmapDrawer.tsx` | 会话涉及文件的热力图抽屉 |
+| `JumpToBottom.tsx` | 长 timeline 跳到底部按钮 |
+| `Icon.tsx` | 通用图标基元 |
+
+> Timeline 过滤(只看工具/错误/thinking/关键词)当前内嵌在 `EventTimeline` / `SessionDetail` 的头部工具栏,不再作为独立 `TimelineFilter` 组件存在。
 
 ## 七、设计不变量(UI 侧)
 
