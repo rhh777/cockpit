@@ -5,6 +5,15 @@ import { sessionRegistry } from './registry/session-registry'
 import { threadStore } from './store/thread-store'
 import { cleanTitle } from './util/title'
 
+type NativeLoadResult = { summaryPatch: Partial<SessionSummary>; events: EventEnvelope[]; warnings: any[] }
+
+// 原生解析缓存(docs/12 F1 缓解):watcher 每 50ms 防抖全量 reload,follow-up 流式期间
+// 变的是 followups.jsonl,原生大文件没动——按 (mtimeMs, size) 命中即复用上次解析结果。
+// 约定:所有消费方只读不改 events 数组与 envelope(现有代码均为 copy-on-use)。
+// 真正的 byte-offset 增量解析(原生文件自身追加的场景)仍是 F1 的后续项。
+const nativeParseCache = new Map<string, { mtimeMs: number; size: number; result: NativeLoadResult }>()
+const NATIVE_PARSE_CACHE_MAX = 8
+
 // 合并:[...原始 native, followup_boundary, ...follow-up cockpit]。
 // 永不按 ts 全局重排;只在 boundary 处拼接(不变量 11)。
 export async function loadSessionDetail(
@@ -15,8 +24,31 @@ export async function loadSessionDetail(
   const loader = loaderBySource.get(source)
   if (!loader) return null
 
-  const native: { summaryPatch: Partial<SessionSummary>; events: EventEnvelope[]; warnings: any[] } =
-    await loader.loadEvents(filePath)
+  let preStat: { mtimeMs: number; size: number } | null = null
+  try {
+    const s = await fsp.stat(filePath)
+    preStat = { mtimeMs: s.mtimeMs, size: s.size }
+  } catch {
+    /* cockpit 自建 thread 无原始文件;不缓存 */
+  }
+
+  const cached = preStat ? nativeParseCache.get(filePath) : undefined
+  let native: NativeLoadResult
+  if (cached && preStat && cached.mtimeMs === preStat.mtimeMs && cached.size === preStat.size) {
+    nativeParseCache.delete(filePath) // LRU:命中挪到队尾
+    nativeParseCache.set(filePath, cached)
+    native = cached.result
+  } else {
+    native = await loader.loadEvents(filePath)
+    if (preStat) {
+      nativeParseCache.set(filePath, { ...preStat, result: native })
+      while (nativeParseCache.size > NATIVE_PARSE_CACHE_MAX) {
+        const oldest = nativeParseCache.keys().next().value
+        if (oldest === undefined) break
+        nativeParseCache.delete(oldest)
+      }
+    }
+  }
 
   const followups = source === 'cockpit' ? [] : await threadStore.readFollowups(source, id)
 
@@ -32,13 +64,7 @@ export async function loadSessionDetail(
     events.push(...followups)
   }
 
-  let st: { mtimeMs: number; size: number } = { mtimeMs: 0, size: 0 }
-  try {
-    const s = await fsp.stat(filePath)
-    st = { mtimeMs: s.mtimeMs, size: s.size }
-  } catch {
-    /* cockpit 自建 thread 无原始文件 */
-  }
+  const st = preStat ?? { mtimeMs: 0, size: 0 }
 
   // updatedAt 同列表口径:原生 mtime 与 followups mtime 取较新者(docs/12 G4)。
   const followupMtime = followups.length > 0 ? threadStore.followupsMtimeMs(source, id) : null

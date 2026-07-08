@@ -19,7 +19,7 @@
 | E1 | 序列化 | 群聊上下文在 run-registry 手搓 prompt,再被 serializeForAgent 二次包装 | 中 | 已完成 |
 | E2 | 序列化 | 「当前请求去重」靠文本相等,带附件必失效导致重复 | 中 | 已完成 |
 | E3 | 序列化 | `maxChars: 24000` 写死,docs/01 承诺的「设置里可调」未接线 | 低 | 已完成 |
-| F1 | 实时 | watcher 每次变化全量重读重解析整个 session,追加密集时 O(N²) | 中 | 未开始 |
+| F1 | 实时 | watcher 每次变化全量重读重解析整个 session,追加密集时 O(N²) | 中 | 部分完成(缓存缓解) |
 | F2 | 实时 | `tryWatch` 对尚不存在的文件返回 null 后永不重建 | 中 | 已完成 |
 | F3 | 实时 | 前端活跃 run 期间丢弃 session stream append,而非按 sourceEventId 去重 | 中 | 已完成 |
 | G1 | 资源 | `RunHandle.replay` 无上限,含全部 delta,重连全量重放 | 中 | 已完成 |
@@ -126,6 +126,8 @@
 
 - **现象**:`server/watcher/session-watcher.ts reload` 每次(50ms 防抖)调 `loadSessionDetail` 重新解析整个 JSONL;native CLI 活跃写入时是 O(N²)。前端虚拟化支撑「MB 级 session」的目标被后端全量 reparse 抵消。
 - **修复方向**:记录上次读到的 byte offset,追加场景只读增量行(仅当文件变短/中段变化才全量);或至少缓存 native 段解析结果。
+- **缓解记录(2026-07-08)**:`sessions-service` 增加原生解析缓存(按 filePath 键、(mtimeMs,size) 校验、LRU 8 条)。高频场景「follow-up 流式期间 followups.jsonl 增长、原生大文件未变」不再全量重解析;实测重复 detail 加载 13.4ms → 3.5ms。stat 先于 read,竞态方向安全(只会多解析,不会读旧)。
+- **未完成部分(byte-offset 增量,原生文件自身追加的场景)**:关键设计约束——无 uuid 的行以 `${filePath}#${lineNo}` 作 sourceEventId,增量解析状态必须携带 lineNo 保证 ID 连续;文件变短/中段变化回退全量;Loader interface 加可选 `loadEventsFrom?(filePath, state)`(符合「扩展只加可选方法」)。建议单独会话实施。
 
 ### F2 · 不存在的文件永远 watch 不上(实时,中)
 
@@ -197,3 +199,4 @@
 | 2026-07-08 | E3 | 已完成 | docs/01 移除「设置里可调」未兑现承诺,明确为代码内常量 |
 | 2026-07-08 | D1 | 已完成 | agent 显示名/审批能力/原生来源反查收口到 ReviewAgent + registry;前端 sessionAgentOf 收进 lib/agents |
 | 2026-07-08 | E1 | 已完成 | 群聊上下文构建移入 serialize 边界(meta:group_context + 专属模板),消除 prompt 套 prompt |
+| 2026-07-08 | F1 | 部分完成 | 原生解析按 (mtime,size) 缓存(LRU 8);byte-offset 增量留待单独会话(设计约束已记录) |
