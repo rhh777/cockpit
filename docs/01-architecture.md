@@ -426,8 +426,9 @@ interface SerializeOptions {
 - 序列化给目标 agent 的上下文会把工具 input / output **截断**(默认 1000-2000 字符)再发送,避免泄露大量本地代码 —— 用户可在设置里调
 - Follow-up 中 reviewer 默认 **read-only 工具权限**(Codex `sandboxMode:'read-only'`、Claude `disallowedTools:[Write/Edit/Bash/...]`);若用户显式开"允许写"则提升,但有提示
 - read-only 不等于不泄密:agent 仍可能主动读取敏感文件并写进回复。当前缓解措施:
-  - 敏感路径过滤同时作用于**两端**:序列化输入 **和** tool_result **落盘 / 回显前**都跑同一套过滤。
+  - 敏感路径过滤同时作用于**两端**:序列化输入(喂给 agent 的 prompt)**和** tool_result / 整段回复文本**落盘前**都跑同一套过滤。
   - 过滤命中时在 UI 标注"已屏蔽敏感内容",而非静默。
+  - **流式回显的已知边界(有意接受,见 docs/12 C1)**:`assistant_text` / `thinking` 的打字机 delta 是 token 级碎片,密钥正则无法在碎片上命中,所以**实时流式期间屏幕上可能短暂出现未脱敏的密钥原文**;落盘的是合并后整段文本的脱敏版本,刷新后以脱敏版本为准,下一轮 prompt 也基于脱敏后的落盘数据构建,不会把密钥传给其他 agent。tool_result 不走 delta,不受此边界影响。若将来 cockpit 走出本机(远程访问 / 多人 / 常态化录屏),应改用 server 侧小窗口滞后方案补齐。
   - 真正的按路径 deny(沙箱 / 自定义工具包装)留到后续审批层。
 - 敏感路径黑名单:`.env*`、`*.pem`、`id_rsa`、`.ssh/`、`.aws/`、`.kube/`、`.git/`、`node_modules/`、`dist/`、`build/`。
 - Claude 默认使用 `settingSources:['project']`,读取项目级 CLAUDE.md 以理解代码约定,但不读取用户全局设置。后续可提供“中立 review”开关切到 `settingSources:[]`。

@@ -12,7 +12,7 @@
 | A1 | 文档失真 | CLAUDE.md / docs/06 称「后台运行未实现」,与代码矛盾 | 高 | 已完成 |
 | A2 | 文档失真 | docs/03「当前不做」仍称不允许写盘/无审批层 | 高 | 已完成 |
 | B1 | 架构冗余 | legacy `/messages` 三条路径与 run-registry 双实现,前端已不调用 | 高 | 已完成 |
-| C1 | 安全 | 流式 delta 绕过 redactSecrets,实时回显未脱敏 | 高 | 未开始 |
+| C1 | 安全 | 流式 delta 绕过 redactSecrets,实时回显未脱敏 | 高 | 不修复(已文档化) |
 | C2 | 安全 | 审批通过即 session 级放行整个工具(如所有 Bash) | 中 | 未开始 |
 | C3 | 安全 | 降噪路径(node_modules/dist)与安全路径(.env/.ssh)混用同一黑名单 | 中 | 未开始 |
 | D1 | 扩展性 | server 侧多处硬编码 agent 名与能力判断,违反 docs/01 扩展点约定 | 中 | 未开始 |
@@ -63,6 +63,10 @@
 
 - **现象**:`redactSecrets` 按行匹配(`server/adapters/sensitive.ts`),但 `run-registry.executeFollowup` / `executeGroupMember` 对每个 token 级 delta 单独调用它,正则几乎不可能在碎片上命中。落盘的终态整段文本会被正确脱敏,但用户实时看到的流未脱敏——docs/01 §十「过滤作用于两端」在流式路径失效。
 - **修复方向**:对同一 `streamId` 的 delta 在 server 侧做行缓冲(按换行 flush),整行过完 redactSecrets 再下发;或在合并边界上做滑动窗口匹配。修完后在 docs/01 §十注明流式语义。
+- **决策(2026-07-08,用户确认)**:接受现状 + 写清边界,不改代码。理由:
+  - 该缺口只影响"直播窗口期的屏幕显示"(屏幕共享/录屏时密钥闪现);落盘(②)与下一轮 prompt(③)都是整段脱敏,不会把密钥持久化或传给其他 agent;tool_result 不走 delta,不受影响。
+  - 任何有效的流式脱敏都要 server 侧缓冲,会削弱刚实现的打字机效果(e710809),对本机单人工具不值得。
+  - 已在 docs/01 §十与 `server/adapters/sensitive.ts` 头注释写明边界与重启条件:cockpit 走出本机(远程访问/多人/常态化录屏)时,改用小窗口滞后方案(每 streamId 保留 ~80 字符尾部缓冲 + span 级掩码)补齐。
 
 ### C2 · 审批放行粒度过粗(安全,中)
 
@@ -149,3 +153,4 @@
 | 2026-07-08 | A1 | 已完成 | 更新 CLAUDE.md 后台运行声明;重写 docs/06「现状」为已实现说明 |
 | 2026-07-08 | A2 | 已完成 | docs/03 能力清单/当前不做/后续方向与 docs/09 及实现对齐 |
 | 2026-07-08 | B1 | 已完成 | 删除三条 legacy `/messages` 路由 + 前端死代码;文档/SVG 同步;typecheck + 94 单测 + dev 冒烟通过 |
+| 2026-07-08 | C1 | 不修复(已文档化) | 用户确认接受现状;docs/01 §十 + sensitive.ts 头注释写明流式边界与重启条件 |

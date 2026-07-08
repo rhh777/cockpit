@@ -1,5 +1,7 @@
-// 敏感路径/密钥过滤(docs/01 §十)。两端都跑:序列化输入 + tool_result 落盘/回显前。
+// 敏感路径/密钥过滤(docs/01 §十)。两端都跑:序列化输入 + tool_result / 整段回复落盘前。
 // read-only ≠ 不泄密:agent 仍可主动 Read .env / id_rsa 并写进回复,回复会持久化。
+// 已知边界(docs/12 C1,有意接受):打字机 delta 是 token 级碎片,redactSecrets 的行级正则
+// 在碎片上命中不了 —— 实时流式回显不保证脱敏,落盘与下一轮 prompt 用的是整段脱敏后版本。
 
 // 路径黑名单:命中则该 tool_result 整体屏蔽。
 const SENSITIVE_PATH_PATTERNS: RegExp[] = [
