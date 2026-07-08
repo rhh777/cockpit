@@ -20,7 +20,7 @@
 | E2 | 序列化 | 「当前请求去重」靠文本相等,带附件必失效导致重复 | 中 | 已完成 |
 | E3 | 序列化 | `maxChars: 24000` 写死,docs/01 承诺的「设置里可调」未接线 | 低 | 未开始 |
 | F1 | 实时 | watcher 每次变化全量重读重解析整个 session,追加密集时 O(N²) | 中 | 未开始 |
-| F2 | 实时 | `tryWatch` 对尚不存在的文件返回 null 后永不重建 | 中 | 未开始 |
+| F2 | 实时 | `tryWatch` 对尚不存在的文件返回 null 后永不重建 | 中 | 已完成 |
 | F3 | 实时 | 前端活跃 run 期间丢弃 session stream append,而非按 sourceEventId 去重 | 中 | 已完成 |
 | G1 | 资源 | `RunHandle.replay` 无上限,含全部 delta,重连全量重放 | 中 | 已完成 |
 | G2 | 并发 | `startGroupTurn` 互斥检查与登记之间隔多个 await,有竞态窗口 | 低 | 已完成 |
@@ -116,6 +116,8 @@
 
 - **现象**:`tryWatch` 失败(文件尚不存在)返回 null,订阅期间无重建机制。订阅时还没有 followups.jsonl 的 session,第一条 follow-up 落盘不会触发推送(本窗口 run stream 兜底,但双窗口/Electron+浏览器并开时另一端看不到)。
 - **修复方向**:watch 父目录,或在 reload 成功后检测「watcher 为 null 但文件已存在」时补建。
+- **修复记录(2026-07-08)**:新增 `ensureWatchers`——watcher 建不齐时每 2s 补建(REBUILD_INTERVAL_MS,unref 不阻进程退出),新建成功即触发一次 reload 补上 watch 建立前写入的内容;watcher error(文件被删/换 inode)也走同一补建路径;退订时清理补建 timer。
+  - 新增 `session-watcher.test.ts` 功能测试:订阅时 followups.jsonl 不存在 → 落盘第一条 follow-up → ~2s 内收到 append。
 
 ### F3 · 活跃 run 期间丢弃而非去重(实时,中)
 
@@ -175,3 +177,4 @@
 | 2026-07-08 | G2 | 已完成 | startGroupTurn 互斥占位改为 await 前同步执行,失败回滚 |
 | 2026-07-08 | G3 | 已完成 | claude resumeNative 禁用自动重试,防止原生历史重复 user turn |
 | 2026-07-08 | G4 | 已完成 | updatedAt 取原生与 followups mtime 较新者,列表/详情同口径 |
+| 2026-07-08 | F2 | 已完成 | watcher 周期补建(2s)+ error 重建;新增功能测试验证首条 follow-up 可推送 |

@@ -24,6 +24,8 @@ interface Entry {
   refs: Set<WatcherListener>
   nativeWatcher: fs.FSWatcher | null
   followupWatcher: fs.FSWatcher | null
+  // 目标文件尚不存在(或被删/换 inode)时,watcher 为 null;周期性补建(docs/12 F2)。
+  rebuildTimer: NodeJS.Timeout | null
   // 追踪上次解析的状态,用于算 diff。
   lastTotal: number
   lastNativeTotal: number
@@ -110,23 +112,62 @@ function schedule(source: Source, id: string, filePath: string, entry: Entry) {
   }, 50)
 }
 
-function tryWatch(path: string, onChange: () => void): fs.FSWatcher | null {
+function tryWatch(path: string, onChange: () => void, onLost: () => void): fs.FSWatcher | null {
   try {
     // recursive:false,只看单个文件;persistent:false 避免阻挡进程退出。
     const w = fs.watch(path, { persistent: false }, () => onChange())
     w.on('error', () => {
-      // 文件被删/换 inode:静默,等下次 catch-up 或新订阅时重建。
+      // 文件被删/换 inode:关闭并通知上层重建(docs/12 F2)。
       try {
         w.close()
       } catch {
         /* ignore */
       }
+      onLost()
     })
     return w
   } catch {
-    // 文件还不存在(原生 session 刚开始 / 还没有 follow-up)。
+    // 文件还不存在(原生 session 刚开始 / 还没有 follow-up),由上层周期性补建。
     return null
   }
+}
+
+const REBUILD_INTERVAL_MS = 2000
+
+// 确保两个 watcher 就位;建不齐(文件尚不存在)则周期性重试。
+// 新建成功时触发一次 reload,补上 watch 建立前已写入的内容。
+function ensureWatchers(source: Source, id: string, filePath: string, entry: Entry) {
+  const onChange = () => schedule(source, id, filePath, entry)
+  let created = false
+  if (!entry.nativeWatcher) {
+    entry.nativeWatcher = tryWatch(filePath, onChange, () => {
+      entry.nativeWatcher = null
+      ensureWatchers(source, id, filePath, entry)
+    })
+    created ||= entry.nativeWatcher != null
+  }
+  if (!entry.followupWatcher) {
+    entry.followupWatcher = tryWatch(followupsFile(source, id), onChange, () => {
+      entry.followupWatcher = null
+      ensureWatchers(source, id, filePath, entry)
+    })
+    created ||= entry.followupWatcher != null
+  }
+  if (created) schedule(source, id, filePath, entry)
+
+  if (entry.nativeWatcher && entry.followupWatcher) {
+    if (entry.rebuildTimer) {
+      clearTimeout(entry.rebuildTimer)
+      entry.rebuildTimer = null
+    }
+    return
+  }
+  if (entry.rebuildTimer || entry.refs.size === 0) return
+  entry.rebuildTimer = setTimeout(() => {
+    entry.rebuildTimer = null
+    if (entry.refs.size > 0) ensureWatchers(source, id, filePath, entry)
+  }, REBUILD_INTERVAL_MS)
+  entry.rebuildTimer.unref?.()
 }
 
 export function subscribe(
@@ -137,11 +178,13 @@ export function subscribe(
 ): () => void {
   const key = keyOf(source, id)
   let entry = entries.get(key)
+  const isNew = !entry
   if (!entry) {
     entry = {
       refs: new Set(),
       nativeWatcher: null,
       followupWatcher: null,
+      rebuildTimer: null,
       lastTotal: -1,
       lastNativeTotal: -1,
       pending: null,
@@ -149,10 +192,12 @@ export function subscribe(
       staleAfterLoad: false,
     }
     entries.set(key, entry)
+  }
 
-    const onChange = () => entry && schedule(source, id, filePath, entry)
-    entry.nativeWatcher = tryWatch(filePath, onChange)
-    entry.followupWatcher = tryWatch(followupsFile(source, id), onChange)
+  entry.refs.add(listener)
+
+  if (isNew) {
+    ensureWatchers(source, id, filePath, entry)
 
     // 首次加载 → 用于初始化 lastTotal / lastNativeTotal。不广播。
     reload(source, id, filePath, entry).catch(() => {
@@ -160,14 +205,13 @@ export function subscribe(
     })
   }
 
-  entry.refs.add(listener)
-
   return () => {
     if (!entry) return
     entry.refs.delete(listener)
     if (entry.refs.size === 0) {
       entries.delete(key)
       if (entry.pending) clearTimeout(entry.pending)
+      if (entry.rebuildTimer) clearTimeout(entry.rebuildTimer)
       try {
         entry.nativeWatcher?.close()
       } catch {
