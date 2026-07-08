@@ -1,7 +1,8 @@
 import type { ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import type { AgentName, ChatAttachment, EventEnvelope, NormalizedEvent, Source } from '../loaders/types'
-import { resolveAgent } from '../adapters/registry'
+import { agentForNativeSource, resolveAgent } from '../adapters/registry'
+import { agentDisplayName } from '../adapters/agent-meta'
 import { filterToolResult, redactSecrets } from '../adapters/sensitive'
 import { projectContextEvents } from '../adapters/context-projector'
 import { threadContextStore } from '../store/thread-context-store'
@@ -267,20 +268,6 @@ function notificationTurnId(params: unknown): string | null {
   return null
 }
 
-function sessionAgentOf(source: string): 'claude' | 'codex' | null {
-  if (source === 'claude-code') return 'claude'
-  if (source === 'codex') return 'codex'
-  return null
-}
-
-function agentName(agent: AgentName | undefined): string {
-  if (agent === 'claude') return 'Claude'
-  if (agent === 'codex') return 'Codex'
-  if (agent === 'opencode') return 'OpenCode'
-  if (agent === 'cursor') return 'Cursor'
-  return String(agent)
-}
-
 function renderAttachmentLines(attachments?: ChatAttachment[]): string[] {
   if (!attachments?.length) return []
   return [
@@ -327,10 +314,10 @@ function projectGroupContext(
       const e = env.event
       if (e.type === 'user_text')
         return [`[User]: ${clipGroupMessage(e.text || '(no text)')}`, ...renderAttachmentLines(e.attachments)].join('\n')
-      if (e.type === 'assistant_text') return `[${agentName(e.agent)}]: ${clipGroupMessage(e.text)}`
-      if (e.type === 'tool_use') return `[${agentName(e.agent)} tool]: ${e.name}`
+      if (e.type === 'assistant_text') return `[${agentDisplayName(e.agent)}]: ${clipGroupMessage(e.text)}`
+      if (e.type === 'tool_use') return `[${agentDisplayName(e.agent)} tool]: ${e.name}`
       if (e.type === 'tool_result') return `[Tool result]: ${e.isError ? 'error' : 'ok'}`
-      if (e.type === 'thinking') return `[${agentName(targetAgent)} thinking]: ${clipGroupMessage(e.text)}`
+      if (e.type === 'thinking') return `[${agentDisplayName(targetAgent)} thinking]: ${clipGroupMessage(e.text)}`
       return null
     })
     .filter((x): x is string => x != null)
@@ -339,7 +326,7 @@ function projectGroupContext(
   const text = [
     '# Cockpit Group Chat',
     '',
-    `You are ${agentName(targetAgent)} participating in a local Cockpit group chat.`,
+    `You are ${agentDisplayName(targetAgent)} participating in a local Cockpit group chat.`,
     'Only answer the current request. The transcript below is the Cockpit source of truth.',
     '',
     '## Shared Summary',
@@ -536,10 +523,9 @@ class RunRegistry {
 
   async startNativeResume(input: NativeStartInput): Promise<{ record: RunRecord; userEnvelope: EventEnvelope }> {
     await this.init()
-    const agentName = sessionAgentOf(input.source)
-    if (!agentName) throw new Error(`source "${input.source}" 不支持原生续写`)
-    const agent = resolveAgent(agentName)
-    if (!agent.canResumeNative?.(input.source) || !agent.resumeNative) throw new Error(`agent "${agentName}" 不支持原生续写`)
+    const agent = agentForNativeSource(input.source)
+    if (!agent || !agent.resumeNative) throw new Error(`source "${input.source}" 不支持原生续写`)
+    const agentName = agent.name
     if (!(await agent.isAvailable())) throw new Error(`agent "${agentName}" 不可用(本机未安装/登录对应 CLI)`)
     const detail = await loadSessionDetail(input.source, input.sessionId, input.filePath)
     if (!detail) throw new Error('session not found')
@@ -817,7 +803,7 @@ class RunRegistry {
         effort: input.effort,
         nativeLinked,
         requestApproval:
-          (input.targetAgent === 'codex' || input.targetAgent === 'claude') &&
+          agent.supportsApproval === true &&
           input.permissions.mode !== 'full-access'
             ? (operation, reason) =>
                 this.requestApproval(handle, {
@@ -913,7 +899,7 @@ class RunRegistry {
         effort: input.cliByAgent?.[agentNameForRun]?.effort,
         nativeLinked,
         requestApproval:
-          (agentNameForRun === 'codex' || agentNameForRun === 'claude') &&
+          agent.supportsApproval === true &&
           input.permissions.mode !== 'full-access'
             ? (operation, reason) =>
                 this.requestApproval(handle, {

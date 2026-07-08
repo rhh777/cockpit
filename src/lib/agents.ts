@@ -11,3 +11,15 @@ export function labelForAgent(agent: AgentName | string | undefined): string {
   return AGENT_OPTIONS.find((a) => a.value === agent)?.label ?? String(agent ?? 'Agent')
 }
 
+/** 原生 session 来源 → 可原生续写的 agent;非原生来源(cockpit 群聊等)返回 null。 */
+export function nativeAgentForSource(source: string | undefined): 'claude' | 'codex' | null {
+  if (source === 'codex') return 'codex'
+  if (source === 'claude-code') return 'claude'
+  return null
+}
+
+/** session 主线 agent:原生来源对应 agent;cockpit / 未知一律落到 claude 主线。 */
+export function sessionAgentOf(source: string | undefined): AgentName {
+  return nativeAgentForSource(source) ?? 'claude'
+}
+

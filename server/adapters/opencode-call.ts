@@ -59,6 +59,7 @@ async function* runOpenCode(input: AgentRunInput): AsyncGenerator<NormalizedEven
 
 export const opencodeAdapter: ReviewAgent = {
   name: 'opencode',
+  displayName: 'OpenCode',
 
   async isAvailable() {
     return commandExists('opencode', ['--version'])

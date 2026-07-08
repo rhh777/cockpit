@@ -1,4 +1,5 @@
 import type { AgentName, EventEnvelope, NormalizedEvent } from '../loaders/types'
+import { agentDisplayName } from './agent-meta'
 import { redactSecrets } from './sensitive'
 
 // serializeForAgent 是 Phase 2 的核心边界(不变量 7)。Adapter 不能绕过它直接读原始 events。
@@ -25,12 +26,9 @@ function clip(s: string, n: number): string {
   return s.slice(0, n) + `…[truncated ${s.length - n} chars]…`
 }
 
+// 显示名经 agent-meta(registry 注册时写入)取,不在这里维护第二份映射(docs/12 D1)。
 function agentSpeaker(agent?: AgentName): string {
-  if (agent === 'claude') return '[Claude said]'
-  if (agent === 'codex') return '[Codex said]'
-  if (agent === 'opencode') return '[OpenCode said]'
-  if (agent === 'cursor') return '[Cursor said]'
-  return '[Assistant said]'
+  return `[${agentDisplayName(agent)} said]`
 }
 
 function toolInputStr(input: unknown, max: number): string {

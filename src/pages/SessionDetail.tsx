@@ -12,6 +12,7 @@ import {
   type RunRecord,
   type RunStreamMessage,
 } from '../lib/sse'
+import { sessionAgentOf } from '../lib/agents'
 import { sourceLabel, displayTitle } from '../lib/display'
 import { buildTimeline, summarizeTools, type FilterKind, type TraceGroup } from '../lib/timeline'
 import type { AgentName, ApprovalRequest, ChatAttachment, EventEnvelope, RunPermissions, Source } from '../lib/types'
@@ -41,11 +42,6 @@ type AttachmentDraft =
   | { kind: 'imageData'; dataUrl: string; name: string; mimeType: string }
 type CliSelection = Partial<Record<'model' | 'effort', string>>
 type CliSelectionByAgent = Partial<Record<AgentName, CliSelection>>
-
-function sessionAgentOf(source: string | undefined): AgentName {
-  if (source === 'codex') return 'codex'
-  return 'claude' // claude-code 默认 claude;cockpit / 未知一律落到 claude 主线
-}
 
 function canNativeResume(source: string | undefined): boolean {
   return source === 'claude-code' || source === 'codex'

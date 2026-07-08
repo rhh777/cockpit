@@ -15,7 +15,7 @@
 | C1 | 安全 | 流式 delta 绕过 redactSecrets,实时回显未脱敏 | 高 | 不修复(已文档化) |
 | C2 | 安全 | 审批通过即 session 级放行整个工具(如所有 Bash) | 中 | 未开始 |
 | C3 | 安全 | 降噪路径(node_modules/dist)与安全路径(.env/.ssh)混用同一黑名单 | 中 | 已完成 |
-| D1 | 扩展性 | server 侧多处硬编码 agent 名与能力判断,违反 docs/01 扩展点约定 | 中 | 未开始 |
+| D1 | 扩展性 | server 侧多处硬编码 agent 名与能力判断,违反 docs/01 扩展点约定 | 中 | 已完成 |
 | E1 | 序列化 | 群聊上下文在 run-registry 手搓 prompt,再被 serializeForAgent 二次包装 | 中 | 未开始 |
 | E2 | 序列化 | 「当前请求去重」靠文本相等,带附件必失效导致重复 | 中 | 已完成 |
 | E3 | 序列化 | `maxChars: 24000` 写死,docs/01 承诺的「设置里可调」未接线 | 低 | 已完成 |
@@ -86,6 +86,13 @@
   - 审批能力靠 `targetAgent === 'codex' || targetAgent === 'claude'` 判断(followup 与 group 两处);
   - `serialize.ts agentSpeaker` 又一份显示名映射。
 - **修复方向**:把 `displayName`、`supportsApproval`、`nativeSource` 等挂到 `ReviewAgent` 接口 / adapter registry,run-registry 与 serialize 从 registry 取。
+- **修复记录(2026-07-08)**:
+  - `ReviewAgent` 新增可选 `displayName` / `supportsApproval`;五个 adapter 各自声明;
+  - 新增零依赖叶子模块 `adapters/agent-meta.ts` 承载显示名(registry 注册时写入),serialize 从它取,避免 serialize→registry→adapter→serialize 循环导入;
+  - registry 新增 `agentForNativeSource(source)`(canResumeNative 反查),run-registry 的 `sessionAgentOf` / `agentName` 硬编码映射删除;
+  - 审批能力判断由 `targetAgent === 'codex' || 'claude'` 改为 `agent.supportsApproval`(followup 与 group 两处);
+  - 前端两份本地 `sessionAgentOf`(SessionDetail / SessionActionsMenu)收进 `src/lib/agents.ts`(`sessionAgentOf` / `nativeAgentForSource`),符合 CLAUDE.md 共享事实源规则。
+  - 遗留:`run-registry.startCodexContinuation` 与 `nativeLinked`(codexAcceleratedMode)本身就是 Codex 专属特性,保留显式 codex 引用属合理。
 
 ### E1 · 群聊 prompt 套 prompt(序列化,中)
 
@@ -182,3 +189,4 @@
 | 2026-07-08 | F2 | 已完成 | watcher 周期补建(2s)+ error 重建;新增功能测试验证首条 follow-up 可推送 |
 | 2026-07-08 | C3 | 已完成 | node_modules/dist/build 移出整段屏蔽黑名单,降噪交给截断,密钥扫描仍全量生效 |
 | 2026-07-08 | E3 | 已完成 | docs/01 移除「设置里可调」未兑现承诺,明确为代码内常量 |
+| 2026-07-08 | D1 | 已完成 | agent 显示名/审批能力/原生来源反查收口到 ReviewAgent + registry;前端 sessionAgentOf 收进 lib/agents |

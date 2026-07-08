@@ -620,6 +620,8 @@ async function* runClaudeSdk(input: AgentRunInput): AsyncGenerator<NormalizedEve
 
 export const claudeAdapter: ReviewAgent = {
   name: 'claude',
+  displayName: 'Claude',
+  supportsApproval: true,
 
   async isAvailable() {
     return isClaudeCliAvailable()

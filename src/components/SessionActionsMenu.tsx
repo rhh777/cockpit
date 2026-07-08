@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Icon } from './Icon'
+import { nativeAgentForSource } from '../lib/agents'
 import {
   createHandoff,
   fetchHandoff,
@@ -39,12 +40,6 @@ function sourceRefFor(source: string, sessionId: string, isGroup: boolean): Hand
   return { kind: 'native-session', source, sessionId }
 }
 
-function sessionAgentOf(source: string): 'codex' | 'claude' | null {
-  if (source === 'codex') return 'codex'
-  if (source === 'claude-code') return 'claude'
-  return null
-}
-
 export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
@@ -53,7 +48,7 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
   const [result, setResult] = useState<HandoffResult | null>(null)
   const [groupChooserOpen, setGroupChooserOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement | null>(null)
-  const currentNativeAgent = isGroup ? null : sessionAgentOf(source)
+  const currentNativeAgent = isGroup ? null : nativeAgentForSource(source)
   const showCodexContinue = currentNativeAgent !== 'codex'
   const showClaudeContinue = currentNativeAgent !== 'claude'
 

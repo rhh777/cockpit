@@ -67,6 +67,7 @@ async function* runCursor(input: AgentRunInput): AsyncGenerator<NormalizedEvent>
 
 export const cursorAdapter: ReviewAgent = {
   name: 'cursor',
+  displayName: 'Cursor',
 
   async isAvailable() {
     return (await resolveCursorCommand()) !== null

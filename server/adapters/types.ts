@@ -61,7 +61,14 @@ export interface NativeResumeInput {
   signal: AbortSignal
 }
 
-export interface ReviewAgent {
+export interface ReviewAgentMeta {
+  /** UI/prompt 用显示名(如 'Claude');缺省回退 name 原文。 */
+  displayName?: string
+  /** adapter 是否能消费 requestApproval 回调(走可拦截工具的通道)。缺省 false。 */
+  supportsApproval?: boolean
+}
+
+export interface ReviewAgent extends ReviewAgentMeta {
   name: AgentName
   /** 检测本机 CLI 是否可用;不可用时路由返回可展示错误 */
   isAvailable(): Promise<boolean>

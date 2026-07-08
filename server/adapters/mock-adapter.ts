@@ -15,6 +15,7 @@ const sleep = (ms: number, signal: AbortSignal) =>
 // Phase 2b/2c 用真实 claude-call / codex-call 替换,路由层不变。
 export const mockAdapter: ReviewAgent = {
   name: 'mock',
+  displayName: 'Mock',
   async isAvailable() {
     return true
   },

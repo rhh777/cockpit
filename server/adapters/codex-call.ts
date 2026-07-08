@@ -372,6 +372,8 @@ async function* runCodexAppServer(input: AgentRunInput): AsyncGenerator<Normaliz
 
 export const codexAdapter: ReviewAgent = {
   name: 'codex',
+  displayName: 'Codex',
+  supportsApproval: true,
 
   async isAvailable() {
     // 注意:codex 的 vendored 二进制可能缺失 → spawn ENOENT,这里能检出。
