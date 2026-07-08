@@ -62,7 +62,7 @@
 | 附件(图片) | 群聊:`~/.cockpit/group-threads/<id>/attachments/`;单聊:`~/.cockpit/threads/<src>/<id>/attachments/`;**都不进原生 CLI 目录** | 同左 | 附件由 CLI 子进程处理写回,cockpit 只传路径 |
 
 - Cockpit 侧写盘的都是 `EventEnvelope`(`origin: 'cockpit'` 或 `'native'`),loader 端可以按 `followup_boundary` 拼接。
-- Native resume 的 cockpit SSE 事件带 `origin: 'native'`,**不落 `~/.cockpit/`**;刷新后事实源仍是 `~/.claude/projects/` 或 `~/.codex/sessions/` 的 JSONL,watcher 检测到 mtime 变化后 SSE 推增量。
+- Native resume 的 cockpit SSE 事件带 `origin: 'native'`,运行中只写影子日志 `~/.cockpit/runs/native-shadow/`(不进最终 timeline);刷新后事实源仍是 `~/.claude/projects/` 或 `~/.codex/sessions/` 的 JSONL。
 
 ### 表 D — 权限与审批
 
@@ -115,13 +115,13 @@ interface ReviewAgent {
 
 ### 1. Follow-up(同 session 追问)
 
-前端 `POST /api/threads/:src/:id/messages` → [server/routes/threads.ts](../server/routes/threads.ts) `handlePostMessage`:
+前端 `POST /api/sessions/:src/:id/runs` → [server/routes/runs.ts](../server/routes/runs.ts) `handleStartFollowup` → [`runRegistry.startFollowup`](../server/runs/run-registry.ts):
 
-1. 生成 `turnId` / `runId`,把 `user_text` envelope 追加到 `~/.cockpit/threads/<src>/<id>/followups.jsonl`。
-2. SSE 升级,`loadSessionDetail` 拿原生 events + 已有 follow-up。
-3. `resolveAgent(targetAgent).run({ text, contextEvents, cwd, signal, … })`。
-4. 每条 `NormalizedEvent` 过敏感过滤 → 包 envelope → 同时落盘 + `sseWrite`。`assistant_text` 的 delta **只走 SSE 不落盘**,最终整段作为一条持久化事件。
-5. 结束追加 `turn_status`(`completed` / `failed` / `aborted`)。
+1. 生成 `turnId` / `runId`,把 `user_text` + `run_permissions` envelope 追加到 `~/.cockpit/threads/<src>/<id>/followups.jsonl`,**立即返回 `{ run, userEnvelope }`**,不占用 HTTP 连接。
+2. 前端拿 runId 调 `GET /api/runs/:runId/stream`(SSE)attach;断开订阅不 abort,显式 `POST /api/runs/:runId/cancel` 才终止。
+3. 后台 `executeFollowup`:`loadSessionDetail` 拿原生 events + 已有 follow-up,`resolveAgent(targetAgent).run({ text, contextEvents, cwd, permissions, requestApproval?, signal, … })`。
+4. 每条 `NormalizedEvent` 过敏感过滤 → 包 envelope → 同时落盘 + fan-out 给所有 subscriber。`assistant_text` 的 delta **只走 SSE 不落盘**,最终整段作为一条持久化事件。
+5. 结束追加 `turn_status`(`completed` / `failed` / `aborted`)并写 run 终态到 `~/.cockpit/runs/index.jsonl`。
 
 底层通道:
 
@@ -139,9 +139,7 @@ interface ReviewAgent {
 
 ### 2. Group chat(@mention 并发多 agent)
 
-有两条并存的路由,前端(FollowupComposer)现在只用 `/runs`:
-
-- **`POST /api/group-threads/:id/runs`**(新,推荐)→ [group-threads.ts:404](../server/routes/group-threads.ts:404) `handleStartRun`:
+- **`POST /api/group-threads/:id/runs`** → [group-threads.ts](../server/routes/group-threads.ts) `handleStartRun`:
   1. `readState` 校验群聊存在,读 body(`text` / `targetAgents` / `cliByAgent` / `attachments` / `permissions` / `codexAcceleratedMode`)。
   2. `parseMentions(text)` ∩ `state.agents` = 本轮目标。
   3. 调 [`runRegistry.startGroupTurn`](../server/runs/run-registry.ts:427) —— 写用户消息 + `turn_start` meta 到 `transcript.jsonl`,per-agent 起 `RunHandle`。
@@ -149,18 +147,18 @@ interface ReviewAgent {
   5. 前端拿到 records 后,per run 调 `attachRunStream(runId)` → `GET /api/runs/:runId/stream`(SSE),run-registry 内部通过 [`projectGroupContext`](../server/runs/run-registry.ts:296) 生成上下文并跑 `resolveAgent(agent).run(...)`,`item/agentMessage/delta` 等事件走对应 run 的 SSE 通道。
   6. 每 run 独立 `run_done`,群聊层面没有"整体 done"事件,前端按 records 计数收敛。
 
-- **`POST /api/group-threads/:id/messages`**(旧,legacy)→ `handlePostMessage` in-line SSE:一条连接吐所有 agent 的 event,末尾 `{ kind: 'done', status: 'completed'|'partial'|'failed' }`。当前代码保留但前端不走这条路。
+> 旧的 `POST /api/group-threads/:id/messages` in-line SSE 路径已删除(2026-07,docs/12 B1)。
 
-关键点:两条路径都**复用 follow-up 的 adapter 接口**,只是 `contextEvents` 换成基于 group 快照的伪 user_text(新路径用 `projectGroupContext`,旧路径用 `group-threads.ts:76` 里的 `projectContext`),让多 agent 看到**一致的 transcript + summary + current preview**,不串戏。attachments(图片)写入 `group-threads/<id>/attachments/`,**不**进原生 CLI 目录。
+关键点:群聊**复用 follow-up 的 adapter 接口**,只是 `contextEvents` 换成基于 group 快照的伪 user_text(`projectGroupContext`),让多 agent 看到**一致的 transcript + summary + current preview**,不串戏。attachments(图片)写入 `group-threads/<id>/attachments/`,**不**进原生 CLI 目录。
 
 ### 3. 写回原生会话(native resume)
 
-用户显式点击"回到原会话" → `POST /api/native/:src/:id/messages` → [native.ts](../server/routes/native.ts):
+用户显式点击"回到原会话" → `POST /api/native/:src/:id/runs` → [runs.ts](../server/routes/runs.ts) `handleStartNative` → `runRegistry.startNativeResume`:
 
 - 仅当 `agent.canResumeNative(source)` 且 `agent.resumeNative` 存在。目前只有:
   - `claude-code` ↔ `claude adapter`([claude-call.ts:657](../server/adapters/claude-call.ts:657)):`claude -p --resume <sessionId> [--effort]`,prompt 走 stdin,读 `--include-partial-messages` 流。
   - `codex` ↔ `codex adapter`([codex-call.ts:402](../server/adapters/codex-call.ts:402)):`codex {--sandbox read-only | --dangerously-bypass-approvals-and-sandbox} --cd <cwd> exec resume --json --skip-git-repo-check -c model_reasoning_effort="<effort>" -c model_reasoning_summary="auto" <sessionId> -`(`writeMode=read-only`/`trusted` 两档,`--cd` 在 `exec` 之前是 codex CLI 全局 flag)。prompt 走 stdin。
-- SSE 事件带 `origin: 'native'`,**不写 `~/.cockpit/`**。真正的写回由 CLI 追加到 `~/.claude/projects/…` 或 `~/.codex/sessions/…`,watcher 检测到变更后 SSE 推增量给前端(不变量 2/3)。
+- SSE 事件带 `origin: 'native'`;运行中事件只写 Cockpit 影子日志 `~/.cockpit/runs/native-shadow/<src>/<id>/<runId>.jsonl`(展示/审计用,不进最终 timeline)。真正的写回由 CLI 追加到 `~/.claude/projects/…` 或 `~/.codex/sessions/…`,完成后前端重拉全量,以原生 jsonl 为唯一事实来源(不变量 2/3)。
 - Codex 这条**不逐 token 流**,见表 B 与 [docs/07 § 已知限制](07-native-continuation-and-handoff.md#已知限制codex-native-resume-不逐-token-流)。
 
 ### 4. Handoff(把上下文交给另一条原生会话)
@@ -229,9 +227,9 @@ server/
     context-projector.ts  follow-up 的 EventEnvelope → 传给 adapter 的 contextEvents(与群聊侧的 projectGroupContext 对称)
     sensitive.ts          redactSecrets + filterToolResult
   routes/
-    threads.ts            follow-up SSE
-    group-threads.ts      group chat SSE
-    native.ts             写回原生会话 SSE
+    runs.ts               run 启动/查询/取消(follow-up、native resume、run stream SSE)
+    threads.ts            follow-up 数据删除(清空/回删)
+    group-threads.ts      群聊生命周期 + /runs 启动
     handoffs.ts           handoff 创建 + open-native
   runs/
     run-registry.ts       runId/turnId、审批、Codex app-server 生命周期

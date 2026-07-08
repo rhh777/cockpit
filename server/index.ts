@@ -1,7 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { handleApprovalsRoute } from './routes/approvals'
 import { handleAttachmentsRoute } from './routes/attachments'
-import { handleNativeRoute } from './routes/native'
 import { handleGitRoute } from './routes/git'
 import { handleNativeDialogRoute } from './routes/native-dialog'
 import { handleGroupThreadsRoute } from './routes/group-threads'
@@ -32,7 +31,6 @@ export function cockpitApi() {
       if (await handleNativeDialogRoute(req, res, url)) return
       if (await handleGitRoute(req, res, url)) return
       if (await handleRunsRoute(req, res, url)) return
-      if (await handleNativeRoute(req, res, url)) return
       if (await handleHandoffsRoute(req, res, url)) return
       if (await handleGroupThreadsRoute(req, res, url)) return
       if (await handleThreadsRoute(req, res, url)) return

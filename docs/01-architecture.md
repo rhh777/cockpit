@@ -38,11 +38,11 @@
 │  - GET  /api/sessions/:src/:id/stream  SSE 增量(默认路径) │
 │         ?since=N                                            │
 │  - GET  /api/sessions/:src/:id/changes 一次性 JSON,轮询兜底 │
-│  - POST /api/threads/:src/:id/messages 发一条 follow-up     │
-│         (SSE 流式返回 agent 响应,完成后落盘)              │
+│  - POST /api/sessions/:src/:id/runs    发一条 follow-up     │
+│         (后台 run,SSE 经 GET /api/runs/:runId/stream)     │
 │  - DELETE /api/threads/:src/:id        清空 follow-up       │
 │  - DELETE /api/threads/:src/:id/turns/:turnId  删除某一轮   │
-│  - POST /api/native/:src/:id/messages  回到原会话续写        │
+│  - POST /api/native/:src/:id/runs      回到原会话续写        │
 │         (由官方 CLI 子进程 append 原生 jsonl,cockpit       │
 │          仅做 SSE 转发与刷新触发,见 §十)                   │
 │  周边(见 §六模块树):                                     │
@@ -215,26 +215,27 @@ interface SessionRegistry {
 ```
 用户在详情页输入框输入消息,选择 target agent (默认上一条用过的),点发送
   (或点 [Review] 快捷按钮,预填 "Please review the above session for..." 模板)
-  → 前端 POST /api/threads/:source/:id/messages
-          body: { text, targetAgent: 'codex', useTools?: false }
-         (SSE 升级)
-  → Server:
-      1. 生成 turnId + runId,立即 append 用户消息到 followups.jsonl (origin='cockpit')
-      2. 重新 loadFullContext = 原始 events + 已有 follow-up events + 这条新用户消息
+  → 前端 POST /api/sessions/:source/:id/runs
+          body: { text, targetAgent: 'codex', useTools?, permissions?, ... }
+  → Server(runRegistry.startFollowup):
+      1. 生成 turnId + runId,立即 append 用户消息 + run_permissions 到 followups.jsonl
+         (origin='cockpit'),同步返回 { run, userEnvelope },不占用 HTTP 连接
+      2. 后台 executeFollowup:loadFullContext = 原始 events + 已有 follow-up events
       3. serializeForAgent(fullContext, targetAgent) → 适合 target CLI 的输入格式
-      4. 调本机 claude/codex CLI 子进程 → 流式读取 stdout/stderr,带 AbortSignal
+      4. 调本机 claude/codex CLI 子进程 → 流式读取,带 AbortSignal
       5. 边收 CLI 输出边:
          a. 累积到 followups.jsonl(每个事件落一行)
-         b. 转成 NormalizedEvent → SSE 推给前端
-      6. CLI 进程完成 → append turn_status(completed) → 发 SSE 'done' → 关闭流
-  → 前端流式追加到 timeline 末尾
+         b. 转成 NormalizedEvent → fan-out 给所有 run stream subscriber
+      6. CLI 进程完成 → append turn_status(completed) → run 终态落 runs/index.jsonl
+  → 前端 attach GET /api/runs/:runId/stream(SSE),流式追加到 timeline 末尾
 ```
 
 **关键约束**:
 - Follow-up **持久化到 `~/.cockpit/`**,关掉浏览器不丢
 - **绝不写入** `~/.claude/` / `~/.codex/`,零侵入原生 CLI
 - 用户消息**先落盘再调 agent**,这样即使 agent 调用失败用户消息也保留
-- Abort:前端 EventSource.close() → 后端 res.on('close') → AbortController.abort() → CLI 进程取消;已生成的部分已落盘,保留
+- 断开订阅不 abort:切换 session / 关闭页面只断 run stream,后台继续跑;
+  只有显式 POST /api/runs/:runId/cancel 才 AbortController.abort();已生成的部分已落盘,保留
 - CLI 报错 / 用户取消必须写入 terminal status,否则 UI 无法区分“还在生成”和“半截终止”。
 
 ### 流程 C:实时增量(fs.watch + SSE)
@@ -275,12 +276,11 @@ cockpit/
 │   ├── changes-service.ts           ← /changes 一次性 JSON(/stream SSE 在 routes/sessions)
 │   ├── routes/
 │   │   ├── sessions.ts              ← /api/sessions[/:src/:id[/stream|/changes]]
-│   │   ├── threads.ts               ← follow-up 收发(SSE)、DELETE 清空/回删
-│   │   ├── native.ts                ← 回到原会话续写(官方 CLI 子进程)
+│   │   ├── threads.ts               ← follow-up DELETE 清空/回删(发送走 runs.ts)
 │   │   ├── native-dialog.ts         ← 桌面壳原生对话框
-│   │   ├── group-threads.ts         ← 群聊:from-session / PATCH / /messages(legacy) / /runs
+│   │   ├── group-threads.ts         ← 群聊:from-session / PATCH / /runs / cancel
 │   │   ├── handoffs.ts              ← Handoff bundle + capabilities/refresh/open-native
-│   │   ├── runs.ts                  ← 后台运行注册(GET/POST /runs,SSE /runs/:id/stream)
+│   │   ├── runs.ts                  ← run 启动/查询/取消(follow-up、native resume、SSE /runs/:id/stream)
 │   │   ├── approvals.ts             ← Adapter 侧工具审批
 │   │   ├── attachments.ts           ← 群聊/线程附件读取
 │   │   ├── git.ts                   ← 只读 git 状态

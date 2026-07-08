@@ -37,9 +37,9 @@
   <text x="30" y="128" class="lbl">• 只认 NormalizedEvent /</text>
   <text x="30" y="144" class="lbl">   EventEnvelope,不解原生 schema</text>
   <text x="30" y="170" class="lbl">POST 路径:</text>
-  <text x="30" y="186" class="mono">/api/threads/:src/:id/messages</text>
-  <text x="30" y="200" class="mono">/api/group-threads/:id/messages</text>
-  <text x="30" y="214" class="mono">/api/native/:src/:id/messages</text>
+  <text x="30" y="186" class="mono">/api/sessions/:src/:id/runs</text>
+  <text x="30" y="200" class="mono">/api/group-threads/:id/runs</text>
+  <text x="30" y="214" class="mono">/api/native/:src/:id/runs</text>
   <text x="30" y="228" class="mono">/api/handoffs/:id/open-native</text>
 
   <!-- Server routes -->

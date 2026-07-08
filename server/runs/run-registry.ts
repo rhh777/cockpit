@@ -20,7 +20,8 @@ import type { ApprovalRequest, Operation, RunPermissions } from '../permissions/
 
 const CODEX_CONTINUATION_INTERRUPT_TIMEOUT_MS = 5_000
 
-// Phase 4 incremental 门槛,与 threads.ts 保持一致(改动时同步更新)。
+// Phase 4 incremental 门槛:原生事件 > 50 或估算文本 > 12000 chars 才切换到 summary 前缀模式。
+// 短 session 全量已够,增量反而丢细节。
 const INCREMENTAL_EVENT_THRESHOLD = 50
 const INCREMENTAL_TEXT_THRESHOLD = 12000
 

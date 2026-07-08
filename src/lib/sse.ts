@@ -224,25 +224,6 @@ export async function startGroupRun(
   return res.json()
 }
 
-export async function postFollowupStream(
-  source: string,
-  id: string,
-  body: SendFollowupBody,
-  onMessage: (msg: StreamMessage) => void,
-  signal: AbortSignal,
-): Promise<void> {
-  const res = await fetch(
-    `/api/threads/${encodeURIComponent(source)}/${encodeURIComponent(id)}/messages`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal,
-    },
-  )
-  await readSse<StreamMessage>(res, onMessage)
-}
-
 export type SessionStreamMessage =
   | { kind: 'init'; total: number; newEvents: EventEnvelope[] }
   | { kind: 'append'; total: number; newEvents: EventEnvelope[] }
@@ -265,45 +246,4 @@ export async function subscribeSessionStream(
     { signal },
   )
   await readSse<SessionStreamMessage>(res, onMessage)
-}
-
-export async function postNativeResumeStream(
-  source: string,
-  id: string,
-  body: { text: string; writeMode?: 'read-only' | 'trusted' },
-  onMessage: (msg: StreamMessage) => void,
-  signal: AbortSignal,
-): Promise<void> {
-  const res = await fetch(
-    `/api/native/${encodeURIComponent(source)}/${encodeURIComponent(id)}/messages`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal,
-    },
-  )
-  await readSse<StreamMessage>(res, onMessage)
-}
-
-export async function postGroupMessageStream(
-  id: string,
-  body: {
-    text: string
-    targetAgents?: string[]
-    useTools?: boolean
-    cliByAgent?: Partial<Record<string, { model?: string; effort?: string }>>
-    attachments?: ChatAttachmentDraft[]
-    codexAcceleratedMode?: boolean
-  },
-  onMessage: (msg: GroupStreamMessage) => void,
-  signal: AbortSignal,
-): Promise<void> {
-  const res = await fetch(`/api/group-threads/${encodeURIComponent(id)}/messages`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal,
-  })
-  await readSse<GroupStreamMessage>(res, onMessage)
 }

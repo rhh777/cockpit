@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { AgentName, ChatAttachment, EventEnvelope, NormalizedEvent } from '../loaders/types'
-import { resolveAgent } from '../adapters/registry'
-import { filterToolResult, redactSecrets } from '../adapters/sensitive'
+import type { AgentName } from '../loaders/types'
 import { groupAttachmentsDir, groupThreadStore } from '../store/group-thread-store'
-import { normalizeAttachments, renderAttachmentLines, type AttachmentDraft } from '../util/attachments'
+import { normalizeAttachments, type AttachmentDraft } from '../util/attachments'
 import { sessionRegistry } from '../registry/session-registry'
 import { parseMentions } from '../util/mentions'
 import { cleanTitle } from '../util/title'
@@ -13,22 +11,8 @@ import { loadSessionDetail } from '../sessions-service'
 import type { Source } from '../loaders/types'
 import { normalizeRunPermissions } from '../permissions/types'
 
-type RunStatus = 'running' | 'completed' | 'failed' | 'aborted'
-
-interface ActiveRun {
-  runId: string
-  agent: AgentName
-  controller: AbortController
-  status: RunStatus
-}
-
-interface ActiveGroupTurn {
-  groupTurnId: string
-  baseEventSeq: number
-  runs: ActiveRun[]
-}
-
-const activeTurns = new Map<string, ActiveGroupTurn>()
+// 群聊消息的发送/执行统一走 run-registry(POST /api/group-threads/:id/runs)。
+// 本路由负责群聊 thread 的生命周期(创建/导入/改名/删除)与 turn 取消。
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status
@@ -45,90 +29,6 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   } catch {
     return {}
   }
-}
-
-function sseWrite(res: ServerResponse, msg: unknown) {
-  if (res.writableEnded) return
-  res.write(`data: ${JSON.stringify(msg)}\n\n`)
-  ;(res as ServerResponse & { flush?: () => void }).flush?.()
-}
-
-function wrap(ev: NormalizedEvent, turnId: string, runId?: string): EventEnvelope {
-  return {
-    origin: 'cockpit',
-    source: 'cockpit',
-    sourceEventId: ev.type === 'tool_use' ? ev.id : `evt_${randomUUID()}`,
-    turnId,
-    runId,
-    event: ev,
-  }
-}
-
-function agentName(agent: AgentName | undefined): string {
-  if (agent === 'claude') return 'Claude'
-  if (agent === 'codex') return 'Codex'
-  if (agent === 'opencode') return 'OpenCode'
-  if (agent === 'cursor') return 'Cursor'
-  return String(agent)
-}
-
-
-function projectContext(
-  events: EventEnvelope[],
-  summary: string,
-  currentText: string,
-  targetAgent: AgentName,
-  currentAttachments: ChatAttachment[] = [],
-): EventEnvelope[] {
-  const recent = events
-    .filter((env) => env.event.type !== 'meta' && env.event.type !== 'usage')
-    .slice(-30)
-    .map((env) => {
-      const e = env.event
-      if (e.type === 'user_text') {
-        return [`[User]: ${e.text || '(no text)'}`, ...renderAttachmentLines(e.attachments)].join('\n')
-      }
-      if (e.type === 'assistant_text') return `[${agentName(e.agent)}]: ${e.text}`
-      if (e.type === 'tool_use') return `[${agentName(e.agent)} tool]: ${e.name}`
-      if (e.type === 'tool_result') return `[Tool result]: ${e.isError ? 'error' : 'ok'}`
-      if (e.type === 'thinking') return `[${agentName(targetAgent)} thinking]: ${e.text}`
-      return null
-    })
-    .filter((x): x is string => x != null)
-    .join('\n')
-
-  const text = [
-    '# Cockpit Group Chat',
-    '',
-    `You are ${agentName(targetAgent)} participating in a local Cockpit group chat.`,
-    'Only answer the current request. The transcript below is the Cockpit source of truth.',
-    '',
-    '## Shared Summary',
-    summary.trim() || '(empty)',
-    '',
-    '## Recent Transcript',
-    recent || '(empty)',
-    '',
-    '## Current Request Preview',
-    currentText || '(no text)',
-    ...renderAttachmentLines(currentAttachments),
-  ].join('\n')
-
-  return [
-    {
-      origin: 'cockpit',
-      source: 'cockpit',
-      sourceEventId: `ctx_${randomUUID()}`,
-      event: { type: 'user_text', text, ts: new Date().toISOString() },
-    },
-  ]
-}
-
-function overallStatus(statuses: RunStatus[]): 'completed' | 'partial' | 'failed' {
-  const completed = statuses.filter((s) => s === 'completed').length
-  if (completed === statuses.length) return 'completed'
-  if (completed > 0) return 'partial'
-  return 'failed'
 }
 
 async function handleFromSession(req: IncomingMessage, res: ServerResponse) {
@@ -208,195 +108,8 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse) {
   sendJson(res, 201, state)
 }
 
-async function handlePostMessage(req: IncomingMessage, res: ServerResponse, id: string) {
-  const state = await groupThreadStore.readState(id)
-  if (!state) {
-    sendJson(res, 404, { error: 'group thread not found' })
-    return
-  }
-
-  const body = (await readBody(req)) as {
-    text?: string
-    useTools?: boolean
-    targetAgents?: AgentName[]
-    cliByAgent?: Partial<Record<AgentName, { model?: string; effort?: string }>>
-    attachments?: AttachmentDraft[]
-    permissions?: unknown
-    codexAcceleratedMode?: boolean
-  }
-  const text = (body.text ?? '').trim()
-  const attachments = await normalizeAttachments(groupAttachmentsDir(id), body.attachments)
-  if (!text && attachments.length === 0) {
-    sendJson(res, 400, { error: 'empty message' })
-    return
-  }
-
-  const mentions = parseMentions(text)
-  const memberSet = new Set(state.agents)
-  const targetAgents = mentions.filter((a) => memberSet.has(a))
-  if (targetAgents.length > 0 && activeTurns.has(id)) {
-    sendJson(res, 409, { error: 'group turn already running' })
-    return
-  }
-
-  res.statusCode = 200
-  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
-  res.setHeader('Cache-Control', 'no-cache, no-transform')
-  res.setHeader('Connection', 'keep-alive')
-  res.setHeader('X-Accel-Buffering', 'no')
-  req.socket?.setNoDelay?.(true)
-  res.flushHeaders?.()
-
-  const groupTurnId = `turn_${randomUUID()}`
-  const now = () => new Date().toISOString()
-  const userEnvelope = wrap(
-    { type: 'user_text', text, ts: now(), targetAgents, mentions, ...(attachments.length ? { attachments } : {}) },
-    groupTurnId,
-  )
-  const baseEventSeq = await groupThreadStore.appendEvent(id, userEnvelope)
-  if (state.title.trim() === 'Group Chat' && text) {
-    const title = cleanTitle(text, 36)
-    if (title && title !== state.title) {
-      await groupThreadStore.update(id, { title })
-      sessionRegistry.invalidate()
-    }
-  }
-  sseWrite(res, { kind: 'event', groupTurnId, envelope: userEnvelope })
-
-  if (targetAgents.length === 0) {
-    sseWrite(res, { kind: 'done', groupTurnId, status: 'completed' })
-    res.end()
-    return
-  }
-
-  const runs = targetAgents.map((agent) => ({
-    runId: `run_${randomUUID()}`,
-    agent,
-    turnId: groupTurnId,
-    baseEventSeq,
-    status: 'running' as const,
-  }))
-  const turnStart = wrap(
-    {
-      type: 'meta',
-      key: 'turn_start',
-      value: { groupTurnId, baseEventSeq, targetAgents, runs },
-      ts: now(),
-    },
-    groupTurnId,
-  )
-  await groupThreadStore.appendEvent(id, turnStart)
-  sseWrite(res, { kind: 'meta', groupTurnId, baseEventSeq, runs: runs.map(({ agent, runId }) => ({ agent, runId })) })
-  sseWrite(res, { kind: 'event', groupTurnId, envelope: turnStart })
-
-  const active: ActiveGroupTurn = {
-    groupTurnId,
-    baseEventSeq,
-    runs: runs.map((r) => ({ runId: r.runId, agent: r.agent, controller: new AbortController(), status: 'running' })),
-  }
-  activeTurns.set(id, active)
-
-  let closed = false
-  req.on('close', () => {
-    if (closed) return
-    for (const run of active.runs) run.controller.abort()
-  })
-
-  const transcript = (await groupThreadStore.readTranscript(id)).slice(0, baseEventSeq)
-  const summary = await groupThreadStore.readSummary(id)
-  const useTools = body.useTools ?? true
-  const cliByAgent = body.cliByAgent ?? {}
-  const permissions = normalizeRunPermissions(body.permissions)
-
-  const runOne = async (run: ActiveRun) => {
-    const agent = resolveAgent(run.agent)
-    const toolInputById = new Map<string, unknown>()
-    try {
-      if (!(await agent.isAvailable())) {
-        throw new Error(`agent "${run.agent}" 不可用(本机未安装/登录对应 CLI)`)
-      }
-      const nativeLinked =
-        run.agent === 'codex' && body.codexAcceleratedMode === true
-          ? {
-              scope: {
-                kind: 'group-member' as const,
-                groupThreadId: id,
-                agent: 'codex' as const,
-              },
-            }
-          : undefined
-      for await (const raw of agent.run({
-        text,
-        contextEvents: projectContext(transcript, summary, text, run.agent, attachments),
-        targetAgent: run.agent,
-        cwd: state.cwd,
-        useTools,
-        permissions,
-        model: cliByAgent[run.agent]?.model,
-        effort: cliByAgent[run.agent]?.effort,
-        nativeLinked,
-        // Legacy POST+SSE path has no approval card plumbing. Supplying this keeps
-        // Codex on app-server/read-only while preserving the old safe behavior.
-        requestApproval:
-          run.agent === 'codex'
-            ? async () => 'rejected'
-            : undefined,
-        signal: run.controller.signal,
-      })) {
-        let ev = raw
-        if (ev.type === 'tool_use') {
-          toolInputById.set(ev.id, ev.input)
-        } else if (ev.type === 'tool_result') {
-          const filtered = filterToolResult(ev.output, toolInputById.get(ev.toolUseId))
-          ev = { ...ev, output: filtered.text }
-        } else if (ev.type === 'assistant_text' || ev.type === 'thinking') {
-          ev = { ...ev, text: redactSecrets(ev.text).text }
-        }
-        if ('agent' in ev && ev.agent == null) ev = { ...ev, agent: run.agent } as NormalizedEvent
-        const envelope = wrap(ev, groupTurnId, run.runId)
-        const isDelta = ev.type === 'assistant_text' && ev.delta === true
-        if (!isDelta) await groupThreadStore.appendEvent(id, envelope)
-        sseWrite(res, { kind: 'event', groupTurnId, runId: run.runId, agent: run.agent, envelope })
-      }
-      run.status = 'completed'
-      await groupThreadStore.appendTurnStatus(id, groupTurnId, run.runId, run.agent, baseEventSeq, 'completed')
-      sseWrite(res, { kind: 'run_done', groupTurnId, runId: run.runId, agent: run.agent, status: 'completed' })
-    } catch (err) {
-      const aborted = run.controller.signal.aborted
-      run.status = aborted ? 'aborted' : 'failed'
-      const message = aborted ? undefined : String((err as Error)?.message ?? err)
-      await groupThreadStore.appendTurnStatus(id, groupTurnId, run.runId, run.agent, baseEventSeq, run.status, message)
-      sseWrite(res, {
-        kind: 'run_done',
-        groupTurnId,
-        runId: run.runId,
-        agent: run.agent,
-        status: run.status,
-        ...(message ? { message } : {}),
-      })
-    }
-  }
-
-  await Promise.all(active.runs.map(runOne))
-  activeTurns.delete(id)
-  closed = true
-  const status = overallStatus(active.runs.map((r) => r.status))
-  sseWrite(res, { kind: 'done', groupTurnId, status })
-  sessionRegistry.invalidate()
-  res.end()
-}
-
-async function handleCancel(res: ServerResponse, id: string, groupTurnId: string, req: IncomingMessage) {
+async function handleCancel(res: ServerResponse, id: string, req: IncomingMessage) {
   const body = (await readBody(req)) as { runId?: string }
-  const active = activeTurns.get(id)
-  if (!active || active.groupTurnId !== groupTurnId) {
-    runRegistry.cancelGroupTurn(id, body.runId)
-    sendJson(res, 202, { ok: true })
-    return
-  }
-  for (const run of active.runs) {
-    if (!body.runId || body.runId === run.runId) run.controller.abort()
-  }
   runRegistry.cancelGroupTurn(id, body.runId)
   sendJson(res, 202, { ok: true })
 }
@@ -471,11 +184,6 @@ export async function handleGroupThreadsRoute(
 
   const id = parts[2] ? decodeURIComponent(parts[2]) : ''
 
-  if (req.method === 'POST' && parts.length === 4 && parts[3] === 'messages') {
-    await handlePostMessage(req, res, id)
-    return true
-  }
-
   if (req.method === 'POST' && parts.length === 4 && parts[3] === 'runs') {
     await handleStartRun(req, res, id)
     return true
@@ -494,7 +202,7 @@ export async function handleGroupThreadsRoute(
   }
 
   if (req.method === 'POST' && parts.length === 6 && parts[3] === 'turns' && parts[5] === 'cancel') {
-    await handleCancel(res, id, decodeURIComponent(parts[4]), req)
+    await handleCancel(res, id, req)
     return true
   }
 
