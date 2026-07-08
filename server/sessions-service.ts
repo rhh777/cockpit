@@ -40,13 +40,16 @@ export async function loadSessionDetail(
     /* cockpit 自建 thread 无原始文件 */
   }
 
+  // updatedAt 同列表口径:原生 mtime 与 followups mtime 取较新者(docs/12 G4)。
+  const followupMtime = followups.length > 0 ? threadStore.followupsMtimeMs(source, id) : null
+  const updatedMs = Math.max(st.mtimeMs, followupMtime ?? 0)
   const summary: SessionSummary = {
     id,
     source,
     title: '',
     cwd: native.summaryPatch.cwd ?? null,
     startedAt: native.summaryPatch.startedAt ?? new Date(st.mtimeMs).toISOString(),
-    updatedAt: new Date(st.mtimeMs).toISOString(),
+    updatedAt: new Date(updatedMs).toISOString(),
     messageCount: native.summaryPatch.messageCount ?? null,
     filePath,
     fileMtimeMs: st.mtimeMs,
@@ -70,11 +73,19 @@ export async function loadSessionDetail(
   }
 }
 
-// 列表:registry 出摘要 + threadStore 回填 hasFollowups。
+// 列表:registry 出摘要 + threadStore 回填 hasFollowups / updatedAt。
 export async function listSessions(): Promise<SessionSummary[]> {
   const summaries = await sessionRegistry.discoverAll()
   for (const s of summaries) {
     s.hasFollowups = threadStore.hasFollowups(s.source, s.id)
+    // updatedAt 取原生 mtime 与 followups mtime 的较新者,让 cockpit 活动也能
+    // 把 session 顶到「今天」分组(docs/12 G4)。
+    if (s.hasFollowups) {
+      const fm = threadStore.followupsMtimeMs(s.source, s.id)
+      if (fm != null && fm > new Date(s.updatedAt).getTime()) {
+        s.updatedAt = new Date(fm).toISOString()
+      }
+    }
   }
   return summaries
 }

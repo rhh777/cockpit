@@ -63,6 +63,16 @@ export const threadStore = {
     }
   },
 
+  /** followups.jsonl 的 mtime;无 follow-up 时 null。用于列表 updatedAt 感知 cockpit 活动(docs/12 G4)。 */
+  followupsMtimeMs(source: Source, id: string): number | null {
+    try {
+      const st = fs.statSync(followupsFile(source, id))
+      return st.size > 0 ? st.mtimeMs : null
+    } catch {
+      return null
+    }
+  },
+
   async readFollowups(source: Source, id: string): Promise<EventEnvelope[]> {
     const file = followupsFile(source, id)
     if (!fs.existsSync(file)) return []

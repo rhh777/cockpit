@@ -25,7 +25,7 @@
 | G1 | 资源 | `RunHandle.replay` 无上限,含全部 delta,重连全量重放 | 中 | 已完成 |
 | G2 | 并发 | `startGroupTurn` 互斥检查与登记之间隔多个 await,有竞态窗口 | 低 | 已完成 |
 | G3 | 数据完整性 | native resume 走自动重试,可能在原生历史里写入重复 user turn | 中 | 已完成 |
-| G4 | 体验 | 列表 `updatedAt` 只取原生 mtime,follow-up 活动不影响排序/分组 | 低 | 未开始 |
+| G4 | 体验 | 列表 `updatedAt` 只取原生 mtime,follow-up 活动不影响排序/分组 | 低 | 已完成 |
 
 ## 条目详情
 
@@ -149,6 +149,7 @@
 
 - **现象**:`sessions-service.ts` 的 `updatedAt` 只取原生文件 mtime;刚聊完 follow-up 的 session 不会浮到列表「今天」。`hasFollowups` 有回填,时间没有。
 - **修复方向**:`updatedAt = max(原生 mtime, followups.jsonl mtime)`,列表与详情同源。
+- **修复记录(2026-07-08)**:threadStore 新增 `followupsMtimeMs()`;`listSessions` 与 `loadSessionDetail` 的 `updatedAt` 都取 `max(原生 mtime, followups mtime)`。
 
 ## 建议修复顺序
 
@@ -173,3 +174,4 @@
 | 2026-07-08 | F3 | 已完成 | run 结束时(streams 清空)做一次 changes 对齐,补回丢弃窗口内的文件增长 |
 | 2026-07-08 | G2 | 已完成 | startGroupTurn 互斥占位改为 await 前同步执行,失败回滚 |
 | 2026-07-08 | G3 | 已完成 | claude resumeNative 禁用自动重试,防止原生历史重复 user turn |
+| 2026-07-08 | G4 | 已完成 | updatedAt 取原生与 followups mtime 较新者,列表/详情同口径 |
