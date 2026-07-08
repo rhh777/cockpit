@@ -363,15 +363,22 @@ export function permissionUpdatesForApproval(
   operation: Operation,
   blockedPath?: string,
   suggestions?: PermissionUpdate[],
+  // 'always' 才追加 session 级 allow {toolName} 规则(本 run 内该工具不再询问);
+  // 'once' 只补目录与 SDK suggestions,下次同工具调用仍会进 canUseTool 审批(docs/12 C2)。
+  scope: 'once' | 'always' = 'always',
 ): PermissionUpdate[] | undefined {
-  const updates: PermissionUpdate[] = [...(suggestions ?? [])]
+  const updates: PermissionUpdate[] = [
+    ...(suggestions ?? []).filter(
+      (update) => scope === 'always' || update.type !== 'addRules' || update.behavior !== 'allow',
+    ),
+  ]
   const hasAllowRule = updates.some(
     (update) =>
       update.type === 'addRules' &&
       update.behavior === 'allow' &&
       update.rules.some((rule) => rule.toolName === toolName),
   )
-  if (!hasAllowRule) {
+  if (scope === 'always' && !hasAllowRule) {
     updates.push({
       type: 'addRules',
       behavior: 'allow',
@@ -435,6 +442,7 @@ export function claudeAllowPermissionResult(
   toolInput: Record<string, unknown>,
   operation: Operation,
   options: { toolUseID?: string; blockedPath?: string; suggestions?: PermissionUpdate[] },
+  scope: 'once' | 'always' = 'always',
 ) {
   return {
     behavior: 'allow' as const,
@@ -443,7 +451,7 @@ export function claudeAllowPermissionResult(
     updatedInput: toolInput,
     toolUseID: options.toolUseID,
     decisionClassification: 'user_temporary' as const,
-    updatedPermissions: permissionUpdatesForApproval(toolName, operation, options.blockedPath, options.suggestions),
+    updatedPermissions: permissionUpdatesForApproval(toolName, operation, options.blockedPath, options.suggestions, scope),
   }
 }
 
@@ -549,18 +557,11 @@ async function* runClaudeSdk(input: AgentRunInput): AsyncGenerator<NormalizedEve
   const canUseTool: CanUseTool = async (toolName, toolInput, options) => {
     const operation = claudeToolOperation(toolName, toolInput)
     if (!operation) {
-      const status = await input.requestApproval!(
-        { kind: 'shell', command: `${toolName} ${JSON.stringify(toolInput)}`, cwd: input.cwd },
-        options.title ?? options.decisionReason,
-      )
-      return status === 'approved'
-        ? claudeAllowPermissionResult(
-            toolName,
-            toolInput,
-            { kind: 'shell', command: `${toolName} ${JSON.stringify(toolInput)}`, cwd: input.cwd },
-            options,
-          )
-        : { behavior: 'deny', message: 'Rejected by user', toolUseID: options.toolUseID, decisionClassification: 'user_reject' }
+      const fallbackOp = { kind: 'shell' as const, command: `${toolName} ${JSON.stringify(toolInput)}`, cwd: input.cwd }
+      const status = await input.requestApproval!(fallbackOp, options.title ?? options.decisionReason)
+      return status === 'rejected'
+        ? { behavior: 'deny', message: 'Rejected by user', toolUseID: options.toolUseID, decisionClassification: 'user_reject' }
+        : claudeAllowPermissionResult(toolName, toolInput, fallbackOp, options, status === 'approved_always' ? 'always' : 'once')
     }
     if (isAutoAllowedClaudeRead(operation)) {
       return claudeAllowPermissionResult(toolName, toolInput, operation, options)
@@ -569,9 +570,9 @@ async function* runClaudeSdk(input: AgentRunInput): AsyncGenerator<NormalizedEve
       operation,
       options.title ?? options.description ?? options.decisionReason,
     )
-    return status === 'approved'
-      ? claudeAllowPermissionResult(toolName, toolInput, operation, options)
-      : { behavior: 'deny', message: 'Rejected by user', toolUseID: options.toolUseID, decisionClassification: 'user_reject' }
+    return status === 'rejected'
+      ? { behavior: 'deny', message: 'Rejected by user', toolUseID: options.toolUseID, decisionClassification: 'user_reject' }
+      : claudeAllowPermissionResult(toolName, toolInput, operation, options, status === 'approved_always' ? 'always' : 'once')
   }
 
   const q = query({

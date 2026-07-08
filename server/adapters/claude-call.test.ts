@@ -70,6 +70,37 @@ test('permissionUpdatesForApproval grants session directory for writes', () => {
   })
 })
 
+test("permissionUpdatesForApproval scope 'once' 不下发 allow 规则,只补目录(docs/12 C2)", () => {
+  const updates = permissionUpdatesForApproval(
+    'Write',
+    { kind: 'file_write', path: '~/Downloads/claude-hello.md', action: 'create' },
+    undefined,
+    [
+      // SDK 建议的 allow 规则在 once 语义下也要被滤掉
+      {
+        type: 'addRules',
+        behavior: 'allow',
+        destination: 'session',
+        rules: [{ toolName: 'Write' }],
+      },
+    ],
+    'once',
+  )
+  assert.ok(updates)
+  assert.equal(
+    updates.some((u) => u.type === 'addRules' && u.behavior === 'allow'),
+    false,
+  )
+  assert.deepEqual(
+    updates.find((u) => u.type === 'addDirectories'),
+    {
+      type: 'addDirectories',
+      destination: 'session',
+      directories: [path.join(os.homedir(), 'Downloads')],
+    },
+  )
+})
+
 test('permissionUpdatesForApproval preserves SDK suggestions and adds shell target directories', () => {
   const updates = permissionUpdatesForApproval(
     'Bash',

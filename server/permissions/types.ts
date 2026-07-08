@@ -18,6 +18,12 @@ export type Operation =
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired'
 
+/** 审批决议(docs/12 C2):approved = 仅本次;approved_always = 本 run 内同类操作不再询问。 */
+export type ApprovalDecision = 'approved' | 'approved_always' | 'rejected'
+
+/** 「总是允许」的记忆范围,持久化在 ApprovalRequest 上供审计。 */
+export type ApprovalScope = 'once' | 'always'
+
 export interface ApprovalRequest {
   approvalId: string
   runId: string
@@ -31,6 +37,8 @@ export interface ApprovalRequest {
   createdAt: string
   decidedAt?: string
   reason?: string
+  /** status=approved 时的放行范围;缺省视为 once(兼容旧记录)。 */
+  decisionScope?: ApprovalScope
 }
 
 export type PolicyDecision =

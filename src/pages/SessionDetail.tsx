@@ -296,9 +296,15 @@ export function SessionDetail() {
   }, [])
 
   const decideApproval = useCallback(
-    async (approvalId: string, decision: 'approve' | 'reject') => {
+    // approve = 仅本次;approve-always = 本轮 run 内同类操作不再询问(docs/12 C2)。
+    async (approvalId: string, decision: 'approve' | 'approve-always' | 'reject') => {
       try {
-        const res = await fetch(`/api/approvals/${encodeURIComponent(approvalId)}/${decision}`, { method: 'POST' })
+        const action = decision === 'reject' ? 'reject' : 'approve'
+        const res = await fetch(`/api/approvals/${encodeURIComponent(approvalId)}/${action}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scope: decision === 'approve-always' ? 'always' : 'once' }),
+        })
         if (!res.ok) throw new Error(`${res.status}`)
         resolveApprovalInUi(approvalId)
       } catch (e) {
@@ -1081,9 +1087,16 @@ export function SessionDetail() {
                         <Icon name="close" size={14} />
                         拒绝
                       </button>
+                      <button
+                        title="本轮运行内同类操作不再询问"
+                        onClick={() => decideApproval(approval.approvalId, 'approve-always')}
+                      >
+                        <Icon name="check" size={14} />
+                        总是允许
+                      </button>
                       <button className="primary" onClick={() => decideApproval(approval.approvalId, 'approve')}>
                         <Icon name="check" size={14} />
-                        允许
+                        允许一次
                       </button>
                     </div>
                   </div>

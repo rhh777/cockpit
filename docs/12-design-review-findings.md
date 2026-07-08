@@ -13,7 +13,7 @@
 | A2 | 文档失真 | docs/03「当前不做」仍称不允许写盘/无审批层 | 高 | 已完成 |
 | B1 | 架构冗余 | legacy `/messages` 三条路径与 run-registry 双实现,前端已不调用 | 高 | 已完成 |
 | C1 | 安全 | 流式 delta 绕过 redactSecrets,实时回显未脱敏 | 高 | 不修复(已文档化) |
-| C2 | 安全 | 审批通过即 session 级放行整个工具(如所有 Bash) | 中 | 未开始 |
+| C2 | 安全 | 审批通过即 session 级放行整个工具(如所有 Bash) | 中 | 已完成 |
 | C3 | 安全 | 降噪路径(node_modules/dist)与安全路径(.env/.ssh)混用同一黑名单 | 中 | 已完成 |
 | D1 | 扩展性 | server 侧多处硬编码 agent 名与能力判断,违反 docs/01 扩展点约定 | 中 | 已完成 |
 | E1 | 序列化 | 群聊上下文在 run-registry 手搓 prompt,再被 serializeForAgent 二次包装 | 中 | 已完成 |
@@ -72,6 +72,14 @@
 
 - **现象**:`server/adapters/claude-call.ts permissionUpdatesForApproval` 在批准后追加 `addRules: {toolName}` 的 session 级 allow——批准一次 `Bash(ls)` 等于本 session 放行所有 Bash。代码中无注释说明这是有意取舍。
 - **修复方向**:要么改为带具体 rule content 的精确放行(如 `Bash(ls:*)`),要么保持现状但在代码与 docs/09 写明「批准即 session 级放行该工具」是有意的产品决策。
+- **决策(2026-07-08,用户确认)**:对齐 Claude Code / Codex 的交互——审批卡提供「允许一次 / 总是允许 / 拒绝」三个选项,把放行范围的决定权交给用户。
+- **修复记录(2026-07-08)**:
+  - 决议三态 `ApprovalDecision = approved | approved_always | rejected` 贯通 permissions/types → approvals route(body.scope)→ approval-store(持久化 decisionScope)→ run-registry waiter → adapter `requestApproval` 返回值;
+  - 「总是允许」= 本 run 内同类操作(按 `Operation.kind`)不再询问:`RunHandle.alwaysGrantedKinds` 记忆,后续直接放行不建卡;不跨 run/session;
+  - Claude SDK:once 不下发 blanket allow 规则(SDK suggestions 的 allow 也滤掉),只补 addDirectories;always 保持原行为;
+  - Codex:新协议 accept/decline 不变(重复询问由 cockpit 记忆拦截);legacy 协议 always 映射 `approved_for_session`;
+  - 前端审批卡三按钮(拒绝 / 总是允许 / 允许一次,允许一次为主按钮);SSE `approval_resolved` 对外仍归一 approved/rejected,scope 进 timeline meta;
+  - docs/09 同步语义;新增 permissionUpdatesForApproval scope='once' 单测。
 
 ### C3 · 降噪与安全混用一个黑名单(安全,中)
 
@@ -200,3 +208,4 @@
 | 2026-07-08 | D1 | 已完成 | agent 显示名/审批能力/原生来源反查收口到 ReviewAgent + registry;前端 sessionAgentOf 收进 lib/agents |
 | 2026-07-08 | E1 | 已完成 | 群聊上下文构建移入 serialize 边界(meta:group_context + 专属模板),消除 prompt 套 prompt |
 | 2026-07-08 | F1 | 部分完成 | 原生解析按 (mtime,size) 缓存(LRU 8);byte-offset 增量留待单独会话(设计约束已记录) |
+| 2026-07-08 | C2 | 已完成 | 审批卡改为「允许一次/总是允许/拒绝」三态,always 只在本 run 内按操作类别记忆 |

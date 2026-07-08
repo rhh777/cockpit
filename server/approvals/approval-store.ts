@@ -4,7 +4,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { COCKPIT_ROOT } from '../config'
 import type { AgentName, Source } from '../loaders/types'
-import type { ApprovalRequest, ApprovalStatus, Operation } from '../permissions/types'
+import type { ApprovalRequest, ApprovalScope, ApprovalStatus, Operation } from '../permissions/types'
 
 const APPROVALS_ROOT = path.join(COCKPIT_ROOT, 'approvals')
 
@@ -74,13 +74,19 @@ export const approvalStore = {
     return approvals.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   },
 
-  async decide(id: string, status: Extract<ApprovalStatus, 'approved' | 'rejected'>): Promise<ApprovalRequest | null> {
+  async decide(
+    id: string,
+    status: Extract<ApprovalStatus, 'approved' | 'rejected'>,
+    scope: ApprovalScope = 'once',
+  ): Promise<ApprovalRequest | null> {
     const existing = await this.read(id)
     if (!existing) return null
+    const pending = existing.status === 'pending'
     const next: ApprovalRequest = {
       ...existing,
-      status: existing.status === 'pending' ? status : existing.status,
-      decidedAt: existing.status === 'pending' ? new Date().toISOString() : existing.decidedAt,
+      status: pending ? status : existing.status,
+      decidedAt: pending ? new Date().toISOString() : existing.decidedAt,
+      ...(pending && status === 'approved' ? { decisionScope: scope } : {}),
     }
     await writeApproval(next)
     return next

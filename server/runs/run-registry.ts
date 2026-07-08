@@ -18,7 +18,7 @@ import { translateNotification } from '../adapters/codex-app-server'
 import { codexRuntimeManager, type CodexRuntimeLease } from '../adapters/codex-runtime-manager'
 import type { NativeWriteMode } from '../adapters/types'
 import { approvalStore } from '../approvals/approval-store'
-import type { ApprovalRequest, Operation, RunPermissions } from '../permissions/types'
+import type { ApprovalDecision, ApprovalRequest, Operation, RunPermissions } from '../permissions/types'
 
 const CODEX_CONTINUATION_INTERRUPT_TIMEOUT_MS = 5_000
 
@@ -132,6 +132,8 @@ class RunHandle {
   readonly controller = new AbortController()
   readonly subscribers = new Map<string, Subscriber>()
   readonly replay: RunStreamMessage[] = []
+  // 「总是允许」记忆(docs/12 C2):用户选 approved_always 后,本 run 内同类操作不再弹卡。
+  readonly alwaysGrantedKinds = new Set<Operation['kind']>()
   private terminal: RunStatus | null = null
 
   constructor(public record: RunRecord) {}
@@ -287,7 +289,7 @@ function overallGroupStatus(statuses: RunStatus[]): 'completed' | 'partial' | 'f
 class RunRegistry {
   private runs = new Map<string, RunHandle>()
   private groupTurns = new Map<string, ActiveGroupTurn>()
-  private approvalWaiters = new Map<string, (status: 'approved' | 'rejected') => void>()
+  private approvalWaiters = new Map<string, (status: ApprovalDecision) => void>()
   private initialized = false
 
   async init() {
@@ -586,7 +588,7 @@ class RunRegistry {
     return true
   }
 
-  resolveApproval(approvalId: string, status: 'approved' | 'rejected'): boolean {
+  resolveApproval(approvalId: string, status: ApprovalDecision): boolean {
     const waiter = this.approvalWaiters.get(approvalId)
     if (!waiter) return false
     this.approvalWaiters.delete(approvalId)
@@ -606,8 +608,10 @@ class RunRegistry {
       persist: (env: EventEnvelope) => Promise<unknown>
       stream: (env: EventEnvelope) => void
     },
-  ): Promise<'approved' | 'rejected'> {
+  ): Promise<ApprovalDecision> {
     const { runId, turnId } = handle.record
+    // 本 run 内该类操作已被「总是允许」→ 直接放行,不再建卡(docs/12 C2)。
+    if (handle.alwaysGrantedKinds.has(input.operation.kind)) return 'approved'
     const approval = await approvalStore.create({
       runId,
       turnId,
@@ -640,27 +644,32 @@ class RunRegistry {
     emitPhase(handle, 'waiting_approval')
     handle.write({ kind: 'approval_required', approval })
 
-    const status = await new Promise<'approved' | 'rejected'>((resolve) => {
+    const status = await new Promise<ApprovalDecision>((resolve) => {
       const signal = handle.controller.signal
       const onAbort = () => {
         this.approvalWaiters.delete(approval.approvalId)
         void approvalStore.expire(approval.approvalId)
         resolve('rejected')
       }
-      const wrappedResolve = (value: 'approved' | 'rejected') => {
+      const wrappedResolve = (value: ApprovalDecision) => {
         signal.removeEventListener('abort', onAbort)
         resolve(value)
       }
       this.approvalWaiters.set(approval.approvalId, wrappedResolve)
       signal.addEventListener('abort', onAbort, { once: true })
     })
+    if (status === 'approved_always') handle.alwaysGrantedKinds.add(input.operation.kind)
 
+    // 对外(SSE/落盘 meta)归一为 approved/rejected,scope 单独携带供审计与 UI 展示。
+    const uiStatus = status === 'rejected' ? ('rejected' as const) : ('approved' as const)
+    const scope = status === 'approved_always' ? 'always' : 'once'
+    const resolvedValue = { approvalId: approval.approvalId, status: uiStatus, scope }
     const resolved = input.source === 'cockpit' || input.groupThreadId
       ? wrapGroup(
           {
             type: 'meta',
             key: 'approval_resolved',
-            value: { approvalId: approval.approvalId, status },
+            value: resolvedValue,
             ts: new Date().toISOString(),
           },
           turnId,
@@ -669,12 +678,12 @@ class RunRegistry {
       : wrap(input.source ?? 'cockpit', {
           type: 'meta',
           key: 'approval_resolved',
-          value: { approvalId: approval.approvalId, status },
+          value: resolvedValue,
           ts: new Date().toISOString(),
         }, turnId, runId)
     await input.persist(resolved)
     input.stream(resolved)
-    handle.write({ kind: 'approval_resolved', approvalId: approval.approvalId, status })
+    handle.write({ kind: 'approval_resolved', approvalId: approval.approvalId, status: uiStatus })
     return status
   }
 

@@ -1,5 +1,5 @@
 import type { AgentName, EventEnvelope, NormalizedEvent } from '../loaders/types'
-import type { Operation, RunPermissions } from '../permissions/types'
+import type { ApprovalDecision, Operation, RunPermissions } from '../permissions/types'
 
 // 新 agent 只能通过实现 ReviewAgent 扩展,不在 UI/server 硬编码二选一(不变量 9/10)。
 // 名字沿用 ReviewAgent(review 只是其中一个快捷场景)。
@@ -24,8 +24,9 @@ export interface AgentRunInput {
   /** 推理强度:claude 走 `--effort <v>`,codex 走 `-c model_reasoning_effort="<v>"`。
    *  实测可用值:claude {low,medium,high,xhigh,max};codex {low,medium,high,xhigh}。 */
   effort?: string
-  /** Runtime 发起真实副作用操作时的审批回调。没有回调的 adapter 必须保持只读/安全模式。 */
-  requestApproval?: (operation: Operation, reason?: string) => Promise<'approved' | 'rejected'>
+  /** Runtime 发起真实副作用操作时的审批回调。没有回调的 adapter 必须保持只读/安全模式。
+   *  approved = 仅本次;approved_always = 本 run 内同类操作不再询问(docs/12 C2)。 */
+  requestApproval?: (operation: Operation, reason?: string) => Promise<ApprovalDecision>
   /**
    * Phase 2 opt-in:用户已知悉「本 thread 会通过官方 runtime 产生原生 session 副作用」时,
    * adapter 可以在 provider-thread-link store 里查/建对应 thread,后续轮复用。

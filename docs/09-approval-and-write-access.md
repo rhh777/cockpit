@@ -186,14 +186,21 @@ interface ApprovalRequest {
 ```txt
 GET  /api/approvals?status=pending
 GET  /api/approvals/:approvalId
-POST /api/approvals/:approvalId/approve
+POST /api/approvals/:approvalId/approve   # body: { scope?: 'once' | 'always' },缺省 once
 POST /api/approvals/:approvalId/reject
 ```
+
+**放行范围(docs/12 C2,与 Claude Code / Codex 的交互对齐)**:
+
+- `once`(允许一次,默认):只放行本次操作;同工具/同类操作下次仍会弹审批卡。
+  Claude SDK 路径不下发 blanket `addRules: allow {toolName}`(SDK suggestions 里的 allow 规则也滤掉),只补操作所需的 `addDirectories`。
+- `always`(总是允许):**本 run 内**同类操作(按 `Operation.kind`)不再询问——run-registry 在 `RunHandle.alwaysGrantedKinds` 记忆,后续同类操作直接放行不建卡;Claude SDK 额外下发 session 级 allow 规则,Codex legacy 协议映射 `approved_for_session`。不跨 run、不跨 session 持久化。
 
 Run stream 消息:
 
 ```ts
 { kind: 'approval_required', approval: ApprovalRequest }
+// status 对外归一为 approved/rejected;scope 在 timeline meta 的 value 里携带('once' | 'always')
 { kind: 'approval_resolved', approvalId: string, status: 'approved' | 'rejected' }
 ```
 

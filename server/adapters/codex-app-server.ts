@@ -13,7 +13,7 @@ import readline from 'node:readline'
 import { randomUUID } from 'node:crypto'
 import type { Readable, Writable } from 'node:stream'
 import type { NormalizedEvent } from '../loaders/types'
-import type { Operation } from '../permissions/types'
+import type { Operation, ApprovalDecision} from '../permissions/types'
 import { resolveCodexCommand } from './codex-command'
 
 export interface JsonRpcRequest {
@@ -47,7 +47,7 @@ export type CodexApprovalResponse =
 export interface CodexApprovalMapping {
   operation: Operation
   reason?: string
-  responseFor(status: 'approved' | 'rejected'): CodexApprovalResponse
+  responseFor(status: ApprovalDecision): CodexApprovalResponse
 }
 
 type Pending = {
@@ -215,7 +215,7 @@ export function mapCodexApprovalRequest(method: string, params: any): CodexAppro
         operation: { kind: 'shell', command, cwd: maybeString(params?.cwd) ?? null },
         reason: maybeString(params?.reason),
         responseFor(status) {
-          return { result: { decision: status === 'approved' ? 'accept' : 'decline' } }
+          return { result: { decision: status === 'rejected' ? 'decline' : 'accept' } }
         },
       }
     }
@@ -230,7 +230,7 @@ export function mapCodexApprovalRequest(method: string, params: any): CodexAppro
         },
         reason: maybeString(params?.reason),
         responseFor(status) {
-          return { result: { decision: status === 'approved' ? 'accept' : 'decline' } }
+          return { result: { decision: status === 'rejected' ? 'decline' : 'accept' } }
         },
       }
     }
@@ -258,7 +258,13 @@ export function mapCodexApprovalRequest(method: string, params: any): CodexAppro
         operation: { kind: 'shell', command, cwd: maybeString(params?.cwd) ?? null },
         reason: maybeString(params?.reason),
         responseFor(status) {
-          return { result: { decision: status === 'approved' ? 'approved' : 'denied' } }
+          // legacy ReviewDecision 支持 approved_for_session:「总是允许」让官方 runtime 本 session 内不再问。
+          return {
+            result: {
+              decision:
+                status === 'rejected' ? 'denied' : status === 'approved_always' ? 'approved_for_session' : 'approved',
+            },
+          }
         },
       }
     }
@@ -270,7 +276,13 @@ export function mapCodexApprovalRequest(method: string, params: any): CodexAppro
         operation: { kind: 'file_write', path, action: summarizeFileChange(change) },
         reason: maybeString(params?.reason),
         responseFor(status) {
-          return { result: { decision: status === 'approved' ? 'approved' : 'denied' } }
+          // legacy ReviewDecision 支持 approved_for_session:「总是允许」让官方 runtime 本 session 内不再问。
+          return {
+            result: {
+              decision:
+                status === 'rejected' ? 'denied' : status === 'approved_always' ? 'approved_for_session' : 'approved',
+            },
+          }
         },
       }
     }
