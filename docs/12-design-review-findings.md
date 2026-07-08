@@ -23,7 +23,7 @@
 | F2 | 实时 | `tryWatch` 对尚不存在的文件返回 null 后永不重建 | 中 | 未开始 |
 | F3 | 实时 | 前端活跃 run 期间丢弃 session stream append,而非按 sourceEventId 去重 | 中 | 已完成 |
 | G1 | 资源 | `RunHandle.replay` 无上限,含全部 delta,重连全量重放 | 中 | 已完成 |
-| G2 | 并发 | `startGroupTurn` 互斥检查与登记之间隔多个 await,有竞态窗口 | 低 | 未开始 |
+| G2 | 并发 | `startGroupTurn` 互斥检查与登记之间隔多个 await,有竞态窗口 | 低 | 已完成 |
 | G3 | 数据完整性 | native resume 走自动重试,可能在原生历史里写入重复 user turn | 中 | 未开始 |
 | G4 | 体验 | 列表 `updatedAt` 只取原生 mtime,follow-up 活动不影响排序/分组 | 低 | 未开始 |
 
@@ -137,6 +137,7 @@
 
 - **现象**:`groupTurns.has(input.id)` 检查与 `groupTurns.set` 之间隔多个 await,并发两次唤醒可同时通过检查。
 - **修复方向**:检查通过后立即同步占位(再做 async 工作,失败时回滚),或引入 per-thread 互斥队列。
+- **修复记录(2026-07-08)**:`has()` 检查 + `pending` 占位在任何 await 之前同步完成;主体包 try/catch,失败回滚占位;成功后被真实 ActiveGroupTurn 覆盖,完成路径仍由 Promise.all().finally 删除。
 
 ### G3 · native resume 自动重试可能重复写原生历史(数据完整性,中)
 
@@ -169,3 +170,4 @@
 | 2026-07-08 | E2 | 已完成 | run-registry 按 turnId 剔除当前轮;serialize 移除文本相等去重;contextEvents 契约改为不含当前请求 |
 | 2026-07-08 | G1 | 已完成 | RunHandle.replay 同 streamId 相邻 delta 合并;新增 3 个单测(97 全绿) |
 | 2026-07-08 | F3 | 已完成 | run 结束时(streams 清空)做一次 changes 对齐,补回丢弃窗口内的文件增长 |
+| 2026-07-08 | G2 | 已完成 | startGroupTurn 互斥占位改为 await 前同步执行,失败回滚 |

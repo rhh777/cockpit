@@ -452,76 +452,86 @@ class RunRegistry {
     turnStart?: EventEnvelope
   }> {
     await this.init()
-    const state = await groupThreadStore.readState(input.id)
-    if (!state) throw new Error('group thread not found')
-    if (input.targetAgents.length > 0 && this.groupTurns.has(input.id)) {
-      throw new Error('group turn already running')
+    const wake = input.targetAgents.length > 0
+    // 互斥必须在任何 await 之前同步占位,否则并发两次唤醒都能通过 has() 检查(docs/12 G2)。
+    // 失败路径在 catch 里回滚占位;成功后被真实 ActiveGroupTurn 覆盖。
+    if (wake) {
+      if (this.groupTurns.has(input.id)) throw new Error('group turn already running')
+      this.groupTurns.set(input.id, { groupTurnId: 'pending', baseEventSeq: -1, runIds: [] })
     }
+    try {
+      const state = await groupThreadStore.readState(input.id)
+      if (!state) throw new Error('group thread not found')
 
-    const groupTurnId = `turn_${randomUUID()}`
-    const now = new Date().toISOString()
-    const userEnvelope = wrapGroup(
-      {
-        type: 'user_text',
-        text: input.text,
-        ts: now,
-        targetAgents: input.targetAgents,
-        mentions: input.targetAgents,
-        ...(input.attachments?.length ? { attachments: input.attachments } : {}),
-      },
-      groupTurnId,
-    )
-    const baseEventSeq = await groupThreadStore.appendEvent(input.id, userEnvelope)
-    if (input.targetAgents.length === 0) {
-      return { groupTurnId, baseEventSeq, records: [], userEnvelope }
-    }
+      const groupTurnId = `turn_${randomUUID()}`
+      const now = new Date().toISOString()
+      const userEnvelope = wrapGroup(
+        {
+          type: 'user_text',
+          text: input.text,
+          ts: now,
+          targetAgents: input.targetAgents,
+          mentions: input.targetAgents,
+          ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+        },
+        groupTurnId,
+      )
+      const baseEventSeq = await groupThreadStore.appendEvent(input.id, userEnvelope)
+      if (!wake) {
+        return { groupTurnId, baseEventSeq, records: [], userEnvelope }
+      }
 
-    const records: RunRecord[] = input.targetAgents.map((agent) => ({
-      runId: `run_${randomUUID()}`,
-      kind: 'group-member',
-      status: 'running',
-      groupThreadId: input.id,
-      turnId: groupTurnId,
-      agent,
-      permissions: input.permissions,
-      startedAt: now,
-    }))
-    for (const record of records) await runStore.append(record)
+      const records: RunRecord[] = input.targetAgents.map((agent) => ({
+        runId: `run_${randomUUID()}`,
+        kind: 'group-member',
+        status: 'running',
+        groupThreadId: input.id,
+        turnId: groupTurnId,
+        agent,
+        permissions: input.permissions,
+        startedAt: now,
+      }))
+      for (const record of records) await runStore.append(record)
 
-    const runsMeta = records.map((r) => ({ runId: r.runId, agent: r.agent, turnId: groupTurnId, baseEventSeq, status: 'running' }))
-    const turnStart = wrapGroup(
-      {
-        type: 'meta',
-        key: 'turn_start',
-        value: { groupTurnId, baseEventSeq, targetAgents: input.targetAgents, runs: runsMeta, permissions: input.permissions },
-        ts: now,
-      },
-      groupTurnId,
-    )
-    await groupThreadStore.appendEvent(input.id, turnStart)
+      const runsMeta = records.map((r) => ({ runId: r.runId, agent: r.agent, turnId: groupTurnId, baseEventSeq, status: 'running' }))
+      const turnStart = wrapGroup(
+        {
+          type: 'meta',
+          key: 'turn_start',
+          value: { groupTurnId, baseEventSeq, targetAgents: input.targetAgents, runs: runsMeta, permissions: input.permissions },
+          ts: now,
+        },
+        groupTurnId,
+      )
+      await groupThreadStore.appendEvent(input.id, turnStart)
 
-    const handles = records.map((record) => {
-      const handle = new RunHandle(record)
-      handle.write({ kind: 'meta', groupTurnId, baseEventSeq, runs: records.map(({ agent, runId }) => ({ agent, runId })) })
-      emitPhase(handle, 'queued')
-      handle.write({ kind: 'event', groupTurnId, envelope: userEnvelope })
-      handle.write({ kind: 'event', groupTurnId, envelope: turnStart })
-      this.runs.set(record.runId, handle)
-      return handle
-    })
-    this.groupTurns.set(input.id, { groupTurnId, baseEventSeq, runIds: records.map((r) => r.runId) })
-
-    const transcript = (await groupThreadStore.readTranscript(input.id)).slice(0, baseEventSeq)
-    const summary = await groupThreadStore.readSummary(input.id)
-    void Promise.all(handles.map((h) => this.executeGroupMember(h, input, state.cwd, transcript, summary, baseEventSeq)))
-      .finally(() => {
-        const statuses = handles.map((h) => h.record.status)
-        const status = overallGroupStatus(statuses)
-        for (const handle of handles) handle.write({ kind: 'done', groupTurnId, status })
-        this.groupTurns.delete(input.id)
+      const handles = records.map((record) => {
+        const handle = new RunHandle(record)
+        handle.write({ kind: 'meta', groupTurnId, baseEventSeq, runs: records.map(({ agent, runId }) => ({ agent, runId })) })
+        emitPhase(handle, 'queued')
+        handle.write({ kind: 'event', groupTurnId, envelope: userEnvelope })
+        handle.write({ kind: 'event', groupTurnId, envelope: turnStart })
+        this.runs.set(record.runId, handle)
+        return handle
       })
+      this.groupTurns.set(input.id, { groupTurnId, baseEventSeq, runIds: records.map((r) => r.runId) })
 
-    return { groupTurnId, baseEventSeq, records, userEnvelope, turnStart }
+      const transcript = (await groupThreadStore.readTranscript(input.id)).slice(0, baseEventSeq)
+      const summary = await groupThreadStore.readSummary(input.id)
+      void Promise.all(handles.map((h) => this.executeGroupMember(h, input, state.cwd, transcript, summary, baseEventSeq)))
+        .finally(() => {
+          const statuses = handles.map((h) => h.record.status)
+          const status = overallGroupStatus(statuses)
+          for (const handle of handles) handle.write({ kind: 'done', groupTurnId, status })
+          this.groupTurns.delete(input.id)
+        })
+
+      return { groupTurnId, baseEventSeq, records, userEnvelope, turnStart }
+    } catch (err) {
+      // 只回滚仍是占位/本次写入的登记;runs 已经起来的情况不会走到这里。
+      if (wake) this.groupTurns.delete(input.id)
+      throw err
+    }
   }
 
   async startNativeResume(input: NativeStartInput): Promise<{ record: RunRecord; userEnvelope: EventEnvelope }> {
