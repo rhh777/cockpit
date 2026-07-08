@@ -21,7 +21,7 @@
 | E3 | 序列化 | `maxChars: 24000` 写死,docs/01 承诺的「设置里可调」未接线 | 低 | 未开始 |
 | F1 | 实时 | watcher 每次变化全量重读重解析整个 session,追加密集时 O(N²) | 中 | 未开始 |
 | F2 | 实时 | `tryWatch` 对尚不存在的文件返回 null 后永不重建 | 中 | 未开始 |
-| F3 | 实时 | 前端活跃 run 期间丢弃 session stream append,而非按 sourceEventId 去重 | 中 | 未开始 |
+| F3 | 实时 | 前端活跃 run 期间丢弃 session stream append,而非按 sourceEventId 去重 | 中 | 已完成 |
 | G1 | 资源 | `RunHandle.replay` 无上限,含全部 delta,重连全量重放 | 中 | 已完成 |
 | G2 | 并发 | `startGroupTurn` 互斥检查与登记之间隔多个 await,有竞态窗口 | 低 | 未开始 |
 | G3 | 数据完整性 | native resume 走自动重试,可能在原生历史里写入重复 user turn | 中 | 未开始 |
@@ -121,6 +121,8 @@
 
 - **现象**:`SessionDetail.tsx` 在 `streamsRef.current.length > 0` 时直接丢弃 session stream 的 append;不变量 13 说的是「按 sourceEventId 去重」。丢弃窗口内原生文件若同时增长(用户在终端继续原生会话),事件不会补回,直到下次 reset/切页。
 - **修复方向**:恢复消费 + 按 `sourceEventId` 去重(seenIds 已存在);或 run 结束后做一次 changes 对齐。
+- **修复记录(2026-07-08)**:采用「run 结束后 changes 对齐」方案——run 期间的丢弃保留(有意:避免 reset 全量重拉与打字机 pacer / 流式中间态冲突),在 `streams.length > 0 → 0` 转换时调一次 `fetchChanges(eventsLen)`:reset/变短走全量 `resetFrom`,否则 `appendEnvelopes` 增量补回(sourceEventId 去重兜底重复)。guard 与订阅 effect 一致(autoRefresh/loading/error)。
+  - 验证:typecheck + 97 单测通过;preview 打开 session 详情页无 console 错误。streams 转换路径需真实 agent run 才能端到端触发,逻辑与既有 runPoll 兜底一致。
 
 ### G1 · RunHandle.replay 无上限(资源,中)
 
@@ -166,3 +168,4 @@
 | 2026-07-08 | C1 | 不修复(已文档化) | 用户确认接受现状;docs/01 §十 + sensitive.ts 头注释写明流式边界与重启条件 |
 | 2026-07-08 | E2 | 已完成 | run-registry 按 turnId 剔除当前轮;serialize 移除文本相等去重;contextEvents 契约改为不含当前请求 |
 | 2026-07-08 | G1 | 已完成 | RunHandle.replay 同 streamId 相邻 delta 合并;新增 3 个单测(97 全绿) |
+| 2026-07-08 | F3 | 已完成 | run 结束时(streams 清空)做一次 changes 对齐,补回丢弃窗口内的文件增长 |

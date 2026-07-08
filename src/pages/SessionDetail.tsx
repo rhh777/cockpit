@@ -723,6 +723,38 @@ export function SessionDetail() {
     }
   }, [source, id, autoRefresh, loading, error, resetFrom, appendEnvelopes])
 
+  // 活跃 run 期间上方 effect 会丢弃 session stream 的 append(避免 reset/打字机 pacer
+  // 与 run stream 冲突),但服务端游标照常前进,丢弃窗口内该 session 文件的其他增长
+  // (另一窗口的 follow-up、终端里的原生续写)不会再推。这里在「最后一个 run 结束」时
+  // 做一次 changes 对齐补回;已收过的事件靠 sourceEventId 去重(docs/12 F3,不变量 13)。
+  const hadStreamsRef = useRef(false)
+  useEffect(() => {
+    if (streams.length > 0) {
+      hadStreamsRef.current = true
+      return
+    }
+    if (!hadStreamsRef.current) return
+    hadStreamsRef.current = false
+    if (!source || !id || !autoRefresh || loading || error) return
+    let alive = true
+    fetchChanges(source, id, eventsLenRef.current)
+      .then(async (res) => {
+        if (!alive) return
+        if (res.reset || res.total < eventsLenRef.current) {
+          const d = await fetchSessionDetail(source, id)
+          if (alive) resetFrom(d)
+        } else if (res.changed && res.newEvents.length) {
+          appendEnvelopes(res.newEvents)
+        }
+      })
+      .catch(() => {
+        /* 静默:SSE/poll 恢复消费后会自然对齐 */
+      })
+    return () => {
+      alive = false
+    }
+  }, [streams.length, source, id, autoRefresh, loading, error, resetFrom, appendEnvelopes])
+
   // 发一条 follow-up,可能并行发到多个 agent(@-mentions)。
   const handleSend = useCallback(
     (
