@@ -21,6 +21,7 @@
 - Adapter 通过本机已安装并登录的 CLI 子进程运行,不接管账号、token 或网页登录态。
 - 生成过程通过 SSE 流式回显,同时落盘;完成、失败、取消都会追加 `turn_status`。
 - 默认只读运行:Codex 使用 read-only sandbox,Claude 限制写入/执行类工具,OpenCode 使用 `plan` agent,Cursor 使用 `ask` mode。
+- 权限是 run 级三档(ask / auto-safe / full-access),由用户在 composer 显式选择,不跨 run 继承;ask 档下写盘/shell 等操作由 agent runtime 发起审批请求,经 SSE 推给前端审批卡片(见 `docs/09-approval-and-write-access.md`)。
 - 序列化输入与 tool_result 落盘/回显前都会做敏感路径过滤。
 - OpenCode / Cursor 当前只作为 Cockpit follow-up agent,不作为原生 session 来源。
 
@@ -66,7 +67,8 @@
 - 不接管官方 CLI 账号凭证;模型请求由本机官方 CLI 自己处理。
 - 普通 follow-up 不写入原生 Claude/Codex 历史;写回历史必须显式选择 Native Resume。
 - 不扫描 OpenCode / Cursor 的原生历史或项目数据库;它们当前只作为可调用 adapter。
-- 不允许 follow-up agent 写盘;写权限与审批层留作后续扩展。
+- 不默认允许 follow-up agent 写盘;写权限必须由用户为该 run 显式选择权限档位,ask 档逐操作审批(docs/09)。diff 展示与回滚边界未实现。
+- 不做 prompt 语义预审批;审批只由 agent runtime 实际发起的 operation 触发。
 - 不做产物/补丁管理,review 输出目前仍是 timeline 中的 markdown。
 - 不做跨 session 全文搜索。
 
@@ -92,7 +94,7 @@
 | 方向 | 说明 |
 |---|---|
 | 原生 Handoff Phase 2+ | Codex app-server 复用与 Claude runtime thread 复用(见 docs/07 / docs/11) |
-| 写权限与审批层 | 允许 follow-up agent 修改文件,但必须有明确审批、diff 展示和回滚边界 |
+| 审批层增强 | 基础三档权限与逐操作审批已实现(docs/09);待做:网络/MCP 细粒度 policy 面板、审批时 diff 展示、回滚边界、Claude CLI hook 备份路径 |
 | 产物/补丁管理 | 把 patch、报告、导出文件等从普通 markdown 回复中结构化管理 |
 | 全文搜索 | 跨 Claude/Codex/cockpit 会话搜索标题、正文、工具调用和路径 |
 | 新 session 来源 | 接入 OpenCode / Cursor / Cline / Aider 等本地 agent 工具的历史格式 |

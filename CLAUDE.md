@@ -19,7 +19,7 @@ This file gives guidance to anyone working in this repository (Claude Code or ot
 - `electron/` — 桌面壳(Tray 常驻)
 - `__fixtures__/` — 脱敏的真实 JSONL 样本
 
-**后台运行(`docs/06-background-runs-design.md`)仍是设计稿,未实现**——切换 session 会 abort 当前 CLI 子进程。
+后台运行已实现(`server/runs/run-registry.ts`,设计见 `docs/06-background-runs-design.md`):agent run 由 RunRegistry 托管,切换 session 只断开订阅不 abort,切回可 attach 回既有 runId;只有显式 cancel 或服务端进程退出才终止。
 
 ## 动手前先读
 
@@ -28,8 +28,12 @@ This file gives guidance to anyone working in this repository (Claude Code or ot
 - `docs/03-roadmap.md` — 当前能力、边界与后续方向。
 - `docs/04-ui-design.md` — UI 视觉/交互规范。
 - `docs/05-group-chat-design.md` — 群聊模式(transcript.jsonl + summary.md,@mention 并行调度)。
-- `docs/06-background-runs-design.md` — 后台运行(未实现)。
+- `docs/06-background-runs-design.md` — 后台运行(RunRegistry / attach / cancel,已实现)。
 - `docs/07-native-continuation-and-handoff.md` — 原生会话延续、deep link 与 handoff bundle。
+- `docs/08-agent-adapters-design.md` — agent adapter 设计。
+- `docs/09-approval-and-write-access.md` — 权限档位与审批层。
+- `docs/10-agent-integration.md` / `docs/11-agent-runtime-latency-plan.md` — agent 接入与运行时延迟优化。
+- `docs/12-design-review-findings.md` — 设计评审问题清单与修复进度(动手修复前先看这里)。
 
 文档记录的是已定决策。
 
@@ -83,6 +87,7 @@ pnpm electron:build    # 打 macOS dmg
 | 单 session follow-up | `~/.cockpit/threads/<src>/<id>/{followups.jsonl, summary.md, context-state.json}` |
 | 群聊 | `~/.cockpit/group-threads/<id>/{transcript.jsonl, summary.md, state.json, attachments/}` |
 | Handoff | `~/.cockpit/handoffs/<id>/{manifest.json, *.md}` |
+| 后台运行 | `~/.cockpit/runs/index.jsonl`,native resume 影子日志 `~/.cockpit/runs/native-shadow/<src>/<id>/<runId>.jsonl` |
 | Provider thread 链接(Phase 2 opt-in) | `~/.cockpit/runtime-links/{codex,claude}.jsonl` |
 | discovery 缓存 | `~/.cockpit/cache/`(可删可重建) |
 

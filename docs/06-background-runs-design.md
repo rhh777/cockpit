@@ -1,12 +1,9 @@
 # 06 — 后台运行与可重连设计
 
-## 现状
-
-当前 agent run 绑定页面发起的 POST + SSE 连接。
-
-- 切换 session 会 abort 当前 CLI 子进程。
-- 返回 session 后只能读取已落盘事件。
-- 没有可重连的后台任务模型。
+> **状态:已实现**(`server/runs/run-registry.ts` + `run-store.ts` + `native-shadow-store.ts`,前端 `src/lib/sse.ts` 的 `startFollowupRun` / `attachRunStream` 等)。
+> 本文其余部分是当时的设计,与实现基本一致;差异处以代码为准并回改本文。
+>
+> 实现前的旧状态(供背景理解):agent run 曾绑定页面发起的 POST + SSE 连接,切换 session 会 abort 当前 CLI 子进程。该行为已被 RunRegistry 取代;旧 `/messages` 路由的去留见 `docs/12-design-review-findings.md` B1。
 
 ## 目标
 
@@ -104,7 +101,7 @@ GET    /api/sessions/:source/:id/runs?status=running  # 已实现
 # GET /api/group-threads/:id/runs 与 /api/handoffs/:handoffId/runs 尚未实现。
 ```
 
-启动 run 全部走独立的 start endpoints,`/messages` 只保留为 legacy 兜底:
+启动 run 全部走独立的 start endpoints(旧 `/messages` in-line SSE 路径已于 2026-07 删除,见 docs/12 B1):
 
 ```txt
 POST /api/sessions/:source/:id/runs        # follow-up run
