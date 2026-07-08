@@ -17,7 +17,7 @@
 | C3 | 安全 | 降噪路径(node_modules/dist)与安全路径(.env/.ssh)混用同一黑名单 | 中 | 未开始 |
 | D1 | 扩展性 | server 侧多处硬编码 agent 名与能力判断,违反 docs/01 扩展点约定 | 中 | 未开始 |
 | E1 | 序列化 | 群聊上下文在 run-registry 手搓 prompt,再被 serializeForAgent 二次包装 | 中 | 未开始 |
-| E2 | 序列化 | 「当前请求去重」靠文本相等,带附件必失效导致重复 | 中 | 未开始 |
+| E2 | 序列化 | 「当前请求去重」靠文本相等,带附件必失效导致重复 | 中 | 已完成 |
 | E3 | 序列化 | `maxChars: 24000` 写死,docs/01 承诺的「设置里可调」未接线 | 低 | 未开始 |
 | F1 | 实时 | watcher 每次变化全量重读重解析整个 session,追加密集时 O(N²) | 中 | 未开始 |
 | F2 | 实时 | `tryWatch` 对尚不存在的文件返回 null 后永不重建 | 中 | 未开始 |
@@ -95,6 +95,12 @@
 
 - **现象**:`serialize.ts` 用 `ev.text.trim() === currentText.trim()` 从 history 剔除当前消息;但 run-registry 传给 adapter 的 `text` 是 `withAttachments()` 拼过附件行的版本,而落盘 user_text 是原文——带附件时判断必然失败,当前请求出现两次,违反 docs/01 §九「当前触发消息只出现一次」。
 - **修复方向**:按 `turnId`(当前 run 的 turnId)或 sourceEventId 剔除,不比文本;`withAttachments` 的拼接挪到序列化内部统一处理。
+- **修复记录(2026-07-08)**:
+  - `run-registry.executeFollowup` 在构建 contextEvents 前按当前轮 `turnId` 剔除已落盘的 user_text / run_permissions;
+  - `serialize.ts` 移除文本相等去重,`AgentRunInput.contextEvents` 契约改为「不含当前请求」(types.ts 注释 + docs/01 §九);
+  - 群聊路径核实无此问题(`appendEvent` 返回 append 前 index,`slice(0, baseEventSeq)` 已排除当前消息);
+  - `withAttachments` 拼接保持原位:历史中已无当前消息,附件行只出现在 Current Request,重复问题结构性消除;
+  - serialize.test.ts 更新为新契约测试;typecheck + 94 单测通过。
 
 ### E3 · serialize maxChars 写死(序列化,低)
 
@@ -154,3 +160,4 @@
 | 2026-07-08 | A2 | 已完成 | docs/03 能力清单/当前不做/后续方向与 docs/09 及实现对齐 |
 | 2026-07-08 | B1 | 已完成 | 删除三条 legacy `/messages` 路由 + 前端死代码;文档/SVG 同步;typecheck + 94 单测 + dev 冒烟通过 |
 | 2026-07-08 | C1 | 不修复(已文档化) | 用户确认接受现状;docs/01 §十 + sensitive.ts 头注释写明流式边界与重启条件 |
+| 2026-07-08 | E2 | 已完成 | run-registry 按 turnId 剔除当前轮;serialize 移除文本相等去重;contextEvents 契约改为不含当前请求 |

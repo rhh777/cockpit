@@ -390,7 +390,7 @@ interface SerializeOptions {
 - tool_use 保留工具名 + 截断后的 input。
 - tool_result 按优先级保留:错误输出 > diff/patch > 测试失败 > 文件片段 > 普通命令输出。
 - 多 agent 历史必须加前缀:`[User said]`、`[Claude said]`、`[Codex said]`,避免 target agent 自代入。
-- 当前触发消息只出现一次,不要在 history 和 current request 中重复。
+- 当前触发消息只出现一次,不要在 history 和 current request 中重复。**执行方式**:`contextEvents` 的契约是"不含当前请求"——run-registry 在构建上下文时按当前轮 `turnId` 剔除已落盘的 user_text / run_permissions;serialize 层不做文本相等去重(带附件或重复消息会误判,docs/12 E2)。
 
 **超出 `maxChars` 时的截断顺序(重要,别把目标砍没了):**
 1. **钉住保留**:原始 session 的 `# User Goal`(首条 user prompt)+ `# Final Response`(原始 session 最后一条 assistant_text)+ `# Current Request`。这三块永不截断。

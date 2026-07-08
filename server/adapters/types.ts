@@ -7,7 +7,8 @@ import type { Operation, RunPermissions } from '../permissions/types'
 export interface AgentRunInput {
   /** 当前触发消息(本轮用户请求) */
   text: string
-  /** 完整合并上下文(原始 + 已有 follow-up),真实 adapter 用 serializeForAgent 处理 */
+  /** 历史上下文(原始 + 已有 follow-up),**不含当前请求**(调用方按 turnId 剔除当前轮,
+   *  docs/01 §九);真实 adapter 用 serializeForAgent 处理 */
   contextEvents: EventEnvelope[]
   /** 目标 agent(同一 thread 可逐条切换) */
   targetAgent: AgentName

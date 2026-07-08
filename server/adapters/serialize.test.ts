@@ -22,16 +22,31 @@ test('serialize 钉住 User Goal + Final Response + Current Request', () => {
   assert.match(out, /帮我 review/)
 })
 
-test('serialize 去掉末尾重复的当前请求', () => {
+test('serialize 契约:contextEvents 不含当前请求,当前请求只出现在 Current Request', () => {
+  // 调用方(run-registry)按 turnId 剔除当前轮后传入;serialize 不再做文本相等去重
+  // (文本匹配在带附件或用户重复发同一句时会误判,docs/12 E2)。
   const events: EventEnvelope[] = [
     nat({ type: 'user_text', text: 'goal', ts: 't' }),
     nat({ type: 'assistant_text', text: 'done', ts: 't' }),
     { origin: 'cockpit', source: SRC, event: { type: 'followup_boundary', ts: 't' } },
-    { origin: 'cockpit', source: SRC, event: { type: 'user_text', text: '当前请求', ts: 't' } },
+    {
+      origin: 'cockpit',
+      source: SRC,
+      turnId: 'turn_prev',
+      event: { type: 'user_text', text: '上一轮的问题', ts: 't' },
+    },
+    {
+      origin: 'cockpit',
+      source: SRC,
+      turnId: 'turn_prev',
+      event: { type: 'assistant_text', text: '上一轮的回答', ts: 't' },
+    },
   ]
   const out = serializeForAgent(events, '当前请求', 'codex')
-  // history 里不该再出现一条 follow-up 形式的"当前请求"
   assert.equal(out.match(/当前请求/g)?.length, 1)
+  // 历史 follow-up 轮次要完整保留
+  assert.match(out, /上一轮的问题/)
+  assert.match(out, /上一轮的回答/)
 })
 
 test('serialize 超长从中段截断,钉住部分保留', () => {

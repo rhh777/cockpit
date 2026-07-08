@@ -106,15 +106,10 @@ export function serializeForAgent(
 
   const bIdx = contextEvents.findIndex((e) => e.event.type === 'followup_boundary')
   const native = bIdx === -1 ? contextEvents : contextEvents.slice(0, bIdx)
-  let followup = bIdx === -1 ? [] : contextEvents.slice(bIdx + 1)
-  // 去掉末尾"当前请求"那条 user_text,避免在 history 和 Current Request 重复(docs/01 §九)。
-  for (let i = followup.length - 1; i >= 0; i--) {
-    const ev = followup[i].event
-    if (ev.type === 'user_text') {
-      if (ev.text.trim() === currentText.trim()) followup = followup.slice(0, i)
-      break
-    }
-  }
+  // 契约:contextEvents 不含当前请求 —— 调用方(run-registry)按 turnId 剔除当前轮,
+  // 保证当前请求只出现在 Current Request(docs/01 §九)。这里不再做文本相等的去重兜底:
+  // 文本匹配在带附件(withAttachments 拼接)或用户重复发同一句时都会误判。
+  const followup = bIdx === -1 ? [] : contextEvents.slice(bIdx + 1)
 
   const userTexts = native.filter((e) => e.event.type === 'user_text')
   const assistantTexts = native.filter((e) => e.event.type === 'assistant_text')

@@ -747,7 +747,9 @@ class RunRegistry {
       emitPhase(handle, 'runtime_ready')
       emitPhase(handle, 'building_context')
       const detail = await loadSessionDetail(input.source, input.sessionId, input.filePath)
-      const detailEvents = detail?.events ?? []
+      // 当前轮的 user_text / run_permissions 在 startFollowup 已落盘,会被 loadSessionDetail 读回;
+      // 按 turnId 剔除,保证 contextEvents 只含历史、当前请求只出现在 Current Request(docs/01 §九)。
+      const detailEvents = (detail?.events ?? []).filter((env) => env.turnId !== turnId)
       let incrementalOpt: { summary: string; upToSourceEventId: string } | undefined
       if (shouldUseIncrementalForRegistry(detailEvents)) {
         const state = await threadContextStore.readState(input.source, input.sessionId)
