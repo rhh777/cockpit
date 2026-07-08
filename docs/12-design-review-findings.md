@@ -22,7 +22,7 @@
 | F1 | 实时 | watcher 每次变化全量重读重解析整个 session,追加密集时 O(N²) | 中 | 未开始 |
 | F2 | 实时 | `tryWatch` 对尚不存在的文件返回 null 后永不重建 | 中 | 未开始 |
 | F3 | 实时 | 前端活跃 run 期间丢弃 session stream append,而非按 sourceEventId 去重 | 中 | 未开始 |
-| G1 | 资源 | `RunHandle.replay` 无上限,含全部 delta,重连全量重放 | 中 | 未开始 |
+| G1 | 资源 | `RunHandle.replay` 无上限,含全部 delta,重连全量重放 | 中 | 已完成 |
 | G2 | 并发 | `startGroupTurn` 互斥检查与登记之间隔多个 await,有竞态窗口 | 低 | 未开始 |
 | G3 | 数据完整性 | native resume 走自动重试,可能在原生历史里写入重复 user turn | 中 | 未开始 |
 | G4 | 体验 | 列表 `updatedAt` 只取原生 mtime,follow-up 活动不影响排序/分组 | 低 | 未开始 |
@@ -126,6 +126,10 @@
 
 - **现象**:`replay` 数组记录包括全部打字机 delta 在内的所有消息,完成后仍驻留 5 分钟;长回复一次 run 可达数万条,重连 attach 全量逐条重放。
 - **修复方向**:replay 内对同 `streamId` 的 delta 合并成快照(与落盘策略一致);终态后可只保留合并结果。
+- **修复记录(2026-07-08)**:
+  - `RunHandle.write` 内新增 `mergeDeltaIntoReplay`:同 `streamId` 的相邻 delta 克隆合并成一条累积 delta(保留首个 sourceEventId,顺序不变);实时订阅者仍收原始碎片,重连 attach 收合并结果,UI buildTimeline 本就按 streamId 拼接,语义等价。
+  - replay 体积由 O(token 数) 降为 O(非 delta 事件数 + stream 数);非 delta 事件与实际工具调用量同阶且重连正确性依赖它们,故未加硬性条数上限(有意取舍)。
+  - 新增 `server/runs/run-registry.test.ts` 三个用例(合并/不跨界合并/实时 vs 重放)。
 
 ### G2 · startGroupTurn 互斥竞态(并发,低)
 
@@ -161,3 +165,4 @@
 | 2026-07-08 | B1 | 已完成 | 删除三条 legacy `/messages` 路由 + 前端死代码;文档/SVG 同步;typecheck + 94 单测 + dev 冒烟通过 |
 | 2026-07-08 | C1 | 不修复(已文档化) | 用户确认接受现状;docs/01 §十 + sensitive.ts 头注释写明流式边界与重启条件 |
 | 2026-07-08 | E2 | 已完成 | run-registry 按 turnId 剔除当前轮;serialize 移除文本相等去重;contextEvents 契约改为不含当前请求 |
+| 2026-07-08 | G1 | 已完成 | RunHandle.replay 同 streamId 相邻 delta 合并;新增 3 个单测(97 全绿) |

@@ -135,8 +135,27 @@ class RunHandle {
   constructor(public record: RunRecord) {}
 
   write(msg: RunStreamMessage) {
-    this.replay.push(msg)
+    // 打字机 delta 逐条进 replay 会让长回复的 replay 涨到数万条(docs/12 G1)。
+    // 同 streamId 的相邻 delta 合并成一条累积 delta:实时订阅者仍收到原始碎片,
+    // 重连 attach 时收到的是合并结果(UI 端 buildTimeline 本来就按 streamId 拼接,语义等价)。
+    if (!this.mergeDeltaIntoReplay(msg)) this.replay.push(msg)
     for (const sub of this.subscribers.values()) sseWrite(sub.res, msg)
+  }
+
+  private mergeDeltaIntoReplay(msg: RunStreamMessage): boolean {
+    if (msg.kind !== 'event') return false
+    const ev = msg.envelope.event
+    if (ev.type !== 'assistant_text' || ev.delta !== true || !ev.streamId) return false
+    const last = this.replay[this.replay.length - 1]
+    if (!last || last.kind !== 'event') return false
+    const lev = last.envelope.event
+    if (lev.type !== 'assistant_text' || lev.delta !== true || lev.streamId !== ev.streamId) return false
+    // 克隆合并,不改动已发给实时订阅者的对象;保留首个 delta 的 sourceEventId,重放顺序不变。
+    this.replay[this.replay.length - 1] = {
+      ...last,
+      envelope: { ...last.envelope, event: { ...lev, text: lev.text + ev.text } },
+    } as RunStreamMessage
+    return true
   }
 
   attach(res: ServerResponse) {
