@@ -24,7 +24,7 @@
 | F3 | 实时 | 前端活跃 run 期间丢弃 session stream append,而非按 sourceEventId 去重 | 中 | 已完成 |
 | G1 | 资源 | `RunHandle.replay` 无上限,含全部 delta,重连全量重放 | 中 | 已完成 |
 | G2 | 并发 | `startGroupTurn` 互斥检查与登记之间隔多个 await,有竞态窗口 | 低 | 已完成 |
-| G3 | 数据完整性 | native resume 走自动重试,可能在原生历史里写入重复 user turn | 中 | 未开始 |
+| G3 | 数据完整性 | native resume 走自动重试,可能在原生历史里写入重复 user turn | 中 | 已完成 |
 | G4 | 体验 | 列表 `updatedAt` 只取原生 mtime,follow-up 活动不影响排序/分组 | 低 | 未开始 |
 
 ## 条目详情
@@ -143,6 +143,7 @@
 
 - **现象**:`runClaudeWithRetry` 同样作用于 `resumeNative`;若首次尝试在 CLI 已把 user 消息 append 进原生 jsonl 后才因网络失败,重试再次 `--resume` 会造成原生历史重复 user turn。与「原生文件只由官方 CLI 写、cockpit 保守对待」的项目哲学冲突。
 - **修复方向**:resume 路径禁用自动重试(交给用户手动重试),或重试前校验原生文件是否已增长。
+- **修复记录(2026-07-08)**:claude adapter 的 `resumeNative` 不再包 `runClaudeWithRetry`,直接单次 `runClaudePrint --resume`,失败交给用户手动重试(代码注释写明理由);codex adapter 本无重试逻辑,核实无需改动。普通 follow-up(写 cockpit 自有目录)保留重试。
 
 ### G4 · updatedAt 不感知 follow-up(体验,低)
 
@@ -171,3 +172,4 @@
 | 2026-07-08 | G1 | 已完成 | RunHandle.replay 同 streamId 相邻 delta 合并;新增 3 个单测(97 全绿) |
 | 2026-07-08 | F3 | 已完成 | run 结束时(streams 清空)做一次 changes 对齐,补回丢弃窗口内的文件增长 |
 | 2026-07-08 | G2 | 已完成 | startGroupTurn 互斥占位改为 await 前同步执行,失败回滚 |
+| 2026-07-08 | G3 | 已完成 | claude resumeNative 禁用自动重试,防止原生历史重复 user turn |

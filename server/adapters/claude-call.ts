@@ -668,18 +668,18 @@ export const claudeAdapter: ReviewAgent = {
         : undefined
     // Native resume 显式带 effort:没 --effort 时 Claude Code CLI 不会启用 extended thinking,
     // UI 上就看不到 💡 thinking 节点。默认由路由层给到 medium。
-    yield* runClaudeWithRetry(
-      () =>
-        runClaudePrint(
-          input.text,
-          ['--resume', input.sessionId],
-          input,
-          true,
-          undefined,
-          input.effort,
-          permissions,
-        ),
-      input.signal,
+    //
+    // 不走 runClaudeWithRetry(docs/12 G3):首次尝试可能已让 CLI 把 user 消息 append 进
+    // 原生 jsonl 后才因网络失败,自动重试会在原生历史里写入重复 user turn。原生历史
+    // 只能保守对待,失败交给用户手动重试。
+    yield* runClaudePrint(
+      input.text,
+      ['--resume', input.sessionId],
+      input,
+      true,
+      undefined,
+      input.effort,
+      permissions,
     )
   },
 }
