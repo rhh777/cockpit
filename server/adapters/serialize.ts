@@ -1,4 +1,6 @@
-import type { AgentName, EventEnvelope, NormalizedEvent } from '../loaders/types'
+import { randomUUID } from 'node:crypto'
+import type { AgentName, ChatAttachment, EventEnvelope, NormalizedEvent } from '../loaders/types'
+import { renderAttachmentLines } from '../util/attachments'
 import { agentDisplayName } from './agent-meta'
 import { redactSecrets } from './sensitive'
 
@@ -94,6 +96,95 @@ function renderEvent(env: EventEnvelope, opts: SerializeOptions): string | null 
   }
 }
 
+// —— 群聊模式(docs/12 E1)——————————————————————————————————————————
+// 群聊没有「Original Session」:上下文是共享 summary + 近期 transcript。
+// 这里(序列化边界内)构建群聊上下文,产出一条 meta:group_context 事件;
+// serializeForAgent 识别后走群聊专属模板,不再套 User Goal/Final Response 壳,
+// 当前请求也只出现在 Current Request 一处。
+
+export const GROUP_CONTEXT_META_KEY = 'group_context'
+
+const GROUP_MESSAGE_HEAD_CHARS = 800
+const GROUP_MESSAGE_TAIL_CHARS = 400
+const GROUP_MESSAGE_MAX_CHARS = GROUP_MESSAGE_HEAD_CHARS + GROUP_MESSAGE_TAIL_CHARS + 200
+
+function clipGroupMessage(text: string): string {
+  if (text.length <= GROUP_MESSAGE_MAX_CHARS) return text
+  const head = text.slice(0, GROUP_MESSAGE_HEAD_CHARS)
+  const tail = text.slice(text.length - GROUP_MESSAGE_TAIL_CHARS)
+  const omitted = text.length - GROUP_MESSAGE_HEAD_CHARS - GROUP_MESSAGE_TAIL_CHARS
+  return `${head}\n...[omitted ${omitted} chars]...\n${tail}`
+}
+
+export function buildGroupContextEvents(
+  transcript: EventEnvelope[],
+  summary: string,
+  targetAgent: AgentName,
+  currentAttachments: ChatAttachment[] = [],
+): EventEnvelope[] {
+  const recent = transcript
+    .filter((env) => env.event.type !== 'meta' && env.event.type !== 'usage')
+    .slice(-30)
+    .map((env) => {
+      const e = env.event
+      if (e.type === 'user_text')
+        return [`[User]: ${clipGroupMessage(e.text || '(no text)')}`, ...renderAttachmentLines(e.attachments)].join('\n')
+      if (e.type === 'assistant_text') return `[${agentDisplayName(e.agent)}]: ${clipGroupMessage(e.text)}`
+      if (e.type === 'tool_use') return `[${agentDisplayName(e.agent)} tool]: ${e.name}`
+      if (e.type === 'tool_result') return `[Tool result]: ${e.isError ? 'error' : 'ok'}`
+      if (e.type === 'thinking') return `[${agentDisplayName(targetAgent)} thinking]: ${clipGroupMessage(e.text)}`
+      return null
+    })
+    .filter((x): x is string => x != null)
+    .join('\n')
+
+  const text = [
+    '# Cockpit Group Chat',
+    '',
+    `You are ${agentDisplayName(targetAgent)} participating in a local Cockpit group chat.`,
+    'Only answer the current request. The transcript below is the Cockpit source of truth.',
+    '',
+    '## Shared Summary',
+    summary.trim() || '(empty)',
+    '',
+    '## Recent Transcript',
+    recent || '(empty)',
+    ...(currentAttachments.length ? ['', '## Current Request Attachments', ...renderAttachmentLines(currentAttachments)] : []),
+  ].join('\n')
+
+  return [
+    {
+      origin: 'cockpit',
+      source: 'cockpit',
+      sourceEventId: `ctx_${randomUUID()}`,
+      event: { type: 'meta', key: GROUP_CONTEXT_META_KEY, value: { text }, ts: new Date().toISOString() },
+    },
+  ]
+}
+
+function serializeGroupPrompt(
+  groupText: string,
+  currentText: string,
+  targetAgent: AgentName,
+  opts: SerializeOptions,
+): string {
+  const pinnedTail = [
+    '',
+    '# Current Request',
+    `请以 ${agentDisplayName(targetAgent)} 的身份回应下面这条请求(上面是群聊上下文,不要自代入其它成员的发言):`,
+    currentText,
+  ].join('\n')
+  const budget = Math.max(0, opts.maxChars - pinnedTail.length)
+  let body = groupText
+  if (body.length > budget) {
+    const keep = Math.max(0, budget - 40)
+    const head = body.slice(0, Math.floor(keep / 2))
+    const tail = body.slice(body.length - Math.ceil(keep / 2))
+    body = `${head}\n…[truncated ${body.length - keep} chars of group context]…\n${tail}`
+  }
+  return redactSecrets(body + pinnedTail).text
+}
+
 export function serializeForAgent(
   contextEvents: EventEnvelope[],
   currentText: string,
@@ -101,6 +192,15 @@ export function serializeForAgent(
   options: Partial<SerializeOptions> = {},
 ): string {
   const opts = { ...DEFAULT_SERIALIZE, ...options }
+
+  // 群聊模式:上下文由 buildGroupContextEvents 构建,走群聊专属模板。
+  const groupCtx = contextEvents.find(
+    (e) => e.event.type === 'meta' && e.event.key === GROUP_CONTEXT_META_KEY,
+  )
+  if (groupCtx && groupCtx.event.type === 'meta') {
+    const v = groupCtx.event.value as { text?: string } | undefined
+    return serializeGroupPrompt(typeof v?.text === 'string' ? v.text : '', currentText, targetAgent, opts)
+  }
 
   const bIdx = contextEvents.findIndex((e) => e.event.type === 'followup_boundary')
   const native = bIdx === -1 ? contextEvents : contextEvents.slice(0, bIdx)

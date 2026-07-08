@@ -96,6 +96,8 @@
 ```ts
 interface ReviewAgent {
   name: AgentName
+  displayName?: string                     // UI/prompt 显示名;注册时写入 agent-meta(docs/12 D1)
+  supportsApproval?: boolean               // 能否消费 requestApproval 回调(走可拦截工具的通道)
   isAvailable(): Promise<boolean>          // which/--version 检测本机 CLI
   warmup?(): Promise<unknown>              // 冷启动预热:claude(可选加载 SDK)+ codex(spawn app-server lease)。触发点:/api/settings/warmup
   run(input: AgentRunInput): AsyncIterable<NormalizedEvent>
@@ -144,12 +146,12 @@ interface ReviewAgent {
   2. `parseMentions(text)` ∩ `state.agents` = 本轮目标。
   3. 调 [`runRegistry.startGroupTurn`](../server/runs/run-registry.ts:427) —— 写用户消息 + `turn_start` meta 到 `transcript.jsonl`,per-agent 起 `RunHandle`。
   4. **立即 `sendJson(202, { groupTurnId, records, userEnvelope, turnStart })` 返回,不占用 HTTP 连接**。
-  5. 前端拿到 records 后,per run 调 `attachRunStream(runId)` → `GET /api/runs/:runId/stream`(SSE),run-registry 内部通过 [`projectGroupContext`](../server/runs/run-registry.ts:296) 生成上下文并跑 `resolveAgent(agent).run(...)`,`item/agentMessage/delta` 等事件走对应 run 的 SSE 通道。
+  5. 前端拿到 records 后,per run 调 `attachRunStream(runId)` → `GET /api/runs/:runId/stream`(SSE),run-registry 内部通过 [`buildGroupContextEvents`](../server/adapters/serialize.ts)(序列化边界内,docs/12 E1)生成上下文并跑 `resolveAgent(agent).run(...)`,`item/agentMessage/delta` 等事件走对应 run 的 SSE 通道。
   6. 每 run 独立 `run_done`,群聊层面没有"整体 done"事件,前端按 records 计数收敛。
 
 > 旧的 `POST /api/group-threads/:id/messages` in-line SSE 路径已删除(2026-07,docs/12 B1)。
 
-关键点:群聊**复用 follow-up 的 adapter 接口**,只是 `contextEvents` 换成基于 group 快照的伪 user_text(`projectGroupContext`),让多 agent 看到**一致的 transcript + summary + current preview**,不串戏。attachments(图片)写入 `group-threads/<id>/attachments/`,**不**进原生 CLI 目录。
+关键点:群聊**复用 follow-up 的 adapter 接口**,只是 `contextEvents` 换成一条 `meta:group_context` 事件(`serialize.ts buildGroupContextEvents` 构建,`serializeForAgent` 识别后走群聊专属模板,不再套「Original Session/User Goal」壳,docs/12 E1),让多 agent 看到**一致的 transcript + summary**,当前请求只出现在 Current Request。attachments(图片)写入 `group-threads/<id>/attachments/`,**不**进原生 CLI 目录。
 
 ### 3. 写回原生会话(native resume)
 
@@ -224,7 +226,7 @@ server/
     opencode-call.ts      opencode CLI
     cursor-call.ts        cursor-agent / agent CLI(两个候选二进制)
     serialize.ts          serializeForAgent(边界 6)
-    context-projector.ts  follow-up 的 EventEnvelope → 传给 adapter 的 contextEvents(与群聊侧的 projectGroupContext 对称)
+    context-projector.ts  follow-up 的 EventEnvelope → 传给 adapter 的 contextEvents(群聊侧对称物是 serialize.ts 的 buildGroupContextEvents)
     sensitive.ts          redactSecrets + filterToolResult
   routes/
     runs.ts               run 启动/查询/取消(follow-up、native resume、run stream SSE)

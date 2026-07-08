@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { serializeForAgent } from './serialize'
+import { buildGroupContextEvents, serializeForAgent } from './serialize'
 import { filterToolResult, redactSecrets, isSensitivePath } from './sensitive'
 import type { EventEnvelope, Source } from '../loaders/types'
 
@@ -82,6 +82,35 @@ test('serialize 渲染 context_summary meta 为独立块', () => {
   const out = serializeForAgent(events, 'follow up', 'claude')
   assert.match(out, /\[Session summary of earlier history\]/)
   assert.match(out, /earlier session gist here/)
+})
+
+test('serialize 群聊模式:group_context 走专属模板,不套 Original Session 壳(docs/12 E1)', () => {
+  const transcript: EventEnvelope[] = [
+    {
+      origin: 'cockpit',
+      source: 'cockpit',
+      event: { type: 'user_text', text: '大家看看这个方案', ts: 't' },
+    },
+    {
+      origin: 'cockpit',
+      source: 'cockpit',
+      event: { type: 'assistant_text', text: '我觉得可行', ts: 't', agent: 'claude' },
+    },
+  ]
+  const ctx = buildGroupContextEvents(transcript, '共享摘要内容', 'codex', [])
+  const out = serializeForAgent(ctx, '当前请求', 'codex')
+  // 群聊模板,不是单聊的 Original Session 壳
+  assert.match(out, /# Cockpit Group Chat/)
+  assert.doesNotMatch(out, /# Original Session/)
+  assert.doesNotMatch(out, /## User Goal/)
+  assert.doesNotMatch(out, /## Final Response/)
+  // 上下文内容在
+  assert.match(out, /共享摘要内容/)
+  assert.match(out, /大家看看这个方案/)
+  assert.match(out, /我觉得可行/)
+  // 当前请求只出现一次(旧实现里 preview + Current Request 出现两次)
+  assert.equal(out.match(/当前请求/g)?.length, 1)
+  assert.match(out, /# Current Request/)
 })
 
 test('redactSecrets 屏蔽密钥行,保留普通行', () => {

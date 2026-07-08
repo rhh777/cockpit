@@ -16,7 +16,7 @@
 | C2 | 安全 | 审批通过即 session 级放行整个工具(如所有 Bash) | 中 | 未开始 |
 | C3 | 安全 | 降噪路径(node_modules/dist)与安全路径(.env/.ssh)混用同一黑名单 | 中 | 已完成 |
 | D1 | 扩展性 | server 侧多处硬编码 agent 名与能力判断,违反 docs/01 扩展点约定 | 中 | 已完成 |
-| E1 | 序列化 | 群聊上下文在 run-registry 手搓 prompt,再被 serializeForAgent 二次包装 | 中 | 未开始 |
+| E1 | 序列化 | 群聊上下文在 run-registry 手搓 prompt,再被 serializeForAgent 二次包装 | 中 | 已完成 |
 | E2 | 序列化 | 「当前请求去重」靠文本相等,带附件必失效导致重复 | 中 | 已完成 |
 | E3 | 序列化 | `maxChars: 24000` 写死,docs/01 承诺的「设置里可调」未接线 | 低 | 已完成 |
 | F1 | 实时 | watcher 每次变化全量重读重解析整个 session,追加密集时 O(N²) | 中 | 未开始 |
@@ -98,6 +98,12 @@
 
 - **现象**:`run-registry.projectGroupContext` 手搓完整群聊 prompt,包成一条合成 `user_text` 传给 adapter;adapter 内部再套 `serializeForAgent` 的 `# Original Session / ## User Goal` 模板。结果群聊 prompt 以「User Goal」的名义出现,当前请求文本重复两遍;序列化职责分裂在两处,不变量 8 名存实亡。
 - **修复方向**:给 `serializeForAgent` 增加 group 模式(或独立的 `serializeForGroupAgent` 同层实现),群聊上下文构建收回序列化边界内;run-registry 只传结构化数据。
+- **修复记录(2026-07-08)**:
+  - `projectGroupContext` 从 run-registry 移入 `serialize.ts`,更名 `buildGroupContextEvents`,产出一条 `meta:group_context` 事件(不再伪装成 user_text);
+  - `serializeForAgent` 识别 `group_context` 后走群聊专属模板(`# Cockpit Group Chat` + `# Current Request`),不再套「Original Session/User Goal/Final Response」壳,当前请求只出现一次(旧实现 preview + Current Request 出现两次);
+  - 群聊 maxChars 预算与末段截断、终段 redactSecrets 与单聊同规则;
+  - 顺带合并 run-registry 与 util/attachments 重复的 `renderAttachmentLines`;
+  - 新增群聊模式 serialize 单测;docs/10 同步(含 ReviewAgent 接口示例补 displayName/supportsApproval)。
 
 ### E2 · 当前请求去重靠文本相等(序列化,中)
 
@@ -190,3 +196,4 @@
 | 2026-07-08 | C3 | 已完成 | node_modules/dist/build 移出整段屏蔽黑名单,降噪交给截断,密钥扫描仍全量生效 |
 | 2026-07-08 | E3 | 已完成 | docs/01 移除「设置里可调」未兑现承诺,明确为代码内常量 |
 | 2026-07-08 | D1 | 已完成 | agent 显示名/审批能力/原生来源反查收口到 ReviewAgent + registry;前端 sessionAgentOf 收进 lib/agents |
+| 2026-07-08 | E1 | 已完成 | 群聊上下文构建移入 serialize 边界(meta:group_context + 专属模板),消除 prompt 套 prompt |

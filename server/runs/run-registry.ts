@@ -2,8 +2,9 @@ import type { ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import type { AgentName, ChatAttachment, EventEnvelope, NormalizedEvent, Source } from '../loaders/types'
 import { agentForNativeSource, resolveAgent } from '../adapters/registry'
-import { agentDisplayName } from '../adapters/agent-meta'
 import { filterToolResult, redactSecrets } from '../adapters/sensitive'
+import { buildGroupContextEvents } from '../adapters/serialize'
+import { renderAttachmentLines } from '../util/attachments'
 import { projectContextEvents } from '../adapters/context-projector'
 import { threadContextStore } from '../store/thread-context-store'
 import { scheduleSummaryRefresh } from '../adapters/summary-refresh'
@@ -268,86 +269,12 @@ function notificationTurnId(params: unknown): string | null {
   return null
 }
 
-function renderAttachmentLines(attachments?: ChatAttachment[]): string[] {
-  if (!attachments?.length) return []
-  return [
-    '[Attachments]',
-    ...attachments.map((a) => {
-      const label = a.kind === 'directory' ? 'directory' : a.kind === 'image' ? `image ${a.mimeType}` : 'file'
-      const target = a.kind === 'image' ? a.path ?? '[embedded image]' : a.path
-      return `- ${label}: ${a.name} -> ${target}`
-    }),
-  ]
-}
-
 // 单会话 follow-up / native 续写没有 group 的 context preview,附件引用行直接拼到当前请求文本里,
 // CLI 凭路径读取(图片已落 attachments 目录,file/directory 是原路径)。
 function withAttachments(text: string, attachments?: ChatAttachment[]): string {
   const lines = renderAttachmentLines(attachments)
   if (lines.length === 0) return text
   return [text, '', ...lines].join('\n')
-}
-
-const GROUP_MESSAGE_HEAD_CHARS = 800
-const GROUP_MESSAGE_TAIL_CHARS = 400
-const GROUP_MESSAGE_MAX_CHARS = GROUP_MESSAGE_HEAD_CHARS + GROUP_MESSAGE_TAIL_CHARS + 200
-
-function clipGroupMessage(text: string): string {
-  if (text.length <= GROUP_MESSAGE_MAX_CHARS) return text
-  const head = text.slice(0, GROUP_MESSAGE_HEAD_CHARS)
-  const tail = text.slice(text.length - GROUP_MESSAGE_TAIL_CHARS)
-  const omitted = text.length - GROUP_MESSAGE_HEAD_CHARS - GROUP_MESSAGE_TAIL_CHARS
-  return `${head}\n...[omitted ${omitted} chars]...\n${tail}`
-}
-
-function projectGroupContext(
-  events: EventEnvelope[],
-  summary: string,
-  currentText: string,
-  targetAgent: AgentName,
-  currentAttachments: ChatAttachment[] = [],
-): EventEnvelope[] {
-  const recent = events
-    .filter((env) => env.event.type !== 'meta' && env.event.type !== 'usage')
-    .slice(-30)
-    .map((env) => {
-      const e = env.event
-      if (e.type === 'user_text')
-        return [`[User]: ${clipGroupMessage(e.text || '(no text)')}`, ...renderAttachmentLines(e.attachments)].join('\n')
-      if (e.type === 'assistant_text') return `[${agentDisplayName(e.agent)}]: ${clipGroupMessage(e.text)}`
-      if (e.type === 'tool_use') return `[${agentDisplayName(e.agent)} tool]: ${e.name}`
-      if (e.type === 'tool_result') return `[Tool result]: ${e.isError ? 'error' : 'ok'}`
-      if (e.type === 'thinking') return `[${agentDisplayName(targetAgent)} thinking]: ${clipGroupMessage(e.text)}`
-      return null
-    })
-    .filter((x): x is string => x != null)
-    .join('\n')
-
-  const text = [
-    '# Cockpit Group Chat',
-    '',
-    `You are ${agentDisplayName(targetAgent)} participating in a local Cockpit group chat.`,
-    'Only answer the current request. The transcript below is the Cockpit source of truth.',
-    '',
-    '## Shared Summary',
-    summary.trim() || '(empty)',
-    '',
-    '## Recent Transcript',
-    recent || '(empty)',
-    '',
-    '## Current Request Preview',
-    currentText || '(no text)',
-    ...renderAttachmentLines(currentAttachments),
-  ].join('\n')
-
-  return [
-    {
-      origin: 'cockpit',
-      source: 'cockpit',
-      sourceEventId: `ctx_${randomUUID()}`,
-      event: { type: 'user_text', text, ts: new Date().toISOString() },
-    },
-  ]
 }
 
 function overallGroupStatus(statuses: RunStatus[]): 'completed' | 'partial' | 'failed' {
@@ -890,7 +817,7 @@ class RunRegistry {
           : undefined
       for await (const raw of agent.run({
         text: input.text,
-        contextEvents: projectGroupContext(transcript, summary, input.text, agentNameForRun, input.attachments ?? []),
+        contextEvents: buildGroupContextEvents(transcript, summary, agentNameForRun, input.attachments ?? []),
         targetAgent: agentNameForRun,
         cwd,
         useTools: input.useTools,
