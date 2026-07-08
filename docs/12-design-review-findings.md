@@ -14,7 +14,7 @@
 | B1 | 架构冗余 | legacy `/messages` 三条路径与 run-registry 双实现,前端已不调用 | 高 | 已完成 |
 | C1 | 安全 | 流式 delta 绕过 redactSecrets,实时回显未脱敏 | 高 | 不修复(已文档化) |
 | C2 | 安全 | 审批通过即 session 级放行整个工具(如所有 Bash) | 中 | 未开始 |
-| C3 | 安全 | 降噪路径(node_modules/dist)与安全路径(.env/.ssh)混用同一黑名单 | 中 | 未开始 |
+| C3 | 安全 | 降噪路径(node_modules/dist)与安全路径(.env/.ssh)混用同一黑名单 | 中 | 已完成 |
 | D1 | 扩展性 | server 侧多处硬编码 agent 名与能力判断,违反 docs/01 扩展点约定 | 中 | 未开始 |
 | E1 | 序列化 | 群聊上下文在 run-registry 手搓 prompt,再被 serializeForAgent 二次包装 | 中 | 未开始 |
 | E2 | 序列化 | 「当前请求去重」靠文本相等,带附件必失效导致重复 | 中 | 已完成 |
@@ -77,6 +77,7 @@
 
 - **现象**:`SENSITIVE_PATH_PATTERNS` 里 `.env`/`.ssh`/`.aws` 与 `node_modules/`/`dist/`/`build/` 同列,命中即整段 tool_result 替换为「已屏蔽敏感内容」。读依赖源码是 reviewer 常见动作,被安全话术挡住,既误导又损功能。
 - **修复方向**:拆成两组语义——安全组保持整段屏蔽;降噪组改为截断或直接放行(tool_result 已有大输出收缩),UI 文案区分。
+- **修复记录(2026-07-08)**:`node_modules/`、`dist/`、`build/` 从整段屏蔽黑名单移除——降噪已由 context-projector 大输出收缩 + serialize `maxToolOutputChars` 截断覆盖,内容级密钥扫描(redactSecrets)仍对所有输出生效;`.git/` 保留(config 可能内嵌带 token 的 remote URL)。docs/01 §十同步。
 
 ### D1 · server 硬编码 agent 名与能力(扩展性,中)
 
@@ -178,3 +179,4 @@
 | 2026-07-08 | G3 | 已完成 | claude resumeNative 禁用自动重试,防止原生历史重复 user turn |
 | 2026-07-08 | G4 | 已完成 | updatedAt 取原生与 followups mtime 较新者,列表/详情同口径 |
 | 2026-07-08 | F2 | 已完成 | watcher 周期补建(2s)+ error 重建;新增功能测试验证首条 follow-up 可推送 |
+| 2026-07-08 | C3 | 已完成 | node_modules/dist/build 移出整段屏蔽黑名单,降噪交给截断,密钥扫描仍全量生效 |

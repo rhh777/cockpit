@@ -3,7 +3,10 @@
 // 已知边界(docs/12 C1,有意接受):打字机 delta 是 token 级碎片,redactSecrets 的行级正则
 // 在碎片上命中不了 —— 实时流式回显不保证脱敏,落盘与下一轮 prompt 用的是整段脱敏后版本。
 
-// 路径黑名单:命中则该 tool_result 整体屏蔽。
+// 路径黑名单:命中则该 tool_result 整体屏蔽。**只放安全语义的路径**(凭据/密钥所在);
+// 降噪(node_modules/dist/build 等大输出)不属于这里——那由 context-projector 的
+// 大输出收缩 + serialize 的 maxToolOutputChars 截断处理,不应该以"敏感内容"的名义
+// 挡住 reviewer 读依赖源码(docs/12 C3)。内容级密钥扫描(redactSecrets)对所有输出生效。
 const SENSITIVE_PATH_PATTERNS: RegExp[] = [
   /(^|[\/\\.])\.env(\.[\w-]+)?$/i,
   /(^|[\/\\.])\.env(\.[\w-]+)?[\/\\]/i,
@@ -12,9 +15,8 @@ const SENSITIVE_PATH_PATTERNS: RegExp[] = [
   /[\/\\]\.ssh[\/\\]/,
   /[\/\\]\.aws[\/\\]/,
   /[\/\\]\.kube[\/\\]/,
+  // .git 保留:config 里可能内嵌带 token 的 remote URL,credential 文件也在其中。
   /[\/\\]\.git[\/\\]/,
-  /[\/\\]node_modules[\/\\]/,
-  /[\/\\](dist|build)[\/\\]/,
 ]
 
 // 内容级密钥标记:逐行扫描,命中行替换为占位(避免误伤正常输出)。

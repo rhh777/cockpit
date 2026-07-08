@@ -430,7 +430,7 @@ interface SerializeOptions {
   - 过滤命中时在 UI 标注"已屏蔽敏感内容",而非静默。
   - **流式回显的已知边界(有意接受,见 docs/12 C1)**:`assistant_text` / `thinking` 的打字机 delta 是 token 级碎片,密钥正则无法在碎片上命中,所以**实时流式期间屏幕上可能短暂出现未脱敏的密钥原文**;落盘的是合并后整段文本的脱敏版本,刷新后以脱敏版本为准,下一轮 prompt 也基于脱敏后的落盘数据构建,不会把密钥传给其他 agent。tool_result 不走 delta,不受此边界影响。若将来 cockpit 走出本机(远程访问 / 多人 / 常态化录屏),应改用 server 侧小窗口滞后方案补齐。
   - 真正的按路径 deny(沙箱 / 自定义工具包装)留到后续审批层。
-- 敏感路径黑名单:`.env*`、`*.pem`、`id_rsa`、`.ssh/`、`.aws/`、`.kube/`、`.git/`、`node_modules/`、`dist/`、`build/`。
+- 敏感路径黑名单(只含安全语义,命中整段屏蔽):`.env*`、`*.pem`、`id_rsa`、`.ssh/`、`.aws/`、`.kube/`、`.git/`(config 可能内嵌带 token 的 remote URL)。`node_modules/`/`dist/`/`build/` 等大输出**不在**黑名单里——降噪由 context-projector 大输出收缩 + serialize 截断处理,不以"敏感内容"的名义挡住读依赖源码(docs/12 C3);内容级密钥扫描对所有输出生效。
 - Claude 默认使用 `settingSources:['project']`,读取项目级 CLAUDE.md 以理解代码约定,但不读取用户全局设置。后续可提供“中立 review”开关切到 `settingSources:[]`。
 - 工具权限分两档:
   - Safe Read:当前默认,只允许 Read/Grep/Glob 或 Codex read-only sandbox。
