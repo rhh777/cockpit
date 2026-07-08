@@ -423,7 +423,7 @@ interface SerializeOptions {
 - API key 仅属于未来可能的官方 API Key Adapter,不是当前配置项
 - API key 只能在 `server/` 侧读取。禁止 `VITE_` 前缀,禁止前端 import。
 - `:id` 解析路径前必须校验;最终路径必须落在白名单根目录内。
-- 序列化给目标 agent 的上下文会把工具 input / output **截断**(默认 1000-2000 字符)再发送,避免泄露大量本地代码 —— 用户可在设置里调
+- 序列化给目标 agent 的上下文会把工具 input / output **截断**(`DEFAULT_SERIALIZE`:input 500 / output 1000 字符,整体 24000 字符封顶)再发送,避免泄露大量本地代码。当前为代码内常量,**不提供设置项**(docs/12 E3:为一个没人调的旋钮加 server 侧设置管道不值得;需要时再加请求级参数)
 - Follow-up 中 reviewer 默认 **read-only 工具权限**(Codex `sandboxMode:'read-only'`、Claude `disallowedTools:[Write/Edit/Bash/...]`);若用户显式开"允许写"则提升,但有提示
 - read-only 不等于不泄密:agent 仍可能主动读取敏感文件并写进回复。当前缓解措施:
   - 敏感路径过滤同时作用于**两端**:序列化输入(喂给 agent 的 prompt)**和** tool_result / 整段回复文本**落盘前**都跑同一套过滤。
