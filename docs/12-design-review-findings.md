@@ -19,7 +19,7 @@
 | E1 | 序列化 | 群聊上下文在 run-registry 手搓 prompt,再被 serializeForAgent 二次包装 | 中 | 已完成 |
 | E2 | 序列化 | 「当前请求去重」靠文本相等,带附件必失效导致重复 | 中 | 已完成 |
 | E3 | 序列化 | `maxChars: 24000` 写死,docs/01 承诺的「设置里可调」未接线 | 低 | 已完成 |
-| F1 | 实时 | watcher 每次变化全量重读重解析整个 session,追加密集时 O(N²) | 中 | 部分完成(缓存缓解) |
+| F1 | 实时 | watcher 每次变化全量重读重解析整个 session,追加密集时 O(N²) | 中 | 已完成 |
 | F2 | 实时 | `tryWatch` 对尚不存在的文件返回 null 后永不重建 | 中 | 已完成 |
 | F3 | 实时 | 前端活跃 run 期间丢弃 session stream append,而非按 sourceEventId 去重 | 中 | 已完成 |
 | G1 | 资源 | `RunHandle.replay` 无上限,含全部 delta,重连全量重放 | 中 | 已完成 |
@@ -135,7 +135,52 @@
 - **现象**:`server/watcher/session-watcher.ts reload` 每次(50ms 防抖)调 `loadSessionDetail` 重新解析整个 JSONL;native CLI 活跃写入时是 O(N²)。前端虚拟化支撑「MB 级 session」的目标被后端全量 reparse 抵消。
 - **修复方向**:记录上次读到的 byte offset,追加场景只读增量行(仅当文件变短/中段变化才全量);或至少缓存 native 段解析结果。
 - **缓解记录(2026-07-08)**:`sessions-service` 增加原生解析缓存(按 filePath 键、(mtimeMs,size) 校验、LRU 8 条)。高频场景「follow-up 流式期间 followups.jsonl 增长、原生大文件未变」不再全量重解析;实测重复 detail 加载 13.4ms → 3.5ms。stat 先于 read,竞态方向安全(只会多解析,不会读旧)。
-- **未完成部分(byte-offset 增量,原生文件自身追加的场景)**:关键设计约束——无 uuid 的行以 `${filePath}#${lineNo}` 作 sourceEventId,增量解析状态必须携带 lineNo 保证 ID 连续;文件变短/中段变化回退全量;Loader interface 加可选 `loadEventsFrom?(filePath, state)`(符合「扩展只加可选方法」)。建议单独会话实施。
+- **byte-offset 增量实现(原生文件自身追加的场景)**:
+
+  **实现记录(2026-07-10)**:byte-offset 增量已落地。`SessionSourceLoader` 新增可选 `loadEventsFrom`;Claude / Codex loader 复用既有 normalize 规则从上次完整行 offset 后解析新增完整行;Codex `seq` 进入 `JsonlIncrementalState`,保证无 id 事件的 `sourceEventId` 与全量解析一致。`session-watcher.ts` 只在明确由 native watcher 触发、且当前合并列表没有 `followup_boundary` 时走增量 append;有 follow-up 段时 native 增长仍按 `native-middle-insert` reset;truncate 直接 reset;inode 更换丢弃增量 state 回退全量。EOF 半行不 warning、不推进 offset,补全后再提交。
+
+  **适用边界**:只优化「native-only 尾部追加」这一条 watcher 热路径。有 `followup_boundary` 时 native append 结构上是 assemble 层的**中段插入**,继续走既有 `native-middle-insert` reset(见 `session-watcher.ts`),F1 不改变这个语义。文件变短 / truncate / inode 更换 → 增量 state 作废,回退全量或发 reset。
+
+  **关键状态修正**:Codex loader 的 `seq` 是**整个文件级递增**(`server/loaders/codex-loader.ts` 内 `seq++`,非每行重置),无 uuid 行以 `${basename}#${lineNo}#${seq}` 作 sourceEventId。因此增量状态必须持久化 `seq`,否则续解后 Codex 无 ID 事件的 sourceEventId 与全量解析不一致。Claude 无 ID 行以 `${...}#${lineNo}` 计,状态携带 `lineNo` 即可。
+
+  **数据形状**:
+
+  ```ts
+  type JsonlIncrementalState = {
+    byteOffset: number   // 已提交的完整行结束偏移
+    lineNo: number
+    seq?: number         // Codex 文件级递增游标,必须持久化
+    inode?: number       // 变更即作废增量
+    pending?: string     // EOF 处未以 \n 结尾的半行
+  }
+
+  type IncrementalLoadResult = {
+    state: JsonlIncrementalState
+    events: EventEnvelope[]
+    warnings: LoaderWarning[]
+    summaryPatch?: Partial<SessionSummary>
+  }
+  ```
+
+  **Loader interface(可选方法,符合不变量 10「扩展只加可选字段/方法」)**:
+
+  ```ts
+  loadEventsFrom?(filePath: string, state: JsonlIncrementalState): Promise<IncrementalLoadResult>
+  ```
+
+  **读取 helper**:`readJsonlLines` 保持现有全量宽容语义**不动**(勿复用给增量:它用 readline,EOF 无换行的半行会被吐出并当 parse warning,增量场景会把半条 JSON 当坏行并推进 offset,补全时丢前半截)。新增专用 `readJsonlCompleteLinesFrom(filePath, state)`:从 `byteOffset` 起读,只提交以 `\n` 结尾的完整行;EOF 半行进 `pending`,不产 warning、不推进 committed offset;下次追加补全后再提交。
+
+  **watcher 集成点(最少侵入)**:状态挂在 `session-watcher.ts` 现有 `Entry` 上,新增一个可空字段 `incremental: JsonlIncrementalState | null`(`null` = 无有效增量,必须全量),**不建新全局 map、不落盘**,进程内生命周期,首次 load 重建。全量 loader 路径(`loadSessionDetail` + `nativeParseCache`)与 reset 语义保持不变。
+
+  **测试矩阵**(至少五类):
+  1. Claude append 一整行:增量事件 sourceEventId 与全量解析一致。
+  2. Codex append 多行 / 一行多事件:`basename#lineNo#seq` 与全量一致,**特别断言 seq 跨行连续、不按行重置**。
+  3. append 半行再补全:半行阶段无 warning、无事件、committed offset 不前进;补全后正常产出。
+  4. truncate / inode replace:丢弃增量 state,回退全量或发 reset。
+  5. 已有 `followup_boundary` 后 native 增长:保持 `native-middle-insert` reset 行为不变。
+  6. 交叉校验:同一份追加,增量解析结果 ≡ 全量解析结果(sourceEventId 逐条相等)。
+
+  **风险钉子**:①不改变全量 loader 既有宽容语义;②Codex `seq` 必须成为持久增量状态。native resume 期间读 followups 造成的滚动/渲染churn(docs/07)是 UX 成本,**出 F1 范围**,单独记为后续优化,勿混入本次改动。
 
 ### F2 · 不存在的文件永远 watch 不上(实时,中)
 
@@ -209,3 +254,5 @@
 | 2026-07-08 | E1 | 已完成 | 群聊上下文构建移入 serialize 边界(meta:group_context + 专属模板),消除 prompt 套 prompt |
 | 2026-07-08 | F1 | 部分完成 | 原生解析按 (mtime,size) 缓存(LRU 8);byte-offset 增量留待单独会话(设计约束已记录) |
 | 2026-07-08 | C2 | 已完成 | 审批卡改为「允许一次/总是允许/拒绝」三态,always 只在本 run 内按操作类别记忆 |
+| 2026-07-10 | F1 | 设计收敛(待开发) | 群聊评审定稿 byte-offset 增量方案:`loadEventsFrom?` + `readJsonlCompleteLinesFrom` + Entry.incremental;Codex seq 纳入持久状态;仅优化 native-only 尾部追加,followup 段续走 reset。详见 F1 章节 |
+| 2026-07-10 | F1 | 已完成 | 实现 `readJsonlCompleteLinesFrom` + loader `loadEventsFrom` + watcher Entry.incremental;覆盖 Claude/Codex 增量与全量 ID 等价、Codex seq 连续、EOF 半行、truncate reset、followup 后 native-middle-insert reset;typecheck + 109 单测通过 |

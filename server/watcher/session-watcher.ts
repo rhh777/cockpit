@@ -10,7 +10,9 @@
 // 多个 SSE client 订阅同一 session 时共享一个 watcher,引用计数到 0 时关闭。
 
 import fs from 'node:fs'
-import type { EventEnvelope, Source } from '../loaders/types'
+import fsp from 'node:fs/promises'
+import { loaderBySource } from '../loaders'
+import type { EventEnvelope, JsonlIncrementalState, Source } from '../loaders/types'
 import { followupsFile } from '../store/paths'
 import { loadSessionDetail } from '../sessions-service'
 
@@ -29,7 +31,9 @@ interface Entry {
   // 追踪上次解析的状态,用于算 diff。
   lastTotal: number
   lastNativeTotal: number
+  incremental: JsonlIncrementalState | null
   pending: NodeJS.Timeout | null
+  pendingCause: 'native' | 'full' | null
   loading: boolean
   // loading 期间又来了新事件 → 标记,跑完再跑一次。
   staleAfterLoad: boolean
@@ -41,13 +45,77 @@ function keyOf(source: Source, id: string): string {
   return `${source}:${id}`
 }
 
-async function reload(source: Source, id: string, filePath: string, entry: Entry) {
+async function statNative(filePath: string): Promise<{ size: number; inode?: number } | null> {
+  try {
+    const st = await fsp.stat(filePath)
+    return { size: st.size, inode: st.ino }
+  } catch {
+    return null
+  }
+}
+
+async function rebuildIncrementalState(source: Source, filePath: string): Promise<JsonlIncrementalState | null> {
+  const loader = loaderBySource.get(source)
+  if (!loader?.loadEventsFrom) return null
+  const st = await statNative(filePath)
+  if (!st) return null
+  const result = await loader.loadEventsFrom(filePath, {
+    byteOffset: 0,
+    lineNo: 0,
+    seq: 0,
+    inode: st.inode,
+  })
+  return { ...result.state, inode: st.inode }
+}
+
+async function tryIncrementalNativeAppend(
+  source: Source,
+  filePath: string,
+  entry: Entry,
+): Promise<'handled' | 'fallback'> {
+  const loader = loaderBySource.get(source)
+  if (!loader?.loadEventsFrom || !entry.incremental) return 'fallback'
+  if (entry.lastTotal === -1 || entry.lastNativeTotal === -1) return 'fallback'
+  // 有 followup_boundary 时 native 追加会落在 assemble 后的中段,继续走全量 reset 语义。
+  if (entry.lastTotal !== entry.lastNativeTotal) return 'fallback'
+  // 全量 loader 会按既有宽容语义读 EOF 无换行行;若初始化时有 pending,增量提交会重复该行。
+  if (entry.incremental.pending) return 'fallback'
+
+  const st = await statNative(filePath)
+  if (!st) return 'fallback'
+  if (entry.incremental.inode != null && st.inode != null && entry.incremental.inode !== st.inode) {
+    entry.incremental = null
+    return 'fallback'
+  }
+  if (st.size < entry.incremental.byteOffset) {
+    entry.incremental = null
+    broadcast(entry, { kind: 'reset', reason: 'truncated' })
+    return 'handled'
+  }
+
+  const result = await loader.loadEventsFrom(filePath, entry.incremental)
+  entry.incremental = { ...result.state, inode: st.inode }
+  if (result.events.length === 0) return 'handled'
+
+  entry.lastTotal += result.events.length
+  entry.lastNativeTotal += result.events.length
+  broadcast(entry, { kind: 'append', total: entry.lastTotal, newEvents: result.events })
+  return 'handled'
+}
+
+async function reload(source: Source, id: string, filePath: string, entry: Entry, cause: 'native' | 'full' = 'full') {
   if (entry.loading) {
     entry.staleAfterLoad = true
+    entry.pendingCause = cause === 'native' && entry.pendingCause !== 'full' ? 'native' : 'full'
     return
   }
   entry.loading = true
   try {
+    if (cause === 'native') {
+      const handled = await tryIncrementalNativeAppend(source, filePath, entry)
+      if (handled === 'handled') return
+    }
+
     const detail = await loadSessionDetail(source, id, filePath)
     const events = detail?.events ?? []
     const total = events.length
@@ -60,6 +128,7 @@ async function reload(source: Source, id: string, filePath: string, entry: Entry
 
     entry.lastTotal = total
     entry.lastNativeTotal = nativeTotal
+    entry.incremental = boundaryIdx === -1 ? await rebuildIncrementalState(source, filePath) : null
 
     if (first) {
       // 第一次加载由订阅时的 catch-up 路径处理,不通过 watcher 推。
@@ -89,7 +158,9 @@ async function reload(source: Source, id: string, filePath: string, entry: Entry
     if (entry.staleAfterLoad) {
       entry.staleAfterLoad = false
       // 异步触发一次再跑,避免递归。
-      setTimeout(() => reload(source, id, filePath, entry), 0)
+      const nextCause = entry.pendingCause ?? 'full'
+      entry.pendingCause = null
+      setTimeout(() => reload(source, id, filePath, entry, nextCause), 0)
     }
   }
 }
@@ -104,11 +175,17 @@ function broadcast(entry: Entry, msg: WatcherUpdate) {
   }
 }
 
-function schedule(source: Source, id: string, filePath: string, entry: Entry) {
-  if (entry.pending) return
+function schedule(source: Source, id: string, filePath: string, entry: Entry, cause: 'native' | 'full' = 'full') {
+  if (entry.pending) {
+    if (cause !== 'native') entry.pendingCause = 'full'
+    return
+  }
+  entry.pendingCause = cause
   entry.pending = setTimeout(() => {
     entry.pending = null
-    reload(source, id, filePath, entry)
+    const nextCause = entry.pendingCause ?? 'full'
+    entry.pendingCause = null
+    reload(source, id, filePath, entry, nextCause)
   }, 50)
 }
 
@@ -137,23 +214,25 @@ const REBUILD_INTERVAL_MS = 2000
 // 确保两个 watcher 就位;建不齐(文件尚不存在)则周期性重试。
 // 新建成功时触发一次 reload,补上 watch 建立前已写入的内容。
 function ensureWatchers(source: Source, id: string, filePath: string, entry: Entry) {
-  const onChange = () => schedule(source, id, filePath, entry)
+  const onNativeChange = () => schedule(source, id, filePath, entry, 'native')
+  const onFollowupChange = () => schedule(source, id, filePath, entry, 'full')
   let created = false
   if (!entry.nativeWatcher) {
-    entry.nativeWatcher = tryWatch(filePath, onChange, () => {
+    entry.nativeWatcher = tryWatch(filePath, onNativeChange, () => {
       entry.nativeWatcher = null
+      entry.incremental = null
       ensureWatchers(source, id, filePath, entry)
     })
     created ||= entry.nativeWatcher != null
   }
   if (!entry.followupWatcher) {
-    entry.followupWatcher = tryWatch(followupsFile(source, id), onChange, () => {
+    entry.followupWatcher = tryWatch(followupsFile(source, id), onFollowupChange, () => {
       entry.followupWatcher = null
       ensureWatchers(source, id, filePath, entry)
     })
     created ||= entry.followupWatcher != null
   }
-  if (created) schedule(source, id, filePath, entry)
+  if (created) schedule(source, id, filePath, entry, 'full')
 
   if (entry.nativeWatcher && entry.followupWatcher) {
     if (entry.rebuildTimer) {
@@ -187,7 +266,9 @@ export function subscribe(
       rebuildTimer: null,
       lastTotal: -1,
       lastNativeTotal: -1,
+      incremental: null,
       pending: null,
+      pendingCause: null,
       loading: false,
       staleAfterLoad: false,
     }
@@ -200,7 +281,7 @@ export function subscribe(
     ensureWatchers(source, id, filePath, entry)
 
     // 首次加载 → 用于初始化 lastTotal / lastNativeTotal。不广播。
-    reload(source, id, filePath, entry).catch(() => {
+    reload(source, id, filePath, entry, 'full').catch(() => {
       /* 已在 reload 内部处理 */
     })
   }

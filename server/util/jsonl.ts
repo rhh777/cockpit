@@ -15,6 +15,10 @@ export interface JsonlLine {
   parsed: unknown | undefined // undefined = parse 失败
 }
 
+export interface CompleteJsonlLine extends JsonlLine {
+  byteEnd: number
+}
+
 // 流式逐行读 JSONL,大文件(MB 级)不一次性 readFileSync(见 docs/02 §一注意点)。
 export async function* readJsonlLines(filePath: string): AsyncGenerator<JsonlLine> {
   const stream = fs.createReadStream(filePath, { encoding: 'utf8' })
@@ -26,6 +30,44 @@ export async function* readJsonlLines(filePath: string): AsyncGenerator<JsonlLin
     const r = safeJsonParse(raw)
     yield { lineNo, raw, parsed: r.ok ? r.value : undefined }
   }
+}
+
+// 增量 JSONL 专用:只提交以 \n 结尾的完整行。
+// EOF 处半行不 parse、不 warning、不推进 committed offset,下次补全后再处理(docs/12 F1)。
+export async function readJsonlCompleteLinesFrom(
+  filePath: string,
+  state: { byteOffset: number; lineNo: number },
+): Promise<{ lines: CompleteJsonlLine[]; byteOffset: number; lineNo: number; pending?: string }> {
+  const lines: CompleteJsonlLine[] = []
+  const stream = fs.createReadStream(filePath, { start: state.byteOffset })
+  let buffer = Buffer.alloc(0)
+  let committedOffset = state.byteOffset
+  let lineNo = state.lineNo
+
+  for await (const chunk of stream) {
+    const next = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))
+    buffer = Buffer.concat([buffer, next])
+
+    let newlineIdx = buffer.indexOf(0x0a)
+    while (newlineIdx !== -1) {
+      const rawBuffer = buffer.subarray(0, newlineIdx)
+      const lineBytes = newlineIdx + 1
+      committedOffset += lineBytes
+      lineNo++
+
+      const raw = rawBuffer.toString('utf8').replace(/\r$/, '')
+      if (raw.trim()) {
+        const r = safeJsonParse(raw)
+        lines.push({ lineNo, raw, parsed: r.ok ? r.value : undefined, byteEnd: committedOffset })
+      }
+
+      buffer = buffer.subarray(lineBytes)
+      newlineIdx = buffer.indexOf(0x0a)
+    }
+  }
+
+  const pending = buffer.length > 0 ? buffer.toString('utf8') : undefined
+  return { lines, byteOffset: committedOffset, lineNo, pending }
 }
 
 // tool_result 的 content 形状很杂:

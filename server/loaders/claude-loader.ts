@@ -2,13 +2,14 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { CLAUDE_PROJECTS_ROOT } from '../config'
-import { readJsonlLines, stringifyToolResult } from '../util/jsonl'
+import { readJsonlCompleteLinesFrom, readJsonlLines, stringifyToolResult } from '../util/jsonl'
 import { cleanTitle } from '../util/title'
 import type {
   ChatAttachment,
   EventEnvelope,
   LoaderWarning,
   NormalizedEvent,
+  JsonlIncrementalState,
   SessionSourceLoader,
   SessionSummary,
 } from './types'
@@ -204,6 +205,50 @@ export const claudeLoader: SessionSourceLoader = {
     }
     summaryPatch.messageCount = messageCount
     return { summaryPatch, events, warnings }
+  },
+
+  async loadEventsFrom(filePath: string, state: JsonlIncrementalState) {
+    const events: EventEnvelope[] = []
+    const warnings: LoaderWarning[] = []
+    const summaryPatch: Partial<SessionSummary> = {}
+    let messageCount = 0
+    const read = await readJsonlCompleteLinesFrom(filePath, state)
+
+    for (const { lineNo, parsed } of read.lines) {
+      if (parsed === undefined) {
+        warnings.push({ line: lineNo, code: 'json_parse_failed', message: 'invalid JSON line' })
+        continue
+      }
+      const o = parsed as Record<string, unknown>
+      if ((o.type === 'user' || o.type === 'assistant') && o.message) messageCount++
+      if (!summaryPatch.cwd && typeof o.cwd === 'string') summaryPatch.cwd = o.cwd
+      const sourceEventId = typeof o.uuid === 'string' ? o.uuid : undefined
+      const parentEventId = typeof o.parentUuid === 'string' ? o.parentUuid : undefined
+
+      const normalized = normalizeClaudeLine(o)
+      for (const ev of normalized) {
+        events.push({
+          origin: 'native',
+          source: SOURCE,
+          sourceEventId: sourceEventId ? `${sourceEventId}:${ev.type}` : `${filePath}#${lineNo}`,
+          parentEventId,
+          event: ev,
+        })
+      }
+    }
+
+    if (messageCount > 0) summaryPatch.messageCount = messageCount
+    return {
+      state: {
+        ...state,
+        byteOffset: read.byteOffset,
+        lineNo: read.lineNo,
+        pending: read.pending,
+      },
+      events,
+      warnings,
+      summaryPatch,
+    }
   },
 }
 

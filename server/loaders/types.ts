@@ -82,6 +82,21 @@ export interface LoaderWarning {
   message: string
 }
 
+export interface JsonlIncrementalState {
+  byteOffset: number
+  lineNo: number
+  seq?: number
+  inode?: number
+  pending?: string
+}
+
+export interface IncrementalLoadResult {
+  state: JsonlIncrementalState
+  events: EventEnvelope[]
+  warnings: LoaderWarning[]
+  summaryPatch?: Partial<SessionSummary>
+}
+
 export interface SessionDetail {
   summary: SessionSummary
   events: EventEnvelope[]
@@ -101,6 +116,8 @@ export interface SessionSourceLoader {
     events: EventEnvelope[]
     warnings: LoaderWarning[]
   }>
+  /** 详情页 watcher 热路径:从上次完整 JSONL 行 byte offset 后只解析新增完整行(docs/12 F1)。 */
+  loadEventsFrom?(filePath: string, state: JsonlIncrementalState): Promise<IncrementalLoadResult>
   /** Phase 3 实时模式预留口子,MVP 不实现 */
   watchSession?(filePath: string): AsyncIterable<EventEnvelope>
 }

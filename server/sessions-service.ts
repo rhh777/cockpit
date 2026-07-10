@@ -7,10 +7,10 @@ import { cleanTitle } from './util/title'
 
 type NativeLoadResult = { summaryPatch: Partial<SessionSummary>; events: EventEnvelope[]; warnings: any[] }
 
-// 原生解析缓存(docs/12 F1 缓解):watcher 每 50ms 防抖全量 reload,follow-up 流式期间
+// 原生解析缓存(docs/12 F1):watcher 全量路径仍会重读 detail;follow-up 流式期间
 // 变的是 followups.jsonl,原生大文件没动——按 (mtimeMs, size) 命中即复用上次解析结果。
 // 约定:所有消费方只读不改 events 数组与 envelope(现有代码均为 copy-on-use)。
-// 真正的 byte-offset 增量解析(原生文件自身追加的场景)仍是 F1 的后续项。
+// 原生文件自身追加的 watcher 热路径另走 session-watcher 的 byte-offset 增量。
 const nativeParseCache = new Map<string, { mtimeMs: number; size: number; result: NativeLoadResult }>()
 const NATIVE_PARSE_CACHE_MAX = 8
 

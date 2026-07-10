@@ -1,6 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import fsp from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { claudeLoader, normalizeClaudeLine } from './claude-loader'
 import { codexLoader, normalizeCodexLine, resolveCodexUpdatedAt, summarizeCodexFile } from './codex-loader'
@@ -10,6 +13,14 @@ const FIX = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../__
 
 function types(events: { event: NormalizedEvent }[]): string[] {
   return events.map((e) => e.event.type)
+}
+
+function tempJsonl(name: string): string {
+  return path.join(os.tmpdir(), `cockpit-loader-${name}-${randomUUID()}.jsonl`)
+}
+
+async function rmQuiet(filePath: string) {
+  await fsp.rm(filePath, { force: true })
 }
 
 test('claude loader: best-effort, normalizes core event types', async () => {
@@ -168,5 +179,109 @@ test('codex loader: exec_command_begin/end map to tool_use/tool_result', async (
   if (shellResult && shellResult.event.type === 'tool_result') {
     assert.equal(shellResult.event.output, 'hi\n')
     assert.equal(shellResult.event.isError, false)
+  }
+})
+
+test('claude loader: incremental append ids match full parse', async () => {
+  const file = tempJsonl('claude-inc')
+  const line1 = JSON.stringify({
+    type: 'user',
+    uuid: 'u1',
+    timestamp: '2026-07-10T00:00:00.000Z',
+    message: { content: 'hello' },
+  })
+  const line2 = JSON.stringify({
+    type: 'assistant',
+    uuid: 'a1',
+    parentUuid: 'u1',
+    timestamp: '2026-07-10T00:00:01.000Z',
+    message: { content: [{ type: 'text', text: 'hi' }] },
+  })
+
+  try {
+    await fsp.writeFile(file, `${line1}\n`, 'utf8')
+    const first = await claudeLoader.loadEventsFrom!(file, { byteOffset: 0, lineNo: 0 })
+    await fsp.appendFile(file, `${line2}\n`, 'utf8')
+    const inc = await claudeLoader.loadEventsFrom!(file, first.state)
+    const full = await claudeLoader.loadEvents(file)
+
+    assert.deepEqual(
+      [...first.events, ...inc.events].map((e) => e.sourceEventId),
+      full.events.map((e) => e.sourceEventId),
+    )
+  } finally {
+    await rmQuiet(file)
+  }
+})
+
+test('codex loader: incremental seq stays file-wide across appended lines', async () => {
+  const file = tempJsonl('codex-inc')
+  const line1 = JSON.stringify({
+    type: 'event_msg',
+    timestamp: '2026-07-10T00:00:00.000Z',
+    payload: { type: 'user_message', message: 'hello' },
+  })
+  const line2 = JSON.stringify({
+    type: 'event_msg',
+    timestamp: '2026-07-10T00:00:01.000Z',
+    payload: { type: 'agent_message_delta', item_id: 'msg1', delta: 'h' },
+  })
+  const line3 = JSON.stringify({
+    type: 'event_msg',
+    timestamp: '2026-07-10T00:00:02.000Z',
+    payload: { type: 'agent_message', message: 'hi' },
+  })
+
+  try {
+    await fsp.writeFile(file, `${line1}\n`, 'utf8')
+    const first = await codexLoader.loadEventsFrom!(file, { byteOffset: 0, lineNo: 0, seq: 0 })
+    await fsp.appendFile(file, `${line2}\n${line3}\n`, 'utf8')
+    const inc = await codexLoader.loadEventsFrom!(file, first.state)
+    const full = await codexLoader.loadEvents(file)
+
+    assert.deepEqual(
+      [...first.events, ...inc.events].map((e) => e.sourceEventId),
+      full.events.map((e) => e.sourceEventId),
+    )
+    assert.deepEqual(
+      full.events.map((e) => e.sourceEventId),
+      [`${path.basename(file)}#1#0`, `${path.basename(file)}#2#1`, `${path.basename(file)}#3#2`],
+    )
+  } finally {
+    await rmQuiet(file)
+  }
+})
+
+test('incremental jsonl: EOF half-line waits for completion without warning or offset advance', async () => {
+  const file = tempJsonl('half-line')
+  const line1 = JSON.stringify({
+    type: 'user',
+    uuid: 'u1',
+    timestamp: '2026-07-10T00:00:00.000Z',
+    message: { content: 'hello' },
+  })
+  const line2 = JSON.stringify({
+    type: 'assistant',
+    uuid: 'a1',
+    timestamp: '2026-07-10T00:00:01.000Z',
+    message: { content: [{ type: 'text', text: 'done' }] },
+  })
+
+  try {
+    await fsp.writeFile(file, `${line1}\n`, 'utf8')
+    const first = await claudeLoader.loadEventsFrom!(file, { byteOffset: 0, lineNo: 0 })
+    await fsp.appendFile(file, line2.slice(0, 20), 'utf8')
+    const half = await claudeLoader.loadEventsFrom!(file, first.state)
+    assert.equal(half.events.length, 0)
+    assert.equal(half.warnings.length, 0)
+    assert.equal(half.state.byteOffset, first.state.byteOffset)
+    assert.ok(half.state.pending)
+
+    await fsp.appendFile(file, `${line2.slice(20)}\n`, 'utf8')
+    const complete = await claudeLoader.loadEventsFrom!(file, half.state)
+    assert.equal(complete.events.length, 1)
+    assert.equal(complete.events[0].sourceEventId, 'a1:assistant_text')
+  } finally {
+    await rmQuiet(file)
   }
 })

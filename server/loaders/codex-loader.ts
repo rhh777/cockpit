@@ -1,11 +1,12 @@
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { CODEX_SESSIONS_ROOT, CODEX_SESSION_INDEX } from '../config'
-import { readJsonlLines, safeJsonParse } from '../util/jsonl'
+import { readJsonlCompleteLinesFrom, readJsonlLines, safeJsonParse } from '../util/jsonl'
 import { cleanTitle } from '../util/title'
 import type {
   ChatAttachment,
   EventEnvelope,
+  JsonlIncrementalState,
   LoaderWarning,
   NormalizedEvent,
   SessionSourceLoader,
@@ -474,5 +475,64 @@ export const codexLoader: SessionSourceLoader = {
     }
     summaryPatch.messageCount = messageCount
     return { summaryPatch, events, warnings }
+  },
+
+  async loadEventsFrom(filePath: string, state: JsonlIncrementalState) {
+    const events: EventEnvelope[] = []
+    const warnings: LoaderWarning[] = []
+    const summaryPatch: Partial<SessionSummary> = {}
+    let messageCount = 0
+    let seq = state.seq ?? 0
+    const read = await readJsonlCompleteLinesFrom(filePath, state)
+
+    for (const { lineNo, parsed } of read.lines) {
+      if (parsed === undefined) {
+        warnings.push({ line: lineNo, code: 'json_parse_failed', message: 'invalid JSON line' })
+        continue
+      }
+      const o = parsed as Record<string, unknown>
+      const p = o.payload as Record<string, unknown> | undefined
+
+      if (o.type === 'session_meta' && p) {
+        if (typeof p.cwd === 'string') summaryPatch.cwd = p.cwd
+        if (typeof p.timestamp === 'string') summaryPatch.startedAt = p.timestamp
+        continue
+      }
+      const pt = p?.type
+      if (pt === 'user_message' || pt === 'agent_message') messageCount++
+      if (!summaryPatch.title && pt === 'user_message' && p) {
+        const title = cleanTitle(codexMessageText(p))
+        if (title) summaryPatch.title = title
+      }
+
+      const normalized = normalizeCodexLine(o)
+      for (const ev of normalized) {
+        const baseId =
+          ev.type === 'tool_use'
+            ? ev.id
+            : ev.type === 'tool_result'
+              ? ev.toolUseId
+              : `${path.basename(filePath)}#${lineNo}#${seq++}`
+        events.push({
+          origin: 'native',
+          source: SOURCE,
+          sourceEventId: baseId,
+          event: ev,
+        })
+      }
+    }
+    if (messageCount > 0) summaryPatch.messageCount = messageCount
+    return {
+      state: {
+        ...state,
+        byteOffset: read.byteOffset,
+        lineNo: read.lineNo,
+        seq,
+        pending: read.pending,
+      },
+      events,
+      warnings,
+      summaryPatch,
+    }
   },
 }
