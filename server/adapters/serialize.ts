@@ -121,6 +121,13 @@ export function buildGroupContextEvents(
   summary: string,
   targetAgent: AgentName,
   currentAttachments: ChatAttachment[] = [],
+  serial?: {
+    participants: AgentName[]
+    step: number
+    maxSteps: number
+    preset?: string
+    previousAgent?: AgentName
+  },
 ): EventEnvelope[] {
   const recent = transcript
     .filter((env) => env.event.type !== 'meta' && env.event.type !== 'usage')
@@ -143,6 +150,23 @@ export function buildGroupContextEvents(
     '',
     `You are ${agentDisplayName(targetAgent)} participating in a local Cockpit group chat.`,
     'Only answer the current request. The transcript below is the Cockpit source of truth.',
+    ...(serial
+      ? [
+          '',
+          '## Serial Discussion Protocol',
+          `Only one agent speaks at a time. You are ${agentDisplayName(targetAgent)}, step ${serial.step}/${serial.maxSteps}.`,
+          `Participants: ${serial.participants.map(agentDisplayName).join(', ')}.`,
+          serial.previousAgent ? `Previous speaker: ${agentDisplayName(serial.previousAgent)}.` : 'You are the first speaker.',
+          serial.preset === 'implementation-first'
+            ? 'Preset: implementation first, architecture review second. Inspect code paths, data flow, tests, and edge cases; if product or architecture tradeoffs need review, set Next to another participant.'
+            : serial.preset === 'peer-review'
+            ? 'Preset: peer review. Add only new risks, corrections, or explicit agreement; avoid repeating settled points.'
+            : 'Preset: architecture first, implementation review second. Assess goals, boundaries, risks, and solution shape; if implementation details, code paths, tests, or edge cases need review, set Next to another participant.',
+          'End every response with exactly two protocol lines:',
+          'Next: @agent-or-@user',
+          'Status: needs-review | needs-changes | consensus | blocked',
+        ]
+      : []),
     '',
     '## Shared Summary',
     summary.trim() || '(empty)',

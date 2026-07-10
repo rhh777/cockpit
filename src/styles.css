@@ -1903,6 +1903,60 @@ body.resizing * {
   background: color-mix(in srgb, var(--color-text-secondary) 8%, transparent);
 }
 
+.serial-turn-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 4px 0 8px 68px;
+  padding: 4px 10px;
+  width: fit-content;
+  border-radius: 999px;
+  font-size: var(--small-font-size);
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-background-tertiary) 60%, transparent);
+  border: 0.5px solid color-mix(in srgb, var(--color-border), transparent 48%);
+}
+
+.serial-turn-status.completed {
+  color: var(--color-text-success);
+  background: color-mix(in srgb, var(--color-text-success) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-text-success) 18%, transparent);
+}
+
+.serial-turn-status.failed {
+  color: var(--color-text-danger);
+  background: color-mix(in srgb, var(--color-text-danger) 7%, transparent);
+  border-color: color-mix(in srgb, var(--color-text-danger) 16%, transparent);
+}
+
+.serial-protocol-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 3px 9px;
+  width: fit-content;
+  border-radius: 999px;
+  font-size: var(--small-font-size);
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-background-tertiary) 70%, transparent);
+  border: 0.5px solid color-mix(in srgb, var(--color-border), transparent 45%);
+}
+
+.serial-protocol-chip.consensus {
+  color: var(--color-text-success);
+  background: color-mix(in srgb, var(--color-text-success) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-text-success) 18%, transparent);
+}
+
+.serial-protocol-chip.blocked,
+.serial-protocol-chip.needs-changes {
+  color: #b45309;
+  background: color-mix(in srgb, #f59e0b 9%, transparent);
+  border-color: color-mix(in srgb, #f59e0b 18%, transparent);
+}
+
 .empty {
   flex: 1;
   display: flex;
@@ -3646,8 +3700,44 @@ body.resizing * {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   min-width: 0;
+}
+.group-composer-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.group-composer-controls::-webkit-scrollbar {
+  display: none;
+}
+.serial-step-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 0.5px solid color-mix(in srgb, var(--color-border) 82%, transparent);
+  background: color-mix(in srgb, var(--color-surface-elevated) 92%, transparent);
+  color: var(--color-text-secondary);
+  font-size: var(--compact-font-size);
+  white-space: nowrap;
+}
+.serial-step-control input {
+  width: 42px;
+  height: 22px;
+  border-radius: 5px;
+  border: 0.5px solid color-mix(in srgb, var(--color-border) 82%, transparent);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-size: var(--compact-font-size);
+  text-align: center;
 }
 .group-model-settings .model-picker {
   margin-left: 0;
@@ -3682,9 +3772,9 @@ body.resizing * {
 }
 .group-model-picker .model-picker-btn {
   min-height: 34px;
-  min-width: 118px;
-  max-width: 224px;
-  padding: 4px 8px 4px 9px;
+  min-width: 168px;
+  max-width: none;
+  padding: 4px 22px 4px 9px;
   gap: 6px;
   border-radius: 8px;
   background:
@@ -3692,6 +3782,51 @@ body.resizing * {
   color: var(--color-text-primary);
   font-weight: 620;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.58);
+}
+.group-model-picker.enabled .model-picker-btn {
+  border-width: 1px;
+  border-color: color-mix(in srgb, var(--color-followup) 44%, var(--color-border));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-followup) 10%, var(--color-background-primary)), var(--color-background-secondary));
+  box-shadow:
+    inset 3px 0 0 color-mix(in srgb, var(--color-followup) 64%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--color-followup) 10%, transparent),
+    0 1px 2px rgba(0, 0, 0, 0.05);
+}
+.group-model-picker.disabled .model-picker-btn {
+  min-width: 118px;
+  padding-right: 8px;
+  color: var(--color-text-tertiary);
+  opacity: 0.56;
+  background: color-mix(in srgb, var(--color-surface-elevated) 58%, transparent);
+  box-shadow: none;
+}
+.group-model-picker.disabled .model-picker-btn:hover {
+  opacity: 0.86;
+  color: var(--color-text-secondary);
+  border-color: color-mix(in srgb, var(--color-border) 88%, transparent);
+  background: color-mix(in srgb, var(--color-surface-elevated) 78%, transparent);
+}
+.group-agent-remove {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 17px;
+  height: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 0.5px solid color-mix(in srgb, var(--color-border) 86%, transparent);
+  background: var(--color-background-primary);
+  color: var(--color-text-tertiary);
+  opacity: 0.72;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.08);
+}
+.group-agent-remove:hover {
+  opacity: 1;
+  color: var(--color-danger, #b42318);
+  border-color: color-mix(in srgb, var(--color-danger, #b42318) 36%, var(--color-border));
 }
 .group-model-picker.configured .model-picker-btn {
   min-width: 172px;
@@ -3758,9 +3893,19 @@ body.resizing * {
   flex-direction: column;
   gap: 1px;
 }
+.model-popover.fixed-popover {
+  position: fixed;
+  bottom: auto;
+  right: auto;
+  z-index: 200;
+  overflow-y: auto;
+}
+.model-popover.fixed-popover.open-up {
+  transform: translateY(calc(-100% - 8px));
+}
 /* 群聊模式:左侧(第一个)按钮的弹出框向右展开,避免向左溢出被左侧栏遮挡;
    右侧按钮保持 right:0 向左展开。两边都朝 composer 内部展开。 */
-.group-model-settings > :first-child .model-popover {
+.group-model-settings > :first-child .model-popover:not(.fixed-popover) {
   left: 0;
   right: auto;
 }

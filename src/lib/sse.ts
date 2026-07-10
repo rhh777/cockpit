@@ -35,6 +35,7 @@ export type GroupStreamMessage =
       runs: { agent: string; runId: string }[]
     }
   | { kind: 'run_phase'; groupTurnId: string; runId: string; agent: string; phase: RunPhase }
+  | { kind: 'serial_step'; groupTurnId: string; step: number; maxSteps: number; agent: string; runId: string }
   | { kind: 'event'; groupTurnId: string; runId?: string; agent?: string; envelope: EventEnvelope }
   | {
       kind: 'run_done'
@@ -45,7 +46,7 @@ export type GroupStreamMessage =
       message?: string
     }
   | { kind: 'summary'; markdown: string; parsed?: unknown }
-  | { kind: 'done'; groupTurnId: string; status: 'completed' | 'partial' | 'failed'; message?: string }
+  | { kind: 'done'; groupTurnId: string; status: 'completed' | 'partial' | 'failed' | 'aborted'; message?: string }
   | { kind: 'error'; groupTurnId?: string; message: string }
 
 export interface SendFollowupBody {
@@ -192,7 +193,16 @@ export async function startGroupRun(
   id: string,
   body: {
     text: string
+    mode?: 'parallel' | 'serial'
     targetAgents?: string[]
+    participants?: string[]
+    serial?: {
+      participants?: string[]
+      firstAgent?: string
+      maxSteps?: number
+      stopOnConsensus?: boolean
+      preset?: 'architecture-first' | 'implementation-first' | 'peer-review'
+    }
     useTools?: boolean
     cliByAgent?: Partial<Record<string, { model?: string; effort?: string }>>
     attachments?: ChatAttachmentDraft[]
@@ -206,6 +216,7 @@ export async function startGroupRun(
   records: RunRecord[]
   userEnvelope: EventEnvelope
   turnStart?: EventEnvelope
+  mode?: 'parallel' | 'serial'
 }> {
   const res = await fetch(`/api/group-threads/${encodeURIComponent(id)}/runs`, {
     method: 'POST',
@@ -222,6 +233,30 @@ export async function startGroupRun(
     throw new Error(detail)
   }
   return res.json()
+}
+
+export async function attachGroupTurnStream(
+  id: string,
+  groupTurnId: string,
+  onMessage: (msg: RunStreamMessage) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const res = await fetch(
+    `/api/group-threads/${encodeURIComponent(id)}/turns/${encodeURIComponent(groupTurnId)}/stream`,
+    { signal },
+  )
+  await readSse<RunStreamMessage>(res, onMessage)
+}
+
+export async function cancelGroupTurn(id: string, groupTurnId: string): Promise<void> {
+  await fetch(
+    `/api/group-threads/${encodeURIComponent(id)}/turns/${encodeURIComponent(groupTurnId)}/cancel`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+  )
 }
 
 export type SessionStreamMessage =

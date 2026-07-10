@@ -20,6 +20,16 @@ function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body))
 }
 
+function openSse(req: IncomingMessage, res: ServerResponse) {
+  res.statusCode = 200
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
+  res.setHeader('Cache-Control', 'no-cache, no-transform')
+  res.setHeader('Connection', 'keep-alive')
+  res.setHeader('X-Accel-Buffering', 'no')
+  req.socket?.setNoDelay?.(true)
+  res.flushHeaders?.()
+}
+
 async function readBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = []
   for await (const c of req) chunks.push(c as Buffer)
@@ -123,7 +133,16 @@ async function handleStartRun(req: IncomingMessage, res: ServerResponse, id: str
   const body = (await readBody(req)) as {
     text?: string
     useTools?: boolean
+    mode?: 'parallel' | 'serial'
     targetAgents?: AgentName[]
+    participants?: AgentName[]
+    serial?: {
+      participants?: AgentName[]
+      firstAgent?: AgentName
+      maxSteps?: number
+      stopOnConsensus?: boolean
+      preset?: 'architecture-first' | 'implementation-first' | 'peer-review'
+    }
     cliByAgent?: Partial<Record<AgentName, { model?: string; effort?: string }>>
     attachments?: AttachmentDraft[]
     permissions?: unknown
@@ -138,12 +157,47 @@ async function handleStartRun(req: IncomingMessage, res: ServerResponse, id: str
 
   const mentions = parseMentions(text)
   const memberSet = new Set(state.agents)
-  const targetAgents = mentions.filter((a) => memberSet.has(a))
+  const mode = body.mode === 'serial' ? 'serial' : 'parallel'
+  const rawParticipants =
+    Array.isArray(body.participants) && body.participants.length
+      ? body.participants
+      : Array.isArray(body.serial?.participants) && body.serial.participants.length
+        ? body.serial.participants
+        : state.agents
+  const participants = [...new Set(rawParticipants.filter((a) => memberSet.has(a)))]
+  const participantSet = new Set(participants)
+  const targetAgents =
+    mode === 'serial'
+      ? []
+      : mentions.filter((a) => memberSet.has(a) && participantSet.has(a))
+  const firstFromBody = body.serial?.firstAgent ?? body.targetAgents?.[0] ?? mentions[0]
+  const firstAgent = firstFromBody && memberSet.has(firstFromBody) ? firstFromBody : participants[0]
+  if (mode === 'serial') {
+    if (participants.length === 0) {
+      sendJson(res, 400, { error: 'serial participants required' })
+      return
+    }
+    if (!firstAgent || !participants.includes(firstAgent)) {
+      sendJson(res, 400, { error: 'serial firstAgent must be a participant' })
+      return
+    }
+  }
   try {
     const started = await runRegistry.startGroupTurn({
       id,
       text,
-      targetAgents,
+      targetAgents: mode === 'serial' ? [firstAgent] : targetAgents,
+      mode,
+      serial:
+        mode === 'serial'
+          ? {
+              participants,
+              firstAgent,
+              maxSteps: Math.max(2, Math.min(body.serial?.maxSteps ?? 6, 20)),
+              stopOnConsensus: body.serial?.stopOnConsensus !== false,
+              preset: body.serial?.preset ?? 'architecture-first',
+            }
+          : undefined,
       useTools: body.useTools ?? true,
       permissions: normalizeRunPermissions(body.permissions),
       cliByAgent: body.cliByAgent,
@@ -203,6 +257,18 @@ export async function handleGroupThreadsRoute(
 
   if (req.method === 'POST' && parts.length === 6 && parts[3] === 'turns' && parts[5] === 'cancel') {
     await handleCancel(res, id, req)
+    return true
+  }
+
+  if (req.method === 'GET' && parts.length === 6 && parts[3] === 'turns' && parts[5] === 'stream') {
+    const groupTurnId = decodeURIComponent(parts[4])
+    if (!runRegistry.getGroupTurn(id, groupTurnId)) {
+      sendJson(res, 404, { error: 'group turn not found' })
+      return true
+    }
+    openSse(req, res)
+    const detach = runRegistry.attachGroupTurn(id, groupTurnId, res)
+    req.on('close', () => detach?.())
     return true
   }
 

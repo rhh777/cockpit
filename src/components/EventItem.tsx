@@ -21,6 +21,9 @@ const META_HIDDEN_KEYS = new Set([
   'task_complete',
   'turn_aborted',
   'turn_start',
+  'serial_step_start',
+  'user_notification',
+  'codex_thread_started',
   'unknown',
   // Claude:attachment 是注入给模型的上下文增量(mcp_instructions_delta、todo_reminder、
   // hook_additional_context、file/directory 快照等),不是用户/模型可见内容。
@@ -139,6 +142,7 @@ export function EventItem({
     case 'assistant_text': {
       const a = agentAvatarClass(ev.agent)
       const agentName = ev.agent ?? 'assistant'
+      const serial = parseSerialProtocol(ev.text)
       return (
         <div className="event assistant" data-agent={a.cls}>
           <div className={`avatar ${a.cls}`}>
@@ -147,7 +151,13 @@ export function EventItem({
           <div className="bubble">
             <div className="event-name">{agentLabel(agentName)}</div>
             <div className="bubble-body">
-              <Markdown text={ev.text} />
+              <Markdown text={serial.body || ev.text} />
+              {serial.status && serial.status !== 'consensus' && (
+                <div className={`serial-protocol-chip ${serial.status}`}>
+                  <Icon name={serial.status === 'consensus' ? 'check' : serial.status === 'blocked' ? 'alert-triangle' : 'chevron-right'} size={13} />
+                  <span>{serialProtocolLabel(serial.status, serial.next)}</span>
+                </div>
+              )}
             </div>
             <BubbleFooter
               precedingGroup={precedingGroup}
@@ -216,6 +226,17 @@ export function EventItem({
           </div>
         )
       }
+      if (ev.key === 'serial_turn_status') {
+        const v = (ev.value ?? {}) as { status?: string; reason?: string; steps?: number; message?: string }
+        const title = serialTurnStatusText(v)
+        if (!title) return null
+        return (
+          <div className={`serial-turn-status ${v.status ?? 'completed'}`} title={v.message}>
+            <Icon name={v.status === 'failed' ? 'alert-triangle' : v.status === 'aborted' ? 'close' : 'check'} size={13} />
+            <span>{title}</span>
+          </div>
+        )
+      }
       // 其它噪音 meta:不渲染,让 timeline 留给真正有信息量的事件。
       if (META_HIDDEN_KEYS.has(ev.key)) return null
       return (
@@ -231,6 +252,54 @@ export function EventItem({
     default:
       return null
   }
+}
+
+function parseSerialProtocol(text: string): { body: string; next?: string; status?: string } {
+  const lines = text.split(/\r?\n/)
+  let next: string | undefined
+  let status: string | undefined
+  let cut = lines.length
+  for (let i = lines.length - 1; i >= 0 && i >= lines.length - 6; i--) {
+    const line = lines[i].trim()
+    const nextMatch = line.match(/^next\s*[:：]\s*(.+)$/i)
+    const statusMatch = line.match(/^status\s*[:：]\s*([a-z-]+)$/i)
+    const inlineMatch = line.match(/^next\s*[:：]\s*(.+?)\s+status\s*[:：]\s*([a-z-]+)$/i)
+    if (inlineMatch) {
+      next = inlineMatch[1].trim()
+      status = inlineMatch[2].trim().toLowerCase()
+      cut = i
+      continue
+    }
+    if (nextMatch) {
+      next = nextMatch[1].trim()
+      cut = i
+      continue
+    }
+    if (statusMatch) {
+      status = statusMatch[1].trim().toLowerCase()
+      cut = i
+    }
+  }
+  if (!next && !status) return { body: text }
+  return { body: lines.slice(0, cut).join('\n').trim(), next, status }
+}
+
+function serialProtocolLabel(status: string, next?: string): string {
+  if (status === 'consensus') return '接力讨论已达成一致'
+  if (status === 'blocked') return '接力讨论需要你处理'
+  const nextLabel = next?.match(/@(claude|codex|opencode|cursor|user)\b/i)?.[1]
+  if (nextLabel && nextLabel.toLowerCase() !== 'user') return `建议交给 ${agentLabel(nextLabel.toLowerCase())}`
+  if (status === 'needs-changes') return '接力讨论发现需要修改'
+  return '接力讨论等待下一步'
+}
+
+function serialTurnStatusText(v: { status?: string; reason?: string; steps?: number }): string | null {
+  if (v.reason === 'protocol-missing') return null
+  if (v.status === 'completed' && v.reason === 'consensus') return `接力讨论已完成 · 达成一致${v.steps ? ` · ${v.steps} 步` : ''}`
+  if (v.status === 'completed') return `接力讨论已完成${v.steps ? ` · ${v.steps} 步` : ''}`
+  if (v.status === 'aborted') return '接力讨论已取消'
+  if (v.status === 'failed') return `接力讨论已停止 · ${v.reason ?? '失败'}`
+  return null
 }
 
 function AttachmentReferences({

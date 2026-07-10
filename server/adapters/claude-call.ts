@@ -479,9 +479,7 @@ function normalizeSdkMessage(message: SDKMessage, streamedTextMsgIds: Set<string
     for (const [idx, part] of (content as Record<string, any>[]).entries()) {
       const streamId = `${msgId}:${idx}`
       if (part.type === 'text' && typeof part.text === 'string') {
-        if (!streamedTextMsgIds.has(streamId)) {
-          out.push({ type: 'assistant_text', text: part.text, ts, agent: 'claude', streamId })
-        }
+        out.push({ type: 'assistant_text', text: part.text, ts, agent: 'claude', streamId })
       } else if (part.type === 'thinking' && typeof part.thinking === 'string' && part.thinking.trim()) {
         // 空明文跳过 —— 见 normalizeClaudeFinalMessage 的同名分支说明。
         out.push({ type: 'thinking', text: part.thinking, ts })

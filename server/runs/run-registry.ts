@@ -5,6 +5,7 @@ import { agentForNativeSource, resolveAgent } from '../adapters/registry'
 import { filterToolResult, redactSecrets } from '../adapters/sensitive'
 import { buildGroupContextEvents } from '../adapters/serialize'
 import { renderAttachmentLines } from '../util/attachments'
+import { parseSerialDirective, selectNextAgentFromDirective } from '../util/serial-directive'
 import { projectContextEvents } from '../adapters/context-projector'
 import { threadContextStore } from '../store/thread-context-store'
 import { scheduleSummaryRefresh } from '../adapters/summary-refresh'
@@ -75,7 +76,8 @@ export type RunStreamMessage =
       status: 'completed' | 'failed' | 'aborted'
       message?: string
     }
-  | { kind: 'done'; groupTurnId: string; status: 'completed' | 'partial' | 'failed'; message?: string }
+  | { kind: 'done'; groupTurnId: string; status: 'completed' | 'partial' | 'failed' | 'aborted'; message?: string }
+  | { kind: 'serial_step'; groupTurnId: string; step: number; maxSteps: number; agent: AgentName; runId: string }
 
 interface FollowupStartInput {
   source: Source
@@ -97,6 +99,18 @@ interface GroupTurnStartInput {
   id: string
   text: string
   targetAgents: AgentName[]
+  mode?: 'parallel' | 'serial'
+  serial?: {
+    participants: AgentName[]
+    firstAgent: AgentName
+    maxSteps: number
+    stopOnConsensus: boolean
+    preset?: 'architecture-first' | 'implementation-first' | 'peer-review'
+  }
+  serialContext?: {
+    step: number
+    previousAgent?: AgentName
+  }
   useTools: boolean
   permissions: RunPermissions
   cliByAgent?: Partial<Record<AgentName, { model?: string; effort?: string }>>
@@ -136,7 +150,7 @@ class RunHandle {
   readonly alwaysGrantedKinds = new Set<Operation['kind']>()
   private terminal: RunStatus | null = null
 
-  constructor(public record: RunRecord) {}
+  constructor(public record: RunRecord, private readonly onWrite?: (msg: RunStreamMessage) => void) {}
 
   write(msg: RunStreamMessage) {
     // 打字机 delta 逐条进 replay 会让长回复的 replay 涨到数万条(docs/12 G1)。
@@ -144,6 +158,7 @@ class RunHandle {
     // 重连 attach 时收到的是合并结果(UI 端 buildTimeline 本来就按 streamId 拼接,语义等价)。
     if (!this.mergeDeltaIntoReplay(msg)) this.replay.push(msg)
     for (const sub of this.subscribers.values()) sseWrite(sub.res, msg)
+    this.onWrite?.(msg)
   }
 
   private mergeDeltaIntoReplay(msg: RunStreamMessage): boolean {
@@ -190,6 +205,10 @@ interface ActiveGroupTurn {
   groupTurnId: string
   baseEventSeq: number
   runIds: string[]
+  mode?: 'parallel' | 'serial'
+  aborted?: boolean
+  subscribers: Map<string, Subscriber>
+  replay: RunStreamMessage[]
 }
 
 function sseWrite(res: ServerResponse, msg: unknown) {
@@ -289,6 +308,7 @@ function overallGroupStatus(statuses: RunStatus[]): 'completed' | 'partial' | 'f
 class RunRegistry {
   private runs = new Map<string, RunHandle>()
   private groupTurns = new Map<string, ActiveGroupTurn>()
+  private completedGroupTurns = new Map<string, ActiveGroupTurn>()
   private approvalWaiters = new Map<string, (status: ApprovalDecision) => void>()
   private initialized = false
 
@@ -300,6 +320,69 @@ class RunRegistry {
 
   get(runId: string): RunHandle | undefined {
     return this.runs.get(runId)
+  }
+
+  getGroupTurn(groupThreadId: string, groupTurnId: string): ActiveGroupTurn | undefined {
+    const active = this.groupTurns.get(groupThreadId)
+    if (active?.groupTurnId === groupTurnId) return active
+    return this.completedGroupTurns.get(`${groupThreadId}:${groupTurnId}`)
+  }
+
+  attachGroupTurn(groupThreadId: string, groupTurnId: string, res: ServerResponse) {
+    const active = this.getGroupTurn(groupThreadId, groupTurnId)
+    if (!active) return undefined
+    const id = randomUUID()
+    active.subscribers.set(id, { id, res })
+    for (const msg of active.replay) sseWrite(res, msg)
+    return () => {
+      active.subscribers.delete(id)
+    }
+  }
+
+  private makeActiveGroupTurn(
+    groupTurnId: string,
+    baseEventSeq: number,
+    runIds: string[] = [],
+    mode: 'parallel' | 'serial' = 'parallel',
+  ): ActiveGroupTurn {
+    return { groupTurnId, baseEventSeq, runIds, mode, subscribers: new Map(), replay: [] }
+  }
+
+  private writeGroupTurn(groupThreadId: string | undefined, groupTurnId: string | undefined, msg: RunStreamMessage) {
+    if (!groupThreadId || !groupTurnId) return
+    const active = this.getGroupTurn(groupThreadId, groupTurnId)
+    if (!active) return
+    active.replay.push(msg)
+    for (const sub of active.subscribers.values()) sseWrite(sub.res, msg)
+  }
+
+  private archiveGroupTurnReplay(groupThreadId: string, groupTurnId: string) {
+    const active = this.getGroupTurn(groupThreadId, groupTurnId)
+    if (!active) return
+    const key = `${groupThreadId}:${groupTurnId}`
+    this.completedGroupTurns.set(key, active)
+    setTimeout(() => {
+      if (this.completedGroupTurns.get(key) === active) this.completedGroupTurns.delete(key)
+    }, 5 * 60 * 1000).unref?.()
+  }
+
+  private makeGroupHandle(record: RunRecord): RunHandle {
+    return new RunHandle(record, (msg) => {
+      if ('groupTurnId' in msg) this.writeGroupTurn(record.groupThreadId, record.turnId, msg)
+    })
+  }
+
+  private createGroupRunRecord(input: GroupTurnStartInput, groupTurnId: string, agent: AgentName, startedAt: string): RunRecord {
+    return {
+      runId: `run_${randomUUID()}`,
+      kind: 'group-member',
+      status: 'running',
+      groupThreadId: input.id,
+      turnId: groupTurnId,
+      agent,
+      permissions: input.permissions,
+      startedAt,
+    }
   }
 
   listRunningForSession(source: Source, sessionId: string): RunRecord[] {
@@ -366,14 +449,17 @@ class RunRegistry {
     records: RunRecord[]
     userEnvelope: EventEnvelope
     turnStart?: EventEnvelope
+    mode?: 'parallel' | 'serial'
   }> {
     await this.init()
+    const serialMode = input.mode === 'serial'
+    if (serialMode) return this.startSerialGroupTurn(input)
     const wake = input.targetAgents.length > 0
     // 互斥必须在任何 await 之前同步占位,否则并发两次唤醒都能通过 has() 检查(docs/12 G2)。
     // 失败路径在 catch 里回滚占位;成功后被真实 ActiveGroupTurn 覆盖。
     if (wake) {
       if (this.groupTurns.has(input.id)) throw new Error('group turn already running')
-      this.groupTurns.set(input.id, { groupTurnId: 'pending', baseEventSeq: -1, runIds: [] })
+      this.groupTurns.set(input.id, this.makeActiveGroupTurn('pending', -1))
     }
     try {
       const state = await groupThreadStore.readState(input.id)
@@ -422,7 +508,7 @@ class RunRegistry {
       await groupThreadStore.appendEvent(input.id, turnStart)
 
       const handles = records.map((record) => {
-        const handle = new RunHandle(record)
+        const handle = this.makeGroupHandle(record)
         handle.write({ kind: 'meta', groupTurnId, baseEventSeq, runs: records.map(({ agent, runId }) => ({ agent, runId })) })
         emitPhase(handle, 'queued')
         handle.write({ kind: 'event', groupTurnId, envelope: userEnvelope })
@@ -430,7 +516,7 @@ class RunRegistry {
         this.runs.set(record.runId, handle)
         return handle
       })
-      this.groupTurns.set(input.id, { groupTurnId, baseEventSeq, runIds: records.map((r) => r.runId) })
+      this.groupTurns.set(input.id, this.makeActiveGroupTurn(groupTurnId, baseEventSeq, records.map((r) => r.runId)))
 
       const transcript = (await groupThreadStore.readTranscript(input.id)).slice(0, baseEventSeq)
       const summary = await groupThreadStore.readSummary(input.id)
@@ -448,6 +534,243 @@ class RunRegistry {
       if (wake) this.groupTurns.delete(input.id)
       throw err
     }
+  }
+
+  private async startSerialGroupTurn(input: GroupTurnStartInput): Promise<{
+    groupTurnId: string
+    baseEventSeq: number
+    records: RunRecord[]
+    userEnvelope: EventEnvelope
+    turnStart: EventEnvelope
+    mode: 'serial'
+  }> {
+    if (!input.serial) throw new Error('serial options required')
+    if (this.groupTurns.has(input.id)) throw new Error('group turn already running')
+    this.groupTurns.set(input.id, this.makeActiveGroupTurn('pending', -1, [], 'serial'))
+    try {
+      const state = await groupThreadStore.readState(input.id)
+      if (!state) throw new Error('group thread not found')
+
+      const groupTurnId = `turn_${randomUUID()}`
+      const now = new Date().toISOString()
+      const participants = input.serial.participants
+      const firstAgent = input.serial.firstAgent
+      const userEnvelope = wrapGroup(
+        {
+          type: 'user_text',
+          text: input.text,
+          ts: now,
+          targetAgents: [firstAgent],
+          mentions: [firstAgent],
+          ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+        },
+        groupTurnId,
+      )
+      const baseEventSeq = await groupThreadStore.appendEvent(input.id, userEnvelope)
+      const firstRecord = this.createGroupRunRecord(input, groupTurnId, firstAgent, now)
+      await runStore.append(firstRecord)
+      const turnStart = wrapGroup(
+        {
+          type: 'meta',
+          key: 'turn_start',
+          value: {
+            groupTurnId,
+            mode: 'serial',
+            baseEventSeq,
+            targetAgents: [firstAgent],
+            participants,
+            serial: input.serial,
+            runs: [{ runId: firstRecord.runId, agent: firstAgent, turnId: groupTurnId, baseEventSeq, status: 'running' }],
+            permissions: input.permissions,
+          },
+          ts: now,
+        },
+        groupTurnId,
+      )
+      await groupThreadStore.appendEvent(input.id, turnStart)
+      this.groupTurns.set(input.id, this.makeActiveGroupTurn(groupTurnId, baseEventSeq, [firstRecord.runId], 'serial'))
+
+      const handle = this.makeGroupHandle(firstRecord)
+      handle.write({ kind: 'meta', groupTurnId, baseEventSeq, runs: [{ agent: firstAgent, runId: firstRecord.runId }] })
+      emitPhase(handle, 'queued')
+      handle.write({ kind: 'event', groupTurnId, envelope: userEnvelope })
+      handle.write({ kind: 'event', groupTurnId, envelope: turnStart })
+      this.runs.set(firstRecord.runId, handle)
+
+      void this.executeSerialGroupTurn(input, state.cwd, baseEventSeq, handle).catch((err) => {
+        const message = String((err as Error)?.message ?? err)
+        void this.finishSerialTurn(input.id, groupTurnId, 'failed', 'agent-failed', 0, message)
+      })
+
+      return { groupTurnId, baseEventSeq, records: [firstRecord], userEnvelope, turnStart, mode: 'serial' }
+    } catch (err) {
+      this.groupTurns.delete(input.id)
+      throw err
+    }
+  }
+
+  private serialRequest(original: string, step: number, maxSteps: number): string {
+    return [
+      original,
+      '',
+      `Serial discussion step ${step}/${maxSteps}.`,
+      'Respond to the user task and previous discussion. End with exactly:',
+      'Next: @agent-or-@user',
+      'Status: needs-review | needs-changes | consensus | blocked',
+    ].join('\n')
+  }
+
+  private latestAssistantText(transcript: EventEnvelope[], runId: string): string {
+    const parts = transcript
+      .filter((env) => env.runId === runId && env.event.type === 'assistant_text')
+      .map((env) => (env.event.type === 'assistant_text' ? env.event.text : ''))
+    return parts.join('\n').trim()
+  }
+
+  private async executeSerialGroupTurn(
+    input: GroupTurnStartInput,
+    cwd: string | null,
+    baseEventSeq: number,
+    firstHandle: RunHandle,
+  ): Promise<void> {
+    const serial = input.serial
+    if (!serial) return
+    const groupTurnId = firstHandle.record.turnId
+    let currentHandle: RunHandle | null = firstHandle
+    let currentAgent = serial.firstAgent
+    let previousAgent: AgentName | undefined
+    let completedSteps = 0
+    let stopReason: 'no-next-agent' | 'consensus' | 'max-steps' | 'protocol-missing' | 'agent-failed' | 'aborted' = 'max-steps'
+    let stopMessage: string | undefined
+    try {
+      const summary = await groupThreadStore.readSummary(input.id)
+      for (let step = 1; step <= serial.maxSteps; step++) {
+        const active = this.getGroupTurn(input.id, groupTurnId)
+        if (!active || active.aborted) {
+          stopReason = 'aborted'
+          break
+        }
+        const handle = currentHandle ?? this.makeGroupHandle(this.createGroupRunRecord(input, groupTurnId, currentAgent, new Date().toISOString()))
+        if (!currentHandle) {
+          await runStore.append(handle.record)
+          active.runIds.push(handle.record.runId)
+          this.runs.set(handle.record.runId, handle)
+          handle.write({ kind: 'meta', groupTurnId, baseEventSeq, runs: [{ agent: currentAgent, runId: handle.record.runId }] })
+          emitPhase(handle, 'queued')
+        }
+        const stepStart = wrapGroup(
+          {
+            type: 'meta',
+            key: 'serial_step_start',
+            value: { groupTurnId, step, maxSteps: serial.maxSteps, agent: currentAgent, requestedBy: previousAgent ?? 'user' },
+            ts: new Date().toISOString(),
+          },
+          groupTurnId,
+          handle.record.runId,
+        )
+        await groupThreadStore.appendEvent(input.id, stepStart)
+        handle.write({ kind: 'serial_step', groupTurnId, step, maxSteps: serial.maxSteps, agent: currentAgent, runId: handle.record.runId })
+        handle.write({ kind: 'event', groupTurnId, runId: handle.record.runId, agent: currentAgent, envelope: stepStart })
+
+        const transcript = (await groupThreadStore.readTranscript(input.id)).slice(0, step === 1 ? baseEventSeq : undefined)
+        await this.executeGroupMember(
+          handle,
+          {
+            ...input,
+            text: this.serialRequest(input.text, step, serial.maxSteps),
+            serialContext: { step, previousAgent },
+          },
+          cwd,
+          transcript,
+          summary,
+          baseEventSeq,
+        )
+        completedSteps = step
+        if (handle.record.status !== 'completed') {
+          stopReason = handle.record.status === 'aborted' ? 'aborted' : 'agent-failed'
+          stopMessage = handle.record.error
+          break
+        }
+        const activeAfter = this.getGroupTurn(input.id, groupTurnId)
+        if (!activeAfter || activeAfter.aborted) {
+          stopReason = 'aborted'
+          break
+        }
+        const latest = this.latestAssistantText(await groupThreadStore.readTranscript(input.id), handle.record.runId)
+        const directive = parseSerialDirective(latest)
+        if (!directive.ok) {
+          stopReason = 'protocol-missing'
+          stopMessage = directive.error
+          break
+        }
+        if (serial.stopOnConsensus && directive.status === 'consensus') {
+          stopReason = 'consensus'
+          break
+        }
+        if (directive.next === '@user' || directive.status === 'blocked') {
+          stopReason = 'no-next-agent'
+          break
+        }
+        const next = selectNextAgentFromDirective(directive, serial.participants, currentAgent)
+        if (!next) {
+          stopReason = 'no-next-agent'
+          break
+        }
+        previousAgent = currentAgent
+        currentAgent = next
+        currentHandle = null
+      }
+      await this.finishSerialTurn(
+        input.id,
+        groupTurnId,
+        stopReason === 'aborted' ? 'aborted' : stopReason === 'agent-failed' || stopReason === 'protocol-missing' ? 'failed' : 'completed',
+        stopReason,
+        completedSteps,
+        stopMessage,
+      )
+    } finally {
+      this.archiveGroupTurnReplay(input.id, groupTurnId)
+      this.groupTurns.delete(input.id)
+    }
+  }
+
+  private async finishSerialTurn(
+    id: string,
+    groupTurnId: string,
+    status: 'completed' | 'failed' | 'aborted',
+    reason: string,
+    steps: number,
+    message?: string,
+  ) {
+    const now = new Date().toISOString()
+    const statusEnv = wrapGroup(
+      {
+        type: 'meta',
+        key: 'serial_turn_status',
+        value: { groupTurnId, status, reason, steps, ...(message ? { message } : {}) },
+        ts: now,
+      },
+      groupTurnId,
+    )
+    await groupThreadStore.appendEvent(id, statusEnv)
+    this.writeGroupTurn(id, groupTurnId, { kind: 'event', groupTurnId, envelope: statusEnv })
+    const note = wrapGroup(
+      {
+        type: 'meta',
+        key: 'user_notification',
+        value: { groupTurnId, text: `@user 接力讨论已结束: ${reason}` },
+        ts: now,
+      },
+      groupTurnId,
+    )
+    await groupThreadStore.appendEvent(id, note)
+    this.writeGroupTurn(id, groupTurnId, { kind: 'event', groupTurnId, envelope: note })
+    this.writeGroupTurn(id, groupTurnId, {
+      kind: 'done',
+      groupTurnId,
+      status,
+      ...(message ? { message } : {}),
+    })
   }
 
   async startNativeResume(input: NativeStartInput): Promise<{ record: RunRecord; userEnvelope: EventEnvelope }> {
@@ -582,6 +905,7 @@ class RunRegistry {
   cancelGroupTurn(id: string, runId?: string): boolean {
     const active = this.groupTurns.get(id)
     if (!active) return false
+    active.aborted = true
     for (const id of active.runIds) {
       if (!runId || runId === id) this.cancel(id)
     }
@@ -826,7 +1150,21 @@ class RunRegistry {
           : undefined
       for await (const raw of agent.run({
         text: input.text,
-        contextEvents: buildGroupContextEvents(transcript, summary, agentNameForRun, input.attachments ?? []),
+        contextEvents: buildGroupContextEvents(
+          transcript,
+          summary,
+          agentNameForRun,
+          input.attachments ?? [],
+          input.serial && input.serialContext
+            ? {
+                participants: input.serial.participants,
+                step: input.serialContext.step,
+                maxSteps: input.serial.maxSteps,
+                preset: input.serial.preset,
+                previousAgent: input.serialContext.previousAgent,
+              }
+            : undefined,
+        ),
         targetAgent: agentNameForRun,
         cwd,
         useTools: input.useTools,

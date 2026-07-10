@@ -9,6 +9,7 @@ import { AGENT_OPTIONS, labelForAgent } from '../lib/agents'
 import type { ApprovalMode, RunPermissions } from '../lib/types'
 
 export type SendMode = 'followup' | 'native'
+type GroupDiscussionMode = 'parallel' | 'serial'
 
 function mentionDraft(text: string, caret: number): { start: number; query: string } | null {
   const before = text.slice(0, caret)
@@ -132,6 +133,8 @@ const PERMISSION_OPTIONS: { mode: ApprovalMode; label: string; hint: string }[] 
   { mode: 'full-access', label: '完全访问权限', hint: '允许访问网络和 workspace 写入' },
 ]
 
+const DEFAULT_GROUP_AGENTS: AgentName[] = ['claude', 'codex']
+
 function permissionsForMode(mode: ApprovalMode): RunPermissions {
   if (mode === 'full-access') {
     return {
@@ -168,6 +171,7 @@ export function FollowupComposer({
   onNativeSend,
   onCancelAll,
   groupMode = false,
+  groupDefaultDiscussionMode = 'parallel',
   codexAcceleratedMode = false,
   onCodexAcceleratedModeChange,
 }: {
@@ -175,6 +179,7 @@ export function FollowupComposer({
   sessionAgent: AgentName
   nativeAvailable: boolean
   groupMode?: boolean
+  groupDefaultDiscussionMode?: GroupDiscussionMode
   /** 一次可能发到多个 agent(@-mentions 拆分)。 */
   onSend: (
     text: string,
@@ -182,7 +187,18 @@ export function FollowupComposer({
     options?: CliSelection | CliSelectionByAgent,
     attachments?: AttachmentDraft[],
     permissions?: RunPermissions,
-    extras?: { codexAcceleratedMode?: boolean },
+    extras?: {
+      codexAcceleratedMode?: boolean
+      groupMode?: GroupDiscussionMode
+      groupParticipants?: AgentName[]
+      serial?: {
+        participants?: AgentName[]
+        firstAgent?: AgentName
+        maxSteps?: number
+        stopOnConsensus?: boolean
+        preset?: 'architecture-first' | 'implementation-first' | 'peer-review'
+      }
+    },
   ) => void
   onNativeSend: (
     text: string,
@@ -197,6 +213,9 @@ export function FollowupComposer({
   const [text, setText] = useState('')
   const [agent, setAgent] = useState<AgentName>(sessionAgent)
   const [mode, setMode] = useState<SendMode>('followup')
+  const [groupDiscussionMode, setGroupDiscussionMode] = useState<GroupDiscussionMode>('parallel')
+  const [serialMaxSteps, setSerialMaxSteps] = useState(6)
+  const [groupAgents, setGroupAgents] = useState<AgentName[]>(DEFAULT_GROUP_AGENTS)
   // 按当前 composer 临时记录 model / reasoning 选择。空串 = Default。
   // 不跨 session 持久化,避免新开的会话继承上一次临时挑的模型。
   //
@@ -214,6 +233,7 @@ export function FollowupComposer({
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false)
   const [advancedMenuOpen, setAdvancedMenuOpen] = useState(false)
   const [permissionMenuOpen, setPermissionMenuOpen] = useState(false)
+  const [modelMenuRect, setModelMenuRect] = useState<{ left: number; top: number; bottom: number; width: number } | null>(null)
   const [permissionMode, setPermissionMode] = useState<ApprovalMode>('ask')
   // Native resume 独立开关:每次发送后归零,防止粘性授权。二值:
   //   false  → --sandbox read-only / --allowedTools Read,Grep,Glob(默认预览)
@@ -237,9 +257,16 @@ export function FollowupComposer({
   }, [sessionAgent])
 
   useEffect(() => {
+    if (groupMode) setGroupDiscussionMode(groupDefaultDiscussionMode)
+  }, [groupMode, groupDefaultDiscussionMode])
+
+  useEffect(() => {
     if (!modelMenuOpen && !attachmentMenuOpen && !advancedMenuOpen && !permissionMenuOpen) return
     const onDoc = (e: MouseEvent) => {
-      if (!modelMenuRef.current?.contains(e.target as Node)) setModelMenuOpen(null)
+      if (!modelMenuRef.current?.contains(e.target as Node)) {
+        setModelMenuOpen(null)
+        setModelMenuRect(null)
+      }
       if (!attachmentMenuRef.current?.contains(e.target as Node)) setAttachmentMenuOpen(false)
       if (!advancedMenuRef.current?.contains(e.target as Node)) setAdvancedMenuOpen(false)
       if (!permissionMenuRef.current?.contains(e.target as Node)) setPermissionMenuOpen(false)
@@ -249,13 +276,33 @@ export function FollowupComposer({
   }, [modelMenuOpen, attachmentMenuOpen, advancedMenuOpen, permissionMenuOpen])
 
   const mentions = useMemo(() => parseMentions(text), [text])
+  const activeGroupAgents = useMemo(
+    () => (groupAgents.length ? groupAgents : DEFAULT_GROUP_AGENTS),
+    [groupAgents],
+  )
+  const activeGroupSet = useMemo(() => new Set(activeGroupAgents), [activeGroupAgents])
+  const groupMentions = useMemo(
+    () => mentions.filter((a) => activeGroupSet.has(a)),
+    [mentions, activeGroupSet],
+  )
+  const firstGroupAgent = groupMentions[0] ?? (activeGroupSet.has(agent) ? agent : activeGroupAgents[0])
   const usingNative = !groupMode && mode === 'native' && nativeAvailable
-  const targets = groupMode ? mentions : usingNative ? [sessionAgent] : mentions.length ? mentions : [agent]
+  const targets = groupMode
+    ? groupDiscussionMode === 'serial'
+      ? [firstGroupAgent]
+      : groupMentions
+    : usingNative
+    ? [sessionAgent]
+    : mentions.length
+    ? mentions
+    : [agent]
   const usingMentions = !usingNative && mentions.length > 0
   const mentionOptions = useMemo(() => {
     if (!mentionMenu) return []
-    return AGENT_OPTIONS.filter((a) => a.value.toLowerCase().startsWith(mentionMenu.query))
-  }, [mentionMenu])
+    return AGENT_OPTIONS.filter((a) =>
+      a.value.toLowerCase().startsWith(mentionMenu.query) && (!groupMode || activeGroupSet.has(a.value)),
+    )
+  }, [mentionMenu, groupMode, activeGroupSet])
 
   useEffect(() => {
     if ((groupMode || !nativeAvailable) && mode === 'native') setMode('followup')
@@ -307,7 +354,25 @@ export function FollowupComposer({
         codexAcceleratedMode && targets.includes('codex')
           ? { codexAcceleratedMode: true }
           : undefined
-      onSend(t, targets, options, outgoing, permissionsForMode(permissionMode), extras)
+      onSend(t, targets, options, outgoing, permissionsForMode(permissionMode), {
+        ...extras,
+        ...(groupMode
+          ? {
+              groupMode: groupDiscussionMode,
+              groupParticipants: activeGroupAgents,
+              serial:
+                groupDiscussionMode === 'serial'
+                  ? {
+                      participants: activeGroupAgents,
+                      firstAgent: targets[0],
+                      maxSteps: serialMaxSteps,
+                      stopOnConsensus: true,
+                      preset: 'architecture-first',
+                    }
+                  : undefined,
+            }
+          : {}),
+      })
     }
     setText('')
     setAttachments([])
@@ -402,6 +467,16 @@ export function FollowupComposer({
     setCliByAgent((m) => ({ ...m, [targetAgent]: { ...m[targetAgent], [field]: value } }))
   }
 
+  const toggleGroupAgent = (targetAgent: AgentName) => {
+    setGroupAgents((prev) => {
+      if (prev.includes(targetAgent)) {
+        return prev.length > 1 ? prev.filter((a) => a !== targetAgent) : prev
+      }
+      return [...prev, targetAgent]
+    })
+    setAgent(targetAgent)
+  }
+
   const refreshMentionMenu = (nextText = text, caret = textareaRef.current?.selectionStart ?? nextText.length) => {
     const draft = mentionDraft(nextText, caret)
     setMentionMenu((prev) => {
@@ -445,41 +520,103 @@ export function FollowupComposer({
     return parts.every((p) => p === 'Default') ? 'Default' : parts.join(' · ')
   }
 
-  const renderModelPicker = (targetAgent: AgentName, withAgent = false) => {
+  const renderModelPicker = (targetAgent: AgentName, withAgent = false, enabled = true) => {
     const targetGroups = CLI_GROUPS[targetAgent] ?? []
     const targetSel = cliByAgent[targetAgent] ?? {}
     const label = triggerLabel(targetAgent)
     const hasCustomSelection = label !== 'Default'
     const isTargeted = groupMode && targets.includes(targetAgent)
+    const popoverLeft =
+      groupMode && modelMenuRect && typeof window !== 'undefined'
+        ? Math.max(12, Math.min(modelMenuRect.left, window.innerWidth - 292))
+        : undefined
+    const popoverOpenUp = groupMode && modelMenuRect ? modelMenuRect.top > 300 : false
+    const popoverMaxHeight =
+      groupMode && modelMenuRect && typeof window !== 'undefined'
+        ? Math.max(
+            180,
+            popoverOpenUp
+              ? modelMenuRect.top - 24
+              : window.innerHeight - modelMenuRect.bottom - 24,
+          )
+        : undefined
     return (
       <div
         className={[
           'model-picker',
           withAgent ? `group-model-picker agent-${targetAgent}` : '',
+          withAgent && enabled ? 'enabled' : '',
+          withAgent && !enabled ? 'disabled' : '',
           withAgent && isTargeted ? 'targeted' : '',
           withAgent && hasCustomSelection ? 'configured' : '',
         ].filter(Boolean).join(' ')}
       >
         <button
           className="model-picker-btn"
-          onClick={() => setModelMenuOpen((v) => (v === targetAgent ? null : targetAgent))}
-          title={`${labelForAgent(targetAgent)} CLI 参数${hasCustomSelection ? `: ${label}` : ''}`}
+          onClick={(e) => {
+            if (withAgent && !enabled) {
+              toggleGroupAgent(targetAgent)
+              return
+            }
+            const rect = e.currentTarget.getBoundingClientRect()
+            setModelMenuRect({ left: rect.left, top: rect.top, bottom: rect.bottom, width: rect.width })
+            setModelMenuOpen((v) => {
+              if (v === targetAgent) {
+                setModelMenuRect(null)
+                return null
+              }
+              return targetAgent
+            })
+          }}
+          title={
+            withAgent && !enabled
+              ? `点击启用 ${labelForAgent(targetAgent)}`
+              : `${labelForAgent(targetAgent)} CLI 参数${hasCustomSelection ? `: ${label}` : ''}`
+          }
           aria-haspopup="menu"
           aria-expanded={modelMenuOpen === targetAgent}
-          aria-pressed={withAgent ? isTargeted : undefined}
+          aria-pressed={withAgent ? enabled : undefined}
         >
           {!withAgent && <Icon name="settings" size={12} />}
           {withAgent && <AgentIcon agent={targetAgent} size={20} />}
           {withAgent && <span className="model-picker-agent">{labelForAgent(targetAgent)}</span>}
-          {(!withAgent || hasCustomSelection) && (
+          {enabled && (!withAgent || hasCustomSelection || withAgent) && (
             <span className={withAgent ? 'model-picker-selection' : undefined}>
               {label}
             </span>
           )}
-          <span className="model-picker-caret">▾</span>
+          {enabled && <span className="model-picker-caret">▾</span>}
         </button>
-        {modelMenuOpen === targetAgent && (
-          <div className="model-popover" role="menu">
+        {withAgent && enabled && (
+          <button
+            type="button"
+            className="group-agent-remove"
+            onClick={(e) => {
+              e.stopPropagation()
+              setModelMenuOpen(null)
+              setModelMenuRect(null)
+              toggleGroupAgent(targetAgent)
+            }}
+            title={`取消 ${labelForAgent(targetAgent)} 参与本轮群聊`}
+            aria-label={`取消 ${labelForAgent(targetAgent)}`}
+          >
+            <Icon name="close" size={10} />
+          </button>
+        )}
+        {enabled && modelMenuOpen === targetAgent && (
+          <div
+            className={`model-popover ${groupMode ? 'fixed-popover' : ''} ${popoverOpenUp ? 'open-up' : ''}`}
+            role="menu"
+            style={
+              groupMode && modelMenuRect && popoverLeft != null
+                ? {
+                    left: popoverLeft,
+                    top: popoverOpenUp ? modelMenuRect.top - 8 : modelMenuRect.bottom + 8,
+                    maxHeight: popoverMaxHeight,
+                  }
+                : undefined
+            }
+          >
             {targetGroups.map((g, gi) => (
               <div key={g.key} className="model-popover-group">
                 {gi > 0 && <div className="model-popover-sep" />}
@@ -513,6 +650,8 @@ export function FollowupComposer({
     ? `通过本机 ${agentLabel} CLI 续写原生 session`
     : groupMode && targets.length === 0
     ? '只记录到群聊;输入 @ 可选择成员回答'
+    : groupMode && groupDiscussionMode === 'serial'
+    ? `接力讨论从 ${labelForAgent(targets[0])} 开始,最多 ${serialMaxSteps} 次发言`
     : usingMentions
     ? `并行发送给 ${targets.map(labelForAgent).join('、')}`
     : `通过本机 ${labelForAgent(agent)} CLI 运行,权限: ${permissionOption.label}`
@@ -557,10 +696,43 @@ export function FollowupComposer({
           )}
 
           {groupMode ? (
-            <div className="group-model-settings" ref={modelMenuRef}>
-              {AGENT_OPTIONS.map((a) => (
-                <div key={a.value}>{renderModelPicker(a.value, true)}</div>
-              ))}
+            <div className="group-composer-controls">
+              <div className="send-mode-control" aria-label="群聊模式">
+                <button
+                  className={`send-mode-item ${groupDiscussionMode === 'parallel' ? 'active' : ''}`}
+                  onClick={() => setGroupDiscussionMode('parallel')}
+                  title="文本里的多个 @agent 会并行回复"
+                >
+                  <Icon name="users" size={12} />
+                  <span>并行</span>
+                </button>
+                <button
+                  className={`send-mode-item ${groupDiscussionMode === 'serial' ? 'active' : ''}`}
+                  onClick={() => setGroupDiscussionMode('serial')}
+                  title="首位 agent 回复后,通过末尾 Next: @agent 接力"
+                >
+                  <Icon name="chevron-right" size={12} />
+                  <span>接力</span>
+                </button>
+              </div>
+              {groupDiscussionMode === 'serial' && (
+                <label className="serial-step-control" title="一次 agent 回复算一次发言">
+                  <span>最多</span>
+                  <input
+                    type="number"
+                    min={2}
+                    max={20}
+                    value={serialMaxSteps}
+                    onChange={(e) => setSerialMaxSteps(Math.max(2, Math.min(Number(e.target.value) || 6, 20)))}
+                  />
+                  <span>次</span>
+                </label>
+              )}
+              <div className="group-model-settings" ref={modelMenuRef}>
+                {AGENT_OPTIONS.map((a) => (
+                  <div key={a.value}>{renderModelPicker(a.value, true, activeGroupSet.has(a.value))}</div>
+                ))}
+              </div>
             </div>
           ) : usingNative ? (
             <span className={`native-agent-pill agent-${sessionAgent}`}>

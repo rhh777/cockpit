@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { fetchChanges, fetchRunningRuns, fetchSessionDetail, revealSession, type SessionDetailDTO } from '../lib/api'
 import {
+  attachGroupTurnStream,
   attachRunStream,
+  cancelGroupTurn,
   cancelRun,
   fetchActiveRuns,
   subscribeSessionStream,
@@ -55,6 +57,10 @@ function isServerRunClientId(clientId: string): boolean {
   return clientId.startsWith('run_') || clientId.startsWith('native_run_')
 }
 
+function isGroupTurnClientId(clientId: string): boolean {
+  return clientId.startsWith('group_turn:')
+}
+
 function approvalIntent(approval: ApprovalRequest): {
   verb: string
   target: string
@@ -74,6 +80,39 @@ function approvalIntent(approval: ApprovalRequest): {
 function approvalPreview(target: string): string {
   const compact = target.replace(/\s+/g, ' ').trim()
   return compact.length > 120 ? `${compact.slice(0, 120)}…` : compact
+}
+
+function approvalFromEnvelope(env: EventEnvelope): ApprovalRequest | null {
+  if (env.event.type !== 'meta' || env.event.key !== 'approval_required') return null
+  const approval = env.event.value as ApprovalRequest | undefined
+  return typeof approval?.approvalId === 'string' ? approval : null
+}
+
+function resolvedApprovalIdFromEnvelope(env: EventEnvelope): string | null {
+  if (env.event.type !== 'meta' || env.event.key !== 'approval_resolved') return null
+  const value = env.event.value as { approvalId?: string } | undefined
+  return typeof value?.approvalId === 'string' ? value.approvalId : null
+}
+
+function pendingApprovalsFromEvents(events: EventEnvelope[]): ApprovalRequest[] {
+  const pending = new Map<string, ApprovalRequest>()
+  for (const env of events) {
+    const approval = approvalFromEnvelope(env)
+    if (approval) pending.set(approval.approvalId, approval)
+    const resolved = resolvedApprovalIdFromEnvelope(env)
+    if (resolved) pending.delete(resolved)
+  }
+  return [...pending.values()]
+}
+
+function lastGroupDiscussionMode(events: EventEnvelope[]): 'parallel' | 'serial' {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i].event
+    if (ev.type !== 'meta' || ev.key !== 'turn_start') continue
+    const value = ev.value as { mode?: string } | undefined
+    return value?.mode === 'serial' ? 'serial' : 'parallel'
+  }
+  return 'parallel'
 }
 
 export function SessionDetail() {
@@ -215,6 +254,25 @@ export function SessionDetail() {
     [applyPacerUpdates],
   )
 
+  const syncApprovalEnvelope = useCallback((env: EventEnvelope) => {
+    const approval = approvalFromEnvelope(env)
+    if (approval) {
+      setPendingApprovals((prev) =>
+        prev.some((a) => a.approvalId === approval.approvalId) ? prev : [...prev, approval],
+      )
+    }
+    const resolved = resolvedApprovalIdFromEnvelope(env)
+    if (resolved) {
+      setPendingApprovals((prev) => prev.filter((a) => a.approvalId !== resolved))
+      setExpandedApprovals((prev) => {
+        if (!prev.has(resolved)) return prev
+        const next = new Set(prev)
+        next.delete(resolved)
+        return next
+      })
+    }
+  }, [])
+
   // 去重追加(不变量 12):按 sourceEventId,无 id 用 seenIds 当前大小兜底。
   // 注意:seenIds 必须在 setState 之外更新——React StrictMode 会把 updater 跑两次,
   // 若在 updater 里 add,第二次跑就把刚追加的事件当成"已见过"丢掉,UI 看似永远收不到。
@@ -227,6 +285,7 @@ export function SessionDetail() {
         const k = e.sourceEventId ?? `#${seenIds.current.size}`
         if (seenIds.current.has(k)) continue
         seenIds.current.add(k)
+        syncApprovalEnvelope(e)
 
         const ev = e.event
         if (ev.type === 'assistant_text' && ev.delta) {
@@ -255,7 +314,7 @@ export function SessionDetail() {
       if (fresh.length > 0) setEvents((prev) => [...prev, ...fresh])
       if (bufferedSomething) kickPacer()
     },
-    [flushPacer, kickPacer],
+    [flushPacer, kickPacer, syncApprovalEnvelope],
   )
 
   const resetFrom = useCallback((d: SessionDetailDTO) => {
@@ -266,6 +325,8 @@ export function SessionDetail() {
     pacerByKey.current.clear()
     setDetail(d)
     setEvents(d.events)
+    setPendingApprovals(pendingApprovalsFromEvents(d.events))
+    setExpandedApprovals(new Set())
     seenIds.current = new Set(d.events.map((e, i) => e.sourceEventId ?? `#${i}`))
   }, [])
 
@@ -471,6 +532,62 @@ export function SessionDetail() {
           } else if (msg.kind === 'approval_resolved') {
             resolveApprovalInUi(msg.approvalId)
           } else if (msg.kind === 'run_done' && msg.runId === run.runId) {
+            cleanup(msg.status === 'completed' ? 'done' : msg.status === 'aborted' ? 'aborted' : 'error', msg.message)
+          } else if (msg.kind === 'error') {
+            cleanup('error', msg.message)
+          }
+        },
+        ac.signal,
+      ).catch((e) => {
+        if (!ac.signal.aborted) cleanup('error', String(e))
+      })
+    },
+    [source, id, appendEnvelopes, noteApproval, resolveApprovalInUi],
+  )
+
+  const attachGroupTurn = useCallback(
+    (groupTurnId: string) => {
+      if (!id || !isGroupSource(source)) return
+      const clientId = `group_turn:${groupTurnId}`
+      if (abortsRef.current.has(clientId)) return
+      const ac = new AbortController()
+      abortsRef.current.set(clientId, () => ac.abort())
+      const cleanup = (reason: 'done' | 'aborted' | 'error', message?: string) => {
+        abortsRef.current.delete(clientId)
+        setStreams((prev) => prev.filter((s) => s.turnId !== groupTurnId))
+        if (reason === 'error') setSendError(message ?? '接力讨论失败')
+      }
+      attachGroupTurnStream(
+        id,
+        groupTurnId,
+        (msg: RunStreamMessage) => {
+          if (msg.kind === 'serial_step') {
+            const agent = msg.agent as AgentName
+            setStreams((prev) =>
+              prev.some((s) => s.clientId === msg.runId)
+                ? prev
+                : [
+                    ...prev,
+                    {
+                      clientId: msg.runId,
+                      agent,
+                      turnId: groupTurnId,
+                      rootTurnId: groupTurnId,
+                      startedAt: Date.now(),
+                    },
+                  ],
+            )
+          } else if (msg.kind === 'run_phase' && 'groupTurnId' in msg) {
+            setStreams((prev) => prev.map((s) => (s.clientId === msg.runId ? { ...s, phase: msg.phase } : s)))
+          } else if (msg.kind === 'event' && 'groupTurnId' in msg) {
+            appendEnvelopes([msg.envelope])
+          } else if (msg.kind === 'approval_required') {
+            noteApproval(msg.approval)
+          } else if (msg.kind === 'approval_resolved') {
+            resolveApprovalInUi(msg.approvalId)
+          } else if (msg.kind === 'run_done') {
+            setStreams((prev) => prev.filter((s) => s.clientId !== msg.runId))
+          } else if (msg.kind === 'done' && 'groupTurnId' in msg) {
             cleanup(msg.status === 'completed' ? 'done' : msg.status === 'aborted' ? 'aborted' : 'error', msg.message)
           } else if (msg.kind === 'error') {
             cleanup('error', msg.message)
@@ -818,7 +935,18 @@ export function SessionDetail() {
       options?: CliSelection | CliSelectionByAgent,
       attachments?: AttachmentDraft[],
       permissions?: RunPermissions,
-      extras?: { codexAcceleratedMode?: boolean },
+      extras?: {
+        codexAcceleratedMode?: boolean
+        groupMode?: 'parallel' | 'serial'
+        groupParticipants?: AgentName[]
+        serial?: {
+          participants?: AgentName[]
+          firstAgent?: AgentName
+          maxSteps?: number
+          stopOnConsensus?: boolean
+          preset?: 'architecture-first' | 'implementation-first' | 'peer-review'
+        }
+      },
     ) => {
       if (!id) return
       setSendError(null)
@@ -826,7 +954,10 @@ export function SessionDetail() {
         id,
         {
           text,
+          mode: extras?.groupMode ?? 'parallel',
           targetAgents: agents,
+          participants: extras?.groupParticipants,
+          serial: extras?.serial,
           useTools: true,
           cliByAgent: options as CliSelectionByAgent | undefined,
           attachments,
@@ -836,13 +967,14 @@ export function SessionDetail() {
             extras?.codexAcceleratedMode === true && agents.includes('codex') ? true : undefined,
         },
       )
-        .then(({ records, userEnvelope, turnStart }) => {
+        .then(({ groupTurnId, mode, records, userEnvelope, turnStart }) => {
           appendEnvelopes([userEnvelope, ...(turnStart ? [turnStart] : [])])
-          for (const run of records) attachGroupRun(run)
+          if (mode === 'serial') attachGroupTurn(groupTurnId)
+          else for (const run of records) attachGroupRun(run)
         })
         .catch((e) => setSendError(String(e)))
     },
-    [id, appendEnvelopes, attachGroupRun],
+    [id, appendEnvelopes, attachGroupRun, attachGroupTurn],
   )
 
   const handleNativeSend = useCallback(
@@ -863,13 +995,21 @@ export function SessionDetail() {
     for (const stream of streamsRef.current) {
       if (isServerRunClientId(stream.clientId)) cancelRun(stream.clientId).catch(() => {})
     }
+    if (id && isGroupSource(source)) {
+      for (const clientId of abortsRef.current.keys()) {
+        if (isGroupTurnClientId(clientId)) cancelGroupTurn(id, clientId.slice('group_turn:'.length)).catch(() => {})
+      }
+    }
     for (const abort of abortsRef.current.values()) abort()
-  }, [])
+  }, [source, id])
 
   const handleCancelOne = useCallback((clientId: string) => {
     if (isServerRunClientId(clientId)) cancelRun(clientId).catch(() => {})
+    if (id && isGroupSource(source) && isGroupTurnClientId(clientId)) {
+      cancelGroupTurn(id, clientId.slice('group_turn:'.length)).catch(() => {})
+    }
     abortsRef.current.get(clientId)?.()
-  }, [])
+  }, [source, id])
 
   const handleReveal = useCallback(
     (target: 'native' | 'followups') => {
@@ -932,6 +1072,8 @@ export function SessionDetail() {
 
   const pairs = useMemo(() => buildTimeline(partitioned.main).pairs, [partitioned.main])
   const activity = useMemo(() => summarizeTools(pairs, partitioned.main), [pairs, partitioned.main])
+  const groupMode = isGroupSource(source)
+  const groupDefaultDiscussionMode = useMemo(() => lastGroupDiscussionMode(events), [events])
   const [showFiles, setShowFiles] = useState(false)
   const [viewMode, setViewMode] = useState<'narrative' | 'detail'>('detail')
 
@@ -950,7 +1092,6 @@ export function SessionDetail() {
   if (!detail) return <div className="detail" />
 
   const s = detail.summary
-  const groupMode = isGroupSource(source)
   const hasMainStreams = groupMode
     ? streams.length > 0
     : streams.some((s) => s.agent === sessionAgentOf(source))
@@ -1116,6 +1257,7 @@ export function SessionDetail() {
               sessionAgent={sessionAgentOf(source)}
               nativeAvailable={!groupMode && canNativeResume(source)}
               groupMode={groupMode}
+              groupDefaultDiscussionMode={groupDefaultDiscussionMode}
               onSend={(t, a, options, attachments, permissions, extras) =>
                 groupMode
                   ? handleGroupSend(t, a, options as CliSelectionByAgent | undefined, attachments, permissions, extras)
