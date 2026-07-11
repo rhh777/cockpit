@@ -286,20 +286,51 @@ Claude Desktop 调用 Claude Code 时,会话也落到 `~/.claude/projects/`;Clau
 
 ---
 
-## 四、未来可能接入的来源(占位)
+## 四、OpenCode CLI
+
+### 路径
+
+```
+~/.local/share/opencode/opencode.db
+```
+
+OpenCode 1.17.x 使用 SQLite 保存会话。Cockpit 只读该 DB,不写入、不迁移、不修改 OpenCode 原生数据。
+
+### 关键表
+
+| 表 | 用途 |
+|---|---|
+| `session` | 会话摘要:`id`, `title`, `directory`, `time_created`, `time_updated`, `agent`, `model` |
+| `session_message` | 新格式消息流:`session_id`, `type`, `seq`, `data` |
+| `message` / `part` | 旧格式消息与分片;当 `session_message` 为空时 fallback |
+
+### Loader 提取规则
+
+- `session.id` 形如 `ses_...`,不是 UUID;路由按 `source='opencode'` 使用专门 id 校验。
+- `session_message.type='user'`, `data.text` → `user_text`。
+- `session_message.type='assistant'`, `data.content[]` 中:
+  - `type='text'` → `assistant_text(agent='opencode')`
+  - `type='reasoning'` → `thinking`
+  - `type='step-finish'` tokens → `usage`
+  - tool 类 part → `tool_use` / 可选 `tool_result`
+- legacy `message.role` + `part.data.type` 使用同一套 part 映射。
+- 未知 part 降级为 `meta`,不能阻塞 session 打开。
+
+---
+
+## 五、未来可能接入的来源(占位)
 
 | 来源 | 位置(待验证) | 优先级 |
 |---|---|---|
 | Cursor | `~/Library/Application Support/Cursor/` | 低 |
 | Cline (VS Code) | `~/.vscode/.../cline/` | 中 |
 | Aider | `.aider.chat.history.md` (项目内) | 中 |
-| OpenCode | TBD | 低 |
 
 **接新来源的标准做法**:写一个新 `loaders/<source>-loader.ts`,产出统一的 `NormalizedEvent[]` + `SessionSummary`,其他层不动。
 
 ---
 
-## 五、Loader 容错与 warnings
+## 六、Loader 容错与 warnings
 
 所有 loader 都必须 best-effort:
 - 单行 JSON parse 失败:记录 `LoaderWarning{line, code:'json_parse_failed'}`,跳过该行。

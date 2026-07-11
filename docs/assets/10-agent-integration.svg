@@ -103,9 +103,9 @@
 
   <rect class="box adp" x="610" y="238" width="240" height="138"/>
   <text x="620" y="256" class="title">Codex Adapter</text>
-  <text x="620" y="273" class="lbl">run(): 无审批 → CLI 子进程</text>
-  <text x="620" y="287" class="mono">  codex exec --json --sandbox …</text>
-  <text x="620" y="303" class="lbl">run(): 需审批 → app-server</text>
+  <text x="620" y="273" class="lbl">run(): 统一走 app-server</text>
+  <text x="620" y="287" class="mono">  codex app-server --stdio</text>
+  <text x="620" y="303" class="lbl">审批 → app-server request</text>
   <text x="620" y="317" class="mono">  codex app-server --stdio (JSON-RPC)</text>
   <text x="620" y="331" class="mono">  thread/start → turn/start</text>
   <text x="620" y="345" class="mono">  server→client requestApproval</text>
@@ -113,7 +113,7 @@
 
   <rect class="box adp" x="610" y="386" width="240" height="60"/>
   <text x="620" y="404" class="title">OpenCode / Cursor Adapter</text>
-  <text x="620" y="420" class="mono">opencode run --agent plan</text>
+  <text x="620" y="420" class="mono">opencode serve + SDK events</text>
   <text x="620" y="435" class="mono">cursor-agent -p --mode ask</text>
 
   <rect class="box adp" x="610" y="456" width="240" height="68"/>

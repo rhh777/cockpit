@@ -6,7 +6,7 @@
 |---|---|
 | **形态** | Vite + React 单页应用,可选 Electron 桌面壳 |
 | **运行** | 纯本地。Node 后端(或 Vite middleware)负责读盘 + 调本机 CLI Adapter;前端只负责渲染 |
-| **数据源(只读)** | `~/.claude/projects/**/*.jsonl` 和 `~/.codex/sessions/**/*.jsonl` |
+| **数据源(只读)** | `~/.claude/projects/**/*.jsonl`、`~/.codex/sessions/**/*.jsonl`、`~/.local/share/opencode/opencode.db` |
 | **数据源(读写)** | `~/.cockpit/` 下:`threads/<source>/<originalSessionId>/`(followups.jsonl / summary.md / context-state.json / attachments/)、`group-threads/<id>/`、`handoffs/<id>/`、`runs/`、`runtime-links/`、`cache/` |
 | **状态** | URL 路由 + 内存。Follow-up 持久化到上面那个目录,format 仿原生 JSONL；session 列表可有轻量 cache,原生文件仍是事实来源 |
 | **依赖** | React · Vite · 本机已安装并登录的 `claude` / `codex` CLI |
@@ -70,6 +70,7 @@
 │   ~/.claude/projects/<dir-hash>/<uuid>.jsonl               │
 │   ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl             │
 │   ~/.codex/session_index.jsonl   ← 现成索引                │
+│   ~/.local/share/opencode/opencode.db ← SQLite session store │
 │  读写:                                                     │
 │   ~/.cockpit/threads/<source>/<id>/{followups.jsonl,summary.md,context-state.json,attachments/} │
 │   ~/.cockpit/group-threads/<id>/{transcript.jsonl,summary.md,state.json,attachments/} │
@@ -103,7 +104,7 @@ interface SessionSummary {
   fileMtimeMs: number         // 原始文件 mtime,用于 cache / 增量检查
   fileSize: number            // 原始文件 size,用于 cache / 增量检查
   hasFollowups: boolean       // 列表页角标用
-  extensions?: Record<string, unknown>  // 扩展点:笔记、标签等
+  extensions?: Record<string, unknown>  // 扩展点:笔记、标签、followupAgents 等
 }
 
 type NormalizedEvent =
@@ -190,6 +191,7 @@ interface SessionRegistry {
 
 **规则:**
 - `SessionSummary.filePath` 是 server 内部字段,前端可展示但不能把它当权限凭据。
+- `SessionSummary.extensions.followupAgents` 可由 ThreadStore 从 Cockpit follow-up JSONL 推导,用于列表页按 Claude/Codex/OpenCode/Cursor 过滤;它不是原生 session source,也不能当权限凭据。
 - registry miss 时再 fallback 到 loader 的慢路径搜索。
 - 可选 cache 写到 `~/.cockpit/cache/session-index.json`,只缓存 `source/id/filePath/mtime/size/title/cwd/startedAt/updatedAt`。
 - cache 可随时删除重建,**原生 JSONL 永远是事实来源**。
@@ -232,7 +234,7 @@ interface SessionRegistry {
 
 **关键约束**:
 - Follow-up **持久化到 `~/.cockpit/`**,关掉浏览器不丢
-- **绝不写入** `~/.claude/` / `~/.codex/`,零侵入原生 CLI
+- **绝不写入** `~/.claude/` / `~/.codex/` / `~/.local/share/opencode/`,零侵入原生 CLI
 - 用户消息**先落盘再调 agent**,这样即使 agent 调用失败用户消息也保留
 - 断开订阅不 abort:切换 session / 关闭页面只断 run stream,后台继续跑;
   只有显式 POST /api/runs/:runId/cancel 才 AbortController.abort();已生成的部分已落盘,保留
@@ -472,7 +474,7 @@ Timeline 不只渲染流水账,还应服务“看清 agent 干了什么”:
 
 ## 十二、设计不变量
 
-1. cockpit 不直接写、删、改 `~/.claude/` 或 `~/.codex/` 原生文件。
+1. cockpit 不直接写、删、改 `~/.claude/`、`~/.codex/` 或 `~/.local/share/opencode/` 原生文件。
 2. `~/.cockpit/` 是唯一自有写入目录;cache 可删可重建。
 3. Native resume 只通过官方 CLI 子进程写回,并且必须显式选择。
 4. 事件顺序按文件 append 顺序;跨来源只在 `followup_boundary` 拼接。

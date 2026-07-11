@@ -14,10 +14,11 @@
 
 ## TL;DR
 
-- **一切都走本机 CLI 子进程**,复用用户已登录的 `claude` / `codex` / `opencode` / `cursor-agent`。cockpit **不** 装官方账号 SDK,不管 OAuth。
-- 有两条深集成通道,认证仍然来自本机 CLI,SDK/JSON-RPC 只是替换了 IO 通道以拿到审批钩子和逐 token 流:
+- **认证都复用本机 CLI/本机 runtime 登录态**,包括 `claude` / `codex` / `opencode` / `cursor-agent`。cockpit **不** 管 OAuth 或 provider API key。
+- 有三条深集成通道,认证仍然来自本机 runtime,SDK/JSON-RPC 只是替换了 IO 通道以拿到审批钩子和逐 token 流:
   - **Claude Agent SDK**(`@anthropic-ai/claude-agent-sdk`,内部仍 spawn 本机 `claude`)
   - **Codex app-server**(`codex app-server --stdio` 的 JSON-RPC)
+  - **OpenCode SDK v2**(`@opencode-ai/sdk/v2`,启动/连接本机 `opencode serve`)
 - 所有 adapter 都实现 `ReviewAgent` 接口,统一在 [server/adapters/registry.ts](../server/adapters/registry.ts) 注册,业务代码只调 `resolveAgent(name).run(...)` / `.resumeNative(...)`。
 - 事件流一律翻成 [`NormalizedEvent`](../server/loaders/types.ts),由 route 补 `EventEnvelope`(`origin/turnId/runId`),SSE 推给前端 + 追加到 `~/.cockpit/**/*.jsonl`。
 - 原生会话文件是只读的事实来源;cockpit 只写 `~/.cockpit/`。写回原生 JSONL **只能** 通过官方 CLI 子进程完成(不变量 1/2)。
@@ -34,10 +35,10 @@
 |---|---|---|---|---|
 | **claude** | 按有无 `requestApproval` 回调分岔(与权限档正交):ⓐ 有回调(逐工具审批,通常是 `ask` / `auto-safe`) → **Agent SDK** `query()`(本机 `claude` bin,`canUseTool` 拦截工具);ⓑ 无回调(纯生成,或 full-access 不打算弹审批) → CLI `claude -p --output-format stream-json --include-partial-messages` | 同左规则(路由是否传 `requestApproval`) | CLI `claude -p --resume <sessionId>` | `manual`:只返回 prompt,让用户自己贴进 Claude Code / Desktop |
 | **codex** | **`codex app-server --stdio` JSON-RPC**(所有权限档统一走这条,full-access 时 approval 自动放行) | 同左 | CLI `codex {--sandbox read-only \| --dangerously-bypass-approvals-and-sandbox} --cd <cwd> exec resume --json <sessionId> -` | ⓐ `deeplink` → `codex://threads/new?path=&prompt=`<br>ⓑ `app-server` → `codex app-server --stdio`,`thread/start` 拿 threadId,后续 `turn/start`<br>ⓒ `cli`(预留) |
-| **opencode** | CLI `opencode run --format json --dir <cwd> [--variant effort]` | — | — | — |
-| **cursor** | CLI `cursor-agent -p --output-format stream-json --stream-partial-output` | — | — | — |
+| **opencode** | **`@opencode-ai/sdk/v2` + `opencode serve`**:ephemeral session,`v2.event.subscribe()` 逐 token,permission events 回 Cockpit approval UI | 同左 | — | — |
+| **cursor** | CLI `cursor-agent -p --output-format stream-json --stream-partial-output` | 同左 | — | — |
 
-- 群聊、handoff 目前只调用 claude / codex。opencode / cursor 只做单聊 follow-up。
+- Handoff 目前只调用 claude / codex。opencode / cursor 支持 Cockpit follow-up 与 group chat,但不支持 native resume / handoff open-native。
 - Codex handoff 三档语义详见 [docs/07 § 和 Codex 继续](07-native-continuation-and-handoff.md#和-codex-继续)。
 
 ### 表 B — 逐 token 流式(SSE 逐字增量)
@@ -46,8 +47,8 @@
 |---|---|---|---|
 | **claude** | ✅ SDK:`includePartialMessages: true` → `stream_event.content_block_delta`<br>✅ CLI:`--include-partial-messages` → 同上 | ✅ 同 SDK 分支 | ✅ CLI `--include-partial-messages` |
 | **codex** | ✅ app-server `item/agentMessage/delta` notification | ✅ 同上 | ❌ 上游 CLI 限制,只在 `item.completed` 一次性给全,详见 [docs/07 § 已知限制](07-native-continuation-and-handoff.md#已知限制codex-native-resume-不逐-token-流) |
-| **opencode** | ⚠️ 依赖 `opencode run --format json` 是否发 `delta` / `content` 事件(经 `normalizeJsonCliEvent` 兜底) | — | — |
-| **cursor** | ⚠️ 已开 `--stream-partial-output`,同样依赖上游 CLI 事件形状 | — | — |
+| **opencode** | ✅ SDK v2 `session.next.text.delta` / `session.next.text.ended` | ✅ 同上 | — |
+| **cursor** | ⚠️ 已开 `--stream-partial-output`,同样依赖上游 CLI 事件形状 | 同左 | — |
 
 - 传输层一律 SSE(`text/event-stream` + `flush`)。"不流"指**上游 agent runtime 不吐 delta**,不是 cockpit 前后端丢帧。
 - 前端合并 delta 逻辑:[src/lib/timeline.ts:73](../src/lib/timeline.ts:73),按 `streamId` 拼接;终态 `assistant_text` 到达时丢掉同 streamId 的所有 delta。
@@ -58,7 +59,8 @@
 |---|---|---|---|
 | **claude** | `~/.cockpit/threads/claude-code/<id>/followups.jsonl`<br>+ `summary.md` + `context-state.json` | `~/.cockpit/group-threads/<id>/transcript.jsonl` + `summary.md` + `state.json` | **写回 `~/.claude/projects/<hash>/<sessionId>.jsonl`**(由 `claude` 进程完成) |
 | **codex** | `~/.cockpit/threads/codex/<id>/followups.jsonl` | 同上 | **写回 `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`**(由 `codex exec resume` 完成) |
-| **opencode** / **cursor** | `~/.cockpit/threads/<src>/<id>/followups.jsonl`(用于兼容后续接入的原生 loader) | — | — |
+| **opencode** | `~/.cockpit/threads/opencode/<id>/followups.jsonl`;原生历史只读自 `~/.local/share/opencode/opencode.db` | `~/.cockpit/group-threads/<id>/transcript.jsonl` | — |
+| **cursor** | `~/.cockpit/threads/<src>/<id>/followups.jsonl`(用于兼容后续接入的原生 loader) | `~/.cockpit/group-threads/<id>/transcript.jsonl` | — |
 | 附件(图片) | 群聊:`~/.cockpit/group-threads/<id>/attachments/`;单聊:`~/.cockpit/threads/<src>/<id>/attachments/`;**都不进原生 CLI 目录** | 同左 | 附件由 CLI 子进程处理写回,cockpit 只传路径 |
 
 - Cockpit 侧写盘的都是 `EventEnvelope`(`origin: 'cockpit'` 或 `'native'`),loader 端可以按 `followup_boundary` 拼接。
@@ -70,7 +72,8 @@
 |---|---|---|---|
 | **claude** | Cockpit 权限档 → `--permission-mode` + `--allowedTools` 组合,详见 [server/permissions/adapter-policy.ts](../server/permissions/adapter-policy.ts) | CLI `--permission-mode bypassPermissions` 直通 | SDK `canUseTool`:所有 `file_read` 类操作(`Read` / `Grep` / `Glob`,见 `isAutoAllowedClaudeRead`)自动放行,其它调 `requestApproval`,回 `allow` 时同步补 `PermissionUpdate` 加规则 |
 | **codex** | Cockpit 权限档 → app-server `thread/start` 的 `sandbox` 字段,由 [`runCodexAppServer`](../server/adapters/codex-call.ts:168) 内联映射(`ask`→`read-only`、`auto-safe`→`workspace-write`、`full-access`→`danger-full-access`),thread 其余设置由 [`codexThreadSettings`](../server/adapters/codex-app-server.ts:282) 拼装 | 同上,`sandbox: 'danger-full-access'`;server → client approval request 缺 `requestApproval` 时自动 `approved` | app-server 发 `item/commandExecution/requestApproval` / `item/fileChange/requestApproval` / `item/permissions/requestApproval`(旧协议 `execCommandApproval` / `applyPatchApproval` 也兼容)server request → `mapCodexApprovalRequest` → `requestApproval` → 回 `accept`/`decline` |
-| **opencode** / **cursor** | CLI flag 映射,不支持逐工具审批(headless CLI 接不住 approval 回调) | 支持 | 强制降级为 read-only,不真跑 |
+| **opencode** | SDK session ruleset:`ask` 自动放行 read/glob/grep/list/todowrite,其它 ask;`auto-safe` 额外放行 edit,shell/web ask;`full-access` 全 allow | ruleset 全 allow | SDK 事件 `permission.v2.asked` / legacy `permission.asked` → `Operation` → `requestApproval` → `once` / `always` / `reject` |
+| **cursor** | CLI flag 映射,不支持逐工具审批(headless CLI 接不住 approval 回调) | 支持 | 强制降级为 read-only,不真跑 |
 
 审批 UI 生命周期由 [server/runs/run-registry.ts](../server/runs/run-registry.ts) 统一管:SSE 广播 `approval_required`,前端答复后调 `resolveApproval(id, status)` 唤醒 adapter 侧的 waiter。
 
@@ -99,7 +102,7 @@ interface ReviewAgent {
   displayName?: string                     // UI/prompt 显示名;注册时写入 agent-meta(docs/12 D1)
   supportsApproval?: boolean               // 能否消费 requestApproval 回调(走可拦截工具的通道)
   isAvailable(): Promise<boolean>          // which/--version 检测本机 CLI
-  warmup?(): Promise<unknown>              // 冷启动预热:claude(可选加载 SDK)+ codex(spawn app-server lease)。触发点:/api/settings/warmup
+  warmup?(): Promise<unknown>              // 冷启动预热:claude(可选加载 SDK)+ codex(app-server)+ opencode(serve)。触发点:/api/settings/warmup
   run(input: AgentRunInput): AsyncIterable<NormalizedEvent>
   canResumeNative?(source: string): boolean
   resumeNative?(input: NativeResumeInput): AsyncIterable<NormalizedEvent>
@@ -108,7 +111,7 @@ interface ReviewAgent {
 
 `AgentRunInput` 关键字段:`text` / `contextEvents` / `cwd` / `permissions` / `writableRoots` / `model` / `effort` / `requestApproval?` / `nativeLinked?` / `signal`。
 
-- 有 `requestApproval` 回调时,adapter **可以** 走能拦截工具调用的通道(Claude Agent SDK / Codex app-server);Codex 现在无论有没有回调都走 app-server(缺省时自动放行)。
+- 有 `requestApproval` 回调时,adapter **可以** 走能拦截工具调用的通道(Claude Agent SDK / Codex app-server / OpenCode SDK);Codex 和 OpenCode 现在无论有没有回调都走 server/SDK 通道。
 - `nativeLinked.scope` 只影响 codex adapter:传了就查/建 provider-thread-link,不传就 ephemeral(见表 E)。
 
 不变量 6(见 [CLAUDE.md](../CLAUDE.md)):adapter 必须调 `serializeForAgent(contextEvents, text, agent)` 拼 prompt,不能直接消费原始 events。
@@ -136,7 +139,10 @@ interface ReviewAgent {
   - 缺 `requestApproval` 时,server 发起的 approval request 自动回 `approved`(full-access 语义),让 SDK 侧接不住的问题也能通过。
   - `item/agentMessage/delta` notification → `assistant_text` delta(`delta: true, streamId`),`item/*/completed` 补 tool 结果。
 
-- **OpenCode**:[opencode-call.ts](../server/adapters/opencode-call.ts) `runOpenCode`:`opencode run --format json --dir <cwd> [--variant <effort>]`,stdout JSONL 经 `normalizeJsonCliEvent` 翻译。
+- **OpenCode**:[opencode-call.ts](../server/adapters/opencode-call.ts) `runOpenCodeSdk`:通过 [opencode-runtime-manager.ts](../server/adapters/opencode-runtime-manager.ts) 启动/复用 `opencode serve`,再用 `@opencode-ai/sdk/v2` client 创建 ephemeral session。
+  - `v2.event.subscribe()` 的 `session.next.text.delta` / `session.next.text.ended` → `assistant_text` delta/终态,`session.next.tool.*` → 工具卡,`session.next.step.ended.tokens` → usage。
+  - `permission.v2.asked` / legacy `permission.asked` 映射成 Cockpit `Operation`;approval UI 返回后用 `v2.session.permission.reply()` 回 `once` / `always` / `reject`。
+  - `normalizeJsonCliEvent` 仍保留 OpenCode 1.4.x `part` schema 兼容测试,但主运行通道已不是 `opencode run --format json`。
 - **Cursor**:[cursor-call.ts](../server/adapters/cursor-call.ts) `runCursor`:`cursor-agent -p --output-format stream-json --stream-partial-output`,同样经 `normalizeJsonCliEvent`。
 
 ### 2. Group chat(@mention 并发多 agent)
@@ -183,6 +189,7 @@ Handoff 产物本身在 `~/.cockpit/`;`nativeLink.linkLevel === 'linked'`(Codex 
 
 - **Claude**:[claude-call.ts:545](../server/adapters/claude-call.ts:545) `runClaudeSdk`。动态 `import('@anthropic-ai/claude-agent-sdk')`,调用 `query({ prompt, options: { pathToClaudeCodeExecutable: 'claude', canUseTool, includePartialMessages: true, permissionMode: 'default', tools: { preset: 'claude_code' } } })`。`canUseTool` 把工具映射成 `Operation`(Read/Grep/Glob → `file_read` 全部自动放行,见 `isAutoAllowedClaudeRead`;其它调 `requestApproval`),返回 `allow` 时顺带补 `PermissionUpdate` addRules/addDirectories。**注意 SDK 仍然通过本机 `claude` 可执行文件运行 agent 循环,cockpit 不需要 API key**。
 - **Codex**:[codex-call.ts:168](../server/adapters/codex-call.ts:168) `runCodexAppServer`。起 `codex app-server --stdio`,`initialize` → `thread/start`(带 sandboxPolicy / approvalPolicy)→ `turn/start`。收 server → client request(`execCommandApproval` / `applyPatchApproval` / `item/*/requestApproval`)→ `mapCodexApprovalRequest` 转 `Operation` → `requestApproval` → 回 `accept` / `decline`。缺 `requestApproval` 时自动放行(full-access 语义)。
+- **OpenCode**:[opencode-call.ts](../server/adapters/opencode-call.ts) `runOpenCodeSdk`。起/复用 `opencode serve`,创建 session 后写入 permission ruleset;收到 `permission.v2.asked` / legacy `permission.asked` 后映射 `Operation`,经 `requestApproval` 回 `once` / `always` / `reject`。**SDK 连接的是本机 OpenCode server,cockpit 不需要 API key**。
 - **run-registry** 层负责创建 `ApprovalRequest`,在 SSE 上广播 `approval_required`,前端答复后调 `resolveApproval(id, status)` 唤醒 waiter。
 
 ## Serialize 边界
@@ -223,7 +230,8 @@ server/
     codex-call.ts         永远走 codex app-server(不再有 CLI exec 分支)
     codex-app-server.ts   JSON-RPC 客户端 + 事件翻译(item/agentMessage/delta 逐 token)
     codex-runtime-manager.ts  长驻 app-server 进程池 + warmup
-    opencode-call.ts      opencode CLI
+    opencode-call.ts      OpenCode SDK event/permission adapter
+    opencode-runtime-manager.ts  长驻 opencode serve 进程 + SDK client lease
     cursor-call.ts        cursor-agent / agent CLI(两个候选二进制)
     serialize.ts          serializeForAgent(边界 6)
     context-projector.ts  follow-up 的 EventEnvelope → 传给 adapter 的 contextEvents(群聊侧对称物是 serialize.ts 的 buildGroupContextEvents)
@@ -257,6 +265,7 @@ server/
 
 - **Claude SDK 落原生目录的历史泄漏**:2026-07 之前 `runClaudeSdk` 没显式关 `persistSession`(SDK 默认 `true`),ask 档单聊 + 所有 Claude 群聊都会往 `~/.claude/projects/<hash>/*.jsonl` 落一份 cockpit follow-up。修复后新 run 不再落,历史文件仍在原生目录里,可以 grep `# Original Session\n\n## User Goal` 找出来手动清理。
 - **Codex native resume 不逐 token 流**:上游 `codex exec resume --json` 只发 `item.completed`,不发中间态。详见 [docs/07 § 已知限制](07-native-continuation-and-handoff.md#已知限制codex-native-resume-不逐-token-流)。
-- **OpenCode / Cursor 的逐 token**:取决于各自 CLI 是否在 `--format json` / `--stream-partial-output` 下发 delta 事件,由 `normalizeJsonCliEvent` 兜底识别 `type: '*delta*'` 或 `content` 字段。未验证过所有版本行为。
+- **OpenCode SDK event 形状**:当前适配 `@opencode-ai/sdk/v2` 的 `{ type, data }` SSE 形状,并兼容类型声明中的 `{ type, properties }`;旧 `opencode run --format json` 的 `part` parser 只作为历史兼容测试保留。
+- **Cursor 的逐 token**:取决于 headless CLI 是否在 `--stream-partial-output` 下发 delta 事件,由 `normalizeJsonCliEvent` 兜底识别 `type: '*delta*'` 或 `content` 字段。未验证过所有版本行为。
 - **Claude / Codex handoff-native-continuation 不接审批 UI**:server-initiated approval request 直接 -32601 拒绝(见 handoff 表)。要接需要把 native-continuation run 也接进 `run-registry.requestApproval`。
 - **Group chat 不写回原生 session**:multi-agent 在同一 turn 内并发写同一原生 session 会有互相覆盖的风险,当前设计明确回避(不变量 1)。

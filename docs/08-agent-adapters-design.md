@@ -73,7 +73,7 @@ Cockpit follow-up 当前默认只读。各 adapter 尽量使用 CLI 原生的只
 |---|---|---|---|
 | Claude | `--permission-mode default --allowedTools Read,Grep,Glob`;`useTools=false` 时改成 `--disallowedTools Bash,Edit,Write,MultiEdit,WebFetch,WebSearch` | `--permission-mode acceptEdits` | `--permission-mode bypassPermissions` |
 | Codex | `--sandbox read-only` + `--ask-for-approval never` | `--sandbox workspace-write` + `--ask-for-approval untrusted --search` | `--sandbox danger-full-access` + `--dangerously-bypass-approvals-and-sandbox --search` |
-| OpenCode | `opencode run --agent plan` | `--agent plan` | `--dangerously-skip-permissions` |
+| OpenCode | SDK session ruleset:read allow,其它 ask | SDK session ruleset:read/edit allow,shell/web ask | SDK session ruleset:`*` allow |
 | Cursor | `cursor-agent -p --mode ask` | `--auto-review --trust` | `--force --trust --sandbox disabled` |
 
 Codex follow-up 不再走 `codex exec`——走 `codex app-server --stdio`(JSON-RPC 长连接),
@@ -95,27 +95,26 @@ opencode --version
 运行:
 
 ```txt
-opencode run \
-  --format json \
-  --dir <cwd> \
-  # 权限映射:read-only/auto-safe → --agent plan;full-access → --dangerously-skip-permissions
-  [--model <provider/model>] \
-  [--variant <effort>] \
-  <serialized prompt>
+@opencode-ai/sdk/v2
+  createOpencodeServer({ hostname: '127.0.0.1', port: 0 })
+  createOpencodeClient({ baseUrl, directory: <cwd> })
+  v2.session.create({ location: { directory: <cwd> }, model?, agent? })
+  session.update({ permission: Cockpit ruleset })
+  v2.event.subscribe() + v2.session.prompt()
 ```
 
 设计取舍:
 
-- 使用 `run` 非交互模式,避免进入 TUI。
-- 使用 `--format json` 读取 raw JSON events。
-- 使用 `--agent plan` 对齐 Cockpit follow-up 只读语义。
-- `model` 透传为 OpenCode 的 `provider/model`。
-- `effort` 透传为 OpenCode 的 `--variant`,因为 OpenCode 把推理强度建模成 provider-specific variant。
+- 使用官方 `@opencode-ai/sdk` 启动/连接本机 OpenCode server;认证和 provider 配置仍来自用户本机 OpenCode,不是 Cockpit 管 API key。
+- 每个 Cockpit run 创建 ephemeral OpenCode session,只把 Cockpit transcript 落到 `~/.cockpit/`;OpenCode 原生历史由 loader 只读 `~/.local/share/opencode/opencode.db`。
+- `model` 需要是 OpenCode 的 `provider/model` 形态;`effort` 作为 `ModelRef.variant` 传入。
+- Cockpit 权限档转换成 OpenCode session `permission` ruleset:`ask` 自动放行 read/glob/grep/list/todowrite,其它 ask;`auto-safe` 额外自动放行 edit,shell/web 仍 ask;`full-access` 全 allow。
+- `permission.v2.asked` / legacy `permission.asked` 事件映射为 Cockpit `Operation`,经统一 approval UI 决策后回 `once` / `always` / `reject`。
+- OpenCode 也有 plugin/server 体系,但当前 SDK v2 permission API 已足够桥接审批;临时 plugin 留给未来需要更细粒度 UI/工具元数据时再评估。
 
 当前不做:
 
-- 不使用 `opencode serve` 长驻 server。
-- 不读取 `opencode session list/export` 作为 session source。
+- 不通过 `opencode session list/export` 作为 session source;原生历史读取走 SQLite loader。
 - 不创建或修改用户的 OpenCode agent 配置。
 
 ## Cursor Adapter
@@ -166,6 +165,7 @@ OpenCode 和 Cursor 的 JSON event 形状可能随版本变化,所以 parser 使
 - 能识别的工具开始事件转 `tool_use`。
 - 能识别的工具完成事件转 `tool_result`。
 - 能识别的 token usage 转 `usage`。
+- OpenCode 1.4.x 的 `part` 结构按一等 schema 处理:`part.type='text'` → `assistant_text`,`part.type='tool'` → `tool_use` / `tool_result`,`part.tokens` → `usage`。
 - 不能识别的事件保留为 `meta`,不丢原始 payload。
 - 非 JSON stdout 累积为普通 `assistant_text` fallback。
 

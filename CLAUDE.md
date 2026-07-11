@@ -6,7 +6,7 @@ This file gives guidance to anyone working in this repository (Claude Code or ot
 
 `cockpit` 是本地 AI CLI 会话查看器与协作控制台。
 
-- 读取 Claude Code / Codex CLI 原生会话并渲染 timeline。
+- 读取 Claude Code / Codex / OpenCode CLI 原生会话并渲染 timeline。
 - 在原会话基础上发起跨 agent follow-up、review 或群聊。
 - 将 cockpit 数据保存到 `~/.cockpit/`,不直接改写原生 CLI 文件。
 

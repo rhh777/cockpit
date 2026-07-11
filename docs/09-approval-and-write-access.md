@@ -27,6 +27,7 @@ Cockpit follow-up 当前默认只读。Agent 可以读取原生 session、生成
 
 - **Codex follow-up 已全量走 `codex app-server --stdio`**(见 `server/adapters/codex-call.ts` `run()` → `runCodexAppServer`),通过 `mapCodexApprovalRequest` 把 `item/commandExecution/requestApproval` / `item/fileChange/requestApproval` / `item/permissions/requestApproval` 映射为 Cockpit `Operation` 并驱动前端 approval 卡片;full-access 模式自动放行,不建 UI 卡片。`codex exec` 只保留给 `resumeNative` / native continuation。
 - **Claude follow-up 有 SDK 路径**:当调用方(follow-up / group / native continuation)传入 `requestApproval` 回调时,`claude-call.ts` `run()` 走 `runClaudeSdk`,通过 Agent SDK 的 `canUseTool` 触发 approval;没有回调时仍走 `claude -p` CLI。
+- **OpenCode follow-up / group chat 已走 SDK 路径**:`opencode-call.ts` 通过 `@opencode-ai/sdk/v2` 启动/连接本机 `opencode serve`,将 `permission.v2.asked` / legacy `permission.asked` 映射为 Cockpit `Operation`,再用 SDK `v2.session.permission.reply()` 回写审批结果。
 
 仍在演进的关键部分:
 
@@ -105,13 +106,14 @@ Claude 官方 docs 说明 SDK 权限控制包含 hooks、allow/deny rules 和 `c
 
 ### Cursor / OpenCode
 
-Cursor、OpenCode 当前只作为 Cockpit follow-up agent,没有稳定确认逐操作审批协议。第一版不把真实写盘能力作为必达目标:
+Cursor、OpenCode 当前作为 Cockpit follow-up / group chat agent。OpenCode adapter 已切到官方 `@opencode-ai/sdk/v2`:Cockpit 启动本机 `opencode serve`,用 SDK client 创建 ephemeral session、订阅事件,并把 `permission.v2.asked` / legacy `permission.asked` 桥到 Cockpit approval UI。Cursor headless CLI 仍没有接入逐工具审批回调。
 
-- `ask`: 继续 plan/ask/read-only。
-- `auto-safe`: 只使用官方安全/计划模式,不自行放开写盘。
-- `full-access`: 只有在明确确认对应 CLI 参数能被外部 sandbox 或 runtime 约束后才启用。
+- OpenCode `ask`: session ruleset 自动放行 `read` / `glob` / `grep` / `list` / `todowrite`,其它 operation ask。
+- OpenCode `auto-safe`: 额外自动放行 `edit`,shell / web 仍 ask。
+- OpenCode `full-access`: session ruleset 全 allow,必须由用户在 UI 显式选择。
+- Cursor `ask` / `auto-safe` / `full-access` 仍只做 CLI flag 映射;没有真实逐工具审批。
 
-结论: Cursor/OpenCode 先保留权限档位映射,但真实逐操作审批不作为 Phase 1 交付范围。
+结论: OpenCode 不需要临时 plugin 就能完成第一版 permission bridge;plugin 只作为未来增强点。Cursor 暂不承诺真实逐操作审批。
 
 ## 权限模型
 
@@ -433,7 +435,7 @@ UI 不展示“你刚才说了要写文件所以要批准”这种文案,只展�
 - 不处理应用退出后的 pending approval 恢复继续执行;退出后 run 仍按后台运行规则变为 `interrupted`。
 - 不做跨 run 的长期“永远允许”规则。
 - 不把普通 follow-up 写入原生 Claude/Codex 历史;native resume 仍走官方 CLI。
-- Cursor/OpenCode 暂不承诺真实逐操作审批。
+- OpenCode 通过 SDK permission events 支持真实逐操作审批;Cursor 暂不承诺真实逐操作审批。
 
 ## 相关资料
 

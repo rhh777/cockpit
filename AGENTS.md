@@ -6,7 +6,7 @@ Codex reads this file before working in this repository. Keep it aligned with `C
 
 `cockpit` is a local-first AI CLI session viewer and collaboration console.
 
-- It reads native Claude Code / Codex CLI sessions and renders timelines.
+- It reads native Claude Code / Codex / OpenCode CLI sessions and renders timelines.
 - It can start cross-agent follow-up, review, and group chat on top of an existing session.
 - Cockpit data is written under `~/.cockpit/`; native CLI files are not directly edited by Cockpit.
 - Native resume must go through the official CLI subprocess and must be explicitly chosen by the user.
@@ -36,7 +36,7 @@ Use `pnpm` for this repo.
 
 ## Core Constraints
 
-1. Do not write, delete, or modify native Claude/Codex CLI files directly.
+1. Do not write, delete, or modify native Claude/Codex/OpenCode CLI files directly.
 2. UI consumes only `NormalizedEvent` / `EventEnvelope`, never native CLI schemas.
 3. Loaders are best-effort: bad lines become warnings/meta and must not block a session.
 4. Adapters must use `serializeForAgent`; do not feed raw native events directly to an agent.
@@ -64,4 +64,3 @@ Before finishing a UI change, manually inspect at least:
 - A Cockpit group chat page with the group composer and agent list.
 
 If a change intentionally affects only one mode, say why in the final response or PR description.
-
