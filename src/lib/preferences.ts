@@ -1,7 +1,7 @@
 import type { AgentName } from './types'
 
 export type ThemePreference = 'system' | 'light' | 'dark'
-export type SourceFilterPreference = 'all' | 'native' | 'claude-code' | 'codex' | 'cockpit'
+export type SourceFilterPreference = 'all' | 'native' | 'claude-code' | 'codex' | 'opencode' | 'cockpit'
 export type FontSizePreference = 'small' | 'medium' | 'large' | 'xlarge'
 export type CliField = 'model' | 'effort'
 export type CliSelection = Partial<Record<CliField, string>>
@@ -80,7 +80,7 @@ export function setCliSelection(agent: AgentName, field: CliField, value: string
 
 export function readDefaultSourceFilter(): SourceFilterPreference {
   const v = localStorage.getItem(STORAGE_KEYS.defaultSourceFilter)
-  if (v === 'native' || v === 'claude-code' || v === 'codex' || v === 'cockpit') return v
+  if (v === 'native' || v === 'claude-code' || v === 'codex' || v === 'opencode' || v === 'cockpit') return v
   return 'all'
 }
 

@@ -6,6 +6,7 @@ import { AgentPicker } from './AgentPicker'
 import { setDefaultAgent } from '../lib/preferences'
 import { parseMentions } from '../lib/mentions'
 import { AGENT_OPTIONS, labelForAgent } from '../lib/agents'
+import { fetchAgentModels, type AgentModelOptionDTO } from '../lib/api'
 import type { ApprovalMode, RunPermissions } from '../lib/types'
 
 export type SendMode = 'followup' | 'native'
@@ -134,6 +135,8 @@ const PERMISSION_OPTIONS: { mode: ApprovalMode; label: string; hint: string }[] 
 ]
 
 const DEFAULT_GROUP_AGENTS: AgentName[] = ['claude', 'codex']
+const MODEL_POPOVER_WIDTH = 360
+const MODEL_POPOVER_MARGIN = 12
 
 function permissionsForMode(mode: ApprovalMode): RunPermissions {
   if (mode === 'full-access') {
@@ -170,6 +173,7 @@ export function FollowupComposer({
   onSend,
   onNativeSend,
   onCancelAll,
+  cwd,
   groupMode = false,
   groupDefaultDiscussionMode = 'parallel',
   codexAcceleratedMode = false,
@@ -206,6 +210,7 @@ export function FollowupComposer({
     writeMode?: 'read-only' | 'trusted',
   ) => void
   onCancelAll: () => void
+  cwd?: string | null
   /** Phase 2 opt-in:「Codex 加速模式」当前 thread 是否已启用。由 SessionDetail per-thread 持久化。 */
   codexAcceleratedMode?: boolean
   onCodexAcceleratedModeChange?: (next: boolean) => void
@@ -230,6 +235,7 @@ export function FollowupComposer({
     cursor: {},
   })
   const [modelMenuOpen, setModelMenuOpen] = useState<AgentName | null>(null)
+  const [openCodeModels, setOpenCodeModels] = useState<AgentModelOptionDTO[] | null>(null)
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false)
   const [advancedMenuOpen, setAdvancedMenuOpen] = useState(false)
   const [permissionMenuOpen, setPermissionMenuOpen] = useState(false)
@@ -303,6 +309,20 @@ export function FollowupComposer({
       a.value.toLowerCase().startsWith(mentionMenu.query) && (!groupMode || activeGroupSet.has(a.value)),
     )
   }, [mentionMenu, groupMode, activeGroupSet])
+
+  useEffect(() => {
+    let alive = true
+    fetchAgentModels('opencode', cwd)
+      .then((models) => {
+        if (alive) setOpenCodeModels(models.length ? models : null)
+      })
+      .catch(() => {
+        if (alive) setOpenCodeModels(null)
+      })
+    return () => {
+      alive = false
+    }
+  }, [cwd])
 
   useEffect(() => {
     if ((groupMode || !nativeAvailable) && mode === 'native') setMode('followup')
@@ -510,10 +530,23 @@ export function FollowupComposer({
     })
   }
 
-  const groups = CLI_GROUPS[agent]
+  const cliGroupsForAgent = (targetAgent: AgentName): CliGroup[] => {
+    const base = CLI_GROUPS[targetAgent] ?? []
+    if (targetAgent !== 'opencode' || !openCodeModels?.length) return base
+    return base.map((g) =>
+      g.key === 'model'
+        ? {
+            ...g,
+            options: [{ value: '', label: 'Default', hint: 'OpenCode 默认' }, ...openCodeModels],
+          }
+        : g,
+    )
+  }
+
+  const groups = cliGroupsForAgent(agent)
   // 按钮 label:把每个 group 的当前选项串成 "GPT-5.5 · 中";全 Default 时显示 "Default"。
   const triggerLabel = (targetAgent: AgentName) => {
-    const parts = (CLI_GROUPS[targetAgent] ?? []).map((g) => {
+    const parts = cliGroupsForAgent(targetAgent).map((g) => {
       const v = cliByAgent[targetAgent]?.[g.key] ?? ''
       return g.options.find((o) => o.value === v)?.label ?? 'Default'
     })
@@ -521,14 +554,20 @@ export function FollowupComposer({
   }
 
   const renderModelPicker = (targetAgent: AgentName, withAgent = false, enabled = true) => {
-    const targetGroups = CLI_GROUPS[targetAgent] ?? []
+    const targetGroups = cliGroupsForAgent(targetAgent)
     const targetSel = cliByAgent[targetAgent] ?? {}
     const label = triggerLabel(targetAgent)
     const hasCustomSelection = label !== 'Default'
     const isTargeted = groupMode && targets.includes(targetAgent)
     const popoverLeft =
       groupMode && modelMenuRect && typeof window !== 'undefined'
-        ? Math.max(12, Math.min(modelMenuRect.left, window.innerWidth - 292))
+        ? Math.max(
+            MODEL_POPOVER_MARGIN,
+            Math.min(
+              modelMenuRect.left,
+              window.innerWidth - MODEL_POPOVER_WIDTH - MODEL_POPOVER_MARGIN,
+            ),
+          )
         : undefined
     const popoverOpenUp = groupMode && modelMenuRect ? modelMenuRect.top > 300 : false
     const popoverMaxHeight =
@@ -680,7 +719,7 @@ export function FollowupComposer({
                   title={
                     nativeAvailable
                       ? `写回原 ${agentLabel} 会话历史`
-                      : '只有 Claude/Codex 原生会话支持回到原会话'
+                      : '只有 Claude/Codex/OpenCode 原生会话支持回到原会话'
                   }
                 >
                   <Icon name="rotate-ccw" size={12} />
@@ -689,7 +728,7 @@ export function FollowupComposer({
                 <div id="send-mode-help" className="composer-help-popover" role="tooltip">
                   <div className="composer-help-title">发送方式</div>
                   <div><strong>Cockpit 追问</strong>: 只追加到 Cockpit,不改原生历史;CLI 只读。</div>
-                  <div><strong>回到原会话</strong>: 发送到原 Claude/Codex 会话,会进入原生历史。</div>
+                  <div><strong>回到原会话</strong>: 发送到原 Claude/Codex/OpenCode 会话,会进入原生历史。</div>
                 </div>
               </div>
             </>

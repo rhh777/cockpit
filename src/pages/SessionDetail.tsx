@@ -46,7 +46,7 @@ type CliSelection = Partial<Record<'model' | 'effort', string>>
 type CliSelectionByAgent = Partial<Record<AgentName, CliSelection>>
 
 function canNativeResume(source: string | undefined): boolean {
-  return source === 'claude-code' || source === 'codex'
+  return source === 'claude-code' || source === 'codex' || source === 'opencode'
 }
 
 function isGroupSource(source: string | undefined): boolean {
@@ -1265,6 +1265,7 @@ export function SessionDetail() {
               }
               onNativeSend={handleNativeSend}
               onCancelAll={handleCancelAll}
+              cwd={s.cwd}
               codexAcceleratedMode={codexAcceleratedMode}
               onCodexAcceleratedModeChange={setCodexAcceleratedMode}
             />

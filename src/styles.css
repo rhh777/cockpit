@@ -3881,8 +3881,8 @@ body.resizing * {
   position: absolute;
   bottom: calc(100% + 6px);
   right: 0;
-  min-width: 220px;
-  max-width: min(280px, calc(100vw - 24px));
+  width: min(360px, calc(100vw - 24px));
+  min-width: min(260px, calc(100vw - 24px));
   background: var(--color-background-primary);
   border: 0.5px solid var(--color-border);
   border-radius: var(--border-radius-md);
@@ -3922,41 +3922,52 @@ body.resizing * {
 }
 .model-popover-title {
   font-size: var(--small-font-size);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-weight: 500;
   color: var(--color-text-secondary);
-  padding: 4px 8px 2px;
+  padding: 5px 9px 3px;
 }
 .model-popover-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 128px) 14px;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  min-height: 32px;
   font-size: var(--compact-font-size);
   text-align: left;
-  padding: 6px 8px;
+  padding: 6px 9px;
   border: none;
   background: transparent;
   color: var(--color-text-primary);
-  border-radius: 4px;
+  border-radius: 6px;
   cursor: pointer;
+  inline-size: 100%;
 }
 .model-popover-item > span:first-child {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .model-popover-item:hover {
-  background: var(--color-background-secondary);
+  background: color-mix(in srgb, var(--color-followup) 8%, var(--color-background-secondary));
 }
 .model-popover-item.active {
+  background: color-mix(in srgb, var(--color-followup) 10%, var(--color-background-primary));
   color: var(--color-followup);
   font-weight: 500;
 }
 .model-popover-hint {
-  margin-left: auto;
+  justify-self: end;
+  min-width: 0;
+  max-width: 128px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--small-font-size);
   color: var(--color-text-secondary);
+}
+.model-popover-item svg {
+  justify-self: end;
 }
 
 /* 自动刷新按钮重构 */
@@ -4774,9 +4785,9 @@ body.resizing * {
 
 .project-view-switch {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 2px;
-  width: 190px;
+  width: min(282px, calc(100% - 28px));
   margin: 2px 14px 18px;
   margin-left: 14px;
   padding: 2px;

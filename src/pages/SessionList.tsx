@@ -11,11 +11,12 @@ import {
 } from '../lib/api'
 import { displayTitle, relativeTime } from '../lib/display'
 import { AgentIcon } from '../components/AgentIcon'
-import { labelForAgent } from '../lib/agents'
+import { AGENT_OPTIONS, labelForAgent } from '../lib/agents'
 import { Icon } from '../components/Icon'
 import { useI18n, type MessageKey, type ResolvedLocale } from '../lib/i18n'
+import type { AgentName } from '../lib/types'
 
-type ViewMode = 'all' | 'cockpit' | 'claude-code' | 'codex'
+type ViewMode = 'all' | 'cockpit' | AgentName
 type GroupMode = 'project' | 'time'
 
 const PINNED_SESSIONS_KEY = 'cockpit.pinnedSessions'
@@ -116,7 +117,35 @@ function sourceMeta(s: SessionSummaryDTO, t: (key: MessageKey) => string): strin
   if (s.source === 'cockpit') return t('sessions.groupChat')
   if (s.source === 'claude-code') return 'Claude'
   if (s.source === 'codex') return 'Codex'
+  const agent = AGENT_OPTIONS.find((a) => a.value === s.source)
+  if (agent) return agent.label
   return String(s.source)
+}
+
+function agentForSource(source: string | undefined): AgentName | null {
+  if (source === 'claude-code') return 'claude'
+  const agent = AGENT_OPTIONS.find((a) => a.value === source)
+  return agent?.value ?? null
+}
+
+function extensionAgents(s: SessionSummaryDTO, key: 'agents' | 'followupAgents'): AgentName[] {
+  const raw = s.extensions?.[key]
+  return Array.isArray(raw) ? raw.filter((v): v is AgentName => typeof v === 'string') : []
+}
+
+function sessionAgents(s: SessionSummaryDTO): Set<AgentName> {
+  const agents = new Set<AgentName>()
+  const sourceAgent = agentForSource(s.source)
+  if (sourceAgent) agents.add(sourceAgent)
+  for (const agent of extensionAgents(s, 'agents')) agents.add(agent)
+  for (const agent of extensionAgents(s, 'followupAgents')) agents.add(agent)
+  return agents
+}
+
+function matchesViewMode(s: SessionSummaryDTO, viewMode: ViewMode): boolean {
+  if (viewMode === 'all') return true
+  if (viewMode === 'cockpit') return s.source === 'cockpit'
+  return sessionAgents(s).has(viewMode)
 }
 
 function searchableText(s: SessionSummaryDTO, t: (key: MessageKey) => string, locale: ResolvedLocale): string {
@@ -125,6 +154,7 @@ function searchableText(s: SessionSummaryDTO, t: (key: MessageKey) => string, lo
     displayTitle(s.title, 60, locale),
     s.cwd ?? '',
     sourceMeta(s, t),
+    [...sessionAgents(s)].map(labelForAgent).join(' '),
     s.id,
     s.messageCount == null ? '' : String(s.messageCount),
   ]
@@ -229,8 +259,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    const sourceFiltered =
-      viewMode === 'all' ? sessions : sessions.filter((s) => s.source === viewMode)
+    const sourceFiltered = sessions.filter((s) => matchesViewMode(s, viewMode))
     const items = q ? sourceFiltered.filter((s) => searchableText(s, t, locale).includes(q)) : sourceFiltered
     return items.slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   }, [sessions, query, viewMode, locale, t])
@@ -335,8 +364,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
   const viewItems: { key: ViewMode; label: string; icon?: Parameters<typeof Icon>[0]['name'] }[] = [
     { key: 'all', label: t('sessions.all'), icon: 'folder' },
     { key: 'cockpit', label: t('sessions.groupChat') },
-    { key: 'claude-code', label: 'Claude' },
-    { key: 'codex', label: 'Codex' },
+    ...AGENT_OPTIONS.map((agent) => ({ key: agent.value, label: agent.label })),
   ]
 
   const renderSessionRow = (s: SessionSummaryDTO) => {

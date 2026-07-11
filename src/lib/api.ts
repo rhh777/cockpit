@@ -40,6 +40,18 @@ export function fetchSessionDetail(source: string, id: string): Promise<SessionD
   return getJson(`/api/sessions/${encodeURIComponent(source)}/${encodeURIComponent(id)}`)
 }
 
+export interface AgentModelOptionDTO {
+  value: string
+  label: string
+  hint?: string
+}
+
+export async function fetchAgentModels(agent: string, cwd?: string | null): Promise<AgentModelOptionDTO[]> {
+  const qs = cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''
+  const json = await getJson<{ models?: AgentModelOptionDTO[] }>(`/api/agents/${encodeURIComponent(agent)}/models${qs}`)
+  return Array.isArray(json.models) ? json.models : []
+}
+
 export async function createGroupThread(body: { title?: string; cwd?: string | null } = {}): Promise<{
   id: string
 }> {
@@ -266,6 +278,8 @@ export interface SettingsDiagnostics {
     claudeProjects: string
     codexSessions: string
     codexIndex: string
+    opencodeData: string
+    opencodeDb: string
   }
   agents: { name: string; available: boolean; error?: string }[]
 }

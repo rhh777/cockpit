@@ -4,6 +4,7 @@ import { translate, type ResolvedLocale } from './i18n'
 export function sourceBadge(source: Source): string {
   if (source === 'claude-code') return 'Claude'
   if (source === 'codex') return 'Codex'
+  if (source === 'opencode') return 'OpenCode'
   if (source === 'cockpit') return 'Group'
   return source
 }
@@ -11,6 +12,7 @@ export function sourceBadge(source: Source): string {
 export function sourceLabel(source: Source): string {
   if (source === 'claude-code') return 'Claude Code'
   if (source === 'codex') return 'Codex'
+  if (source === 'opencode') return 'OpenCode'
   if (source === 'cockpit') return 'Cockpit Group Chat'
   return source
 }

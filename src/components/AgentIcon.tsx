@@ -1,6 +1,7 @@
 import claudeIcon from '../assets/agent-icons/claude.png'
 import cockpitIcon from '../assets/agent-icons/cockpit.png'
 import codexIcon from '../assets/agent-icons/codex.png'
+import opencodeIcon from '../assets/agent-icons/opencode.svg'
 import { labelForAgent } from '../lib/agents'
 import type { AgentName, Source } from '../lib/types'
 
@@ -31,10 +32,17 @@ export function AgentIcon({
   className?: string
 }) {
   const normalized = normalizeAgent(agent ?? source)
-  const src = normalized === 'codex' ? codexIcon : normalized === 'cockpit' ? cockpitIcon : claudeIcon
+  const src =
+    normalized === 'codex'
+      ? codexIcon
+      : normalized === 'cockpit'
+      ? cockpitIcon
+      : normalized === 'opencode'
+      ? opencodeIcon
+      : claudeIcon
   const label = normalized === 'cockpit' ? 'Cockpit' : labelForAgent(normalized)
 
-  if (normalized === 'opencode' || normalized === 'cursor') {
+  if (normalized === 'cursor') {
     return (
       <span
         className={`agent-icon agent-icon-${normalized} agent-icon-letter ${className}`.trim()}
@@ -42,7 +50,7 @@ export function AgentIcon({
         title={label}
         style={{ width: size, height: size, fontSize: Math.max(10, Math.floor(size * 0.58)) }}
       >
-        {normalized === 'opencode' ? 'O' : 'Cu'}
+        Cu
       </span>
     )
   }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import type { SettingsDiagnostics } from '../lib/api'
-import { fetchSettingsDiagnostics } from '../lib/api'
+import type { AgentModelOptionDTO, SettingsDiagnostics } from '../lib/api'
+import { fetchAgentModels, fetchSettingsDiagnostics } from '../lib/api'
 import { labelForAgent } from '../lib/agents'
 import type { AgentName } from '../lib/types'
 import { AgentPicker } from './AgentPicker'
@@ -137,6 +137,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const [diagLoading, setDiagLoading] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [cliRev, setCliRev] = useState(0)
+  const [openCodeModels, setOpenCodeModels] = useState<AgentModelOptionDTO[] | null>(null)
 
   useEffect(() => applyThemePreference(theme), [theme])
   useEffect(() => applyFontSizePreference(fontSize), [fontSize])
@@ -153,6 +154,21 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       alive = false
     }
   }, [refreshKey])
+
+  useEffect(() => {
+    if (defaultAgent !== 'opencode') return
+    let alive = true
+    fetchAgentModels('opencode')
+      .then((models) => {
+        if (alive) setOpenCodeModels(models.length ? models : null)
+      })
+      .catch(() => {
+        if (alive) setOpenCodeModels(null)
+      })
+    return () => {
+      alive = false
+    }
+  }, [defaultAgent, refreshKey])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -195,7 +211,17 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const selectedCli = readCliSelection(defaultAgent)
   void cliRev
   const selectedStatus = diagnostics?.agents.find((a) => a.name === defaultAgent)
-  const modelOptions = MODEL_OPTIONS[defaultAgent].map((option) =>
+  const baseModelOptions =
+    defaultAgent === 'opencode' && openCodeModels?.length
+      ? [
+          { value: '', label: 'CLI 默认' },
+          ...openCodeModels.map((model) => ({
+            value: model.value,
+            label: model.hint ? `${model.label} · ${model.hint}` : model.label,
+          })),
+        ]
+      : MODEL_OPTIONS[defaultAgent]
+  const modelOptions = baseModelOptions.map((option) =>
     option.value ? option : { ...option, label: t('common.cliDefault') },
   )
   const effortLabels: Record<string, string> = {
@@ -219,6 +245,11 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       ? [
           ['Codex sessions', diagnostics?.roots.codexSessions],
           ['Codex index', diagnostics?.roots.codexIndex],
+        ]
+      : defaultAgent === 'opencode'
+      ? [
+          ['OpenCode data', diagnostics?.roots.opencodeData],
+          ['OpenCode DB', diagnostics?.roots.opencodeDb],
         ]
       : []
 
@@ -340,6 +371,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                 { value: 'all', label: t('settings.allSessions') },
                 { value: 'claude-code', label: 'Claude' },
                 { value: 'codex', label: 'Codex' },
+                { value: 'opencode', label: 'OpenCode' },
               ]}
             />
             <ToggleRow label={t('settings.autoRefresh')} checked={autoRefresh} onChange={pickAutoRefresh} />
@@ -361,6 +393,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                 {[
                   ['cockpit', diagnostics.roots.cockpit],
                   ['followups', diagnostics.roots.followups],
+                  ['opencode db', diagnostics.roots.opencodeDb],
                 ].map(([key, value]) => (
                   <div key={key} className="settings-path-line">
                     <span>{key}</span>
