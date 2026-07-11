@@ -3,9 +3,15 @@ import { ALLOWED_ROOTS } from '../config'
 
 // uuid v4/v7 等形态(Claude/Codex session id 均为 uuid;cockpit 自建 thread 也是 uuid)。
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
+const OPENCODE_SESSION_RE = /^ses_[A-Za-z0-9]{8,64}$/
 
 export function isValidSessionId(id: string): boolean {
   return UUID_RE.test(id)
+}
+
+export function isValidSessionIdForSource(source: string, id: string): boolean {
+  if (source === 'opencode') return OPENCODE_SESSION_RE.test(id)
+  return isValidSessionId(id)
 }
 
 const SOURCE_RE = /^[a-z][a-z0-9-]{0,31}$/

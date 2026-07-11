@@ -3,13 +3,18 @@ import assert from 'node:assert/strict'
 import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { execFile, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import { claudeLoader, normalizeClaudeLine } from './claude-loader'
 import { codexLoader, normalizeCodexLine, resolveCodexUpdatedAt, summarizeCodexFile } from './codex-loader'
+import { opencodeLoader } from './opencode-loader'
 import type { NormalizedEvent } from './types'
 
 const FIX = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../__fixtures__')
+const execFileAsync = promisify(execFile)
+const HAS_SQLITE = spawnSync('sqlite3', ['-version'], { stdio: 'ignore' }).status === 0
 
 function types(events: { event: NormalizedEvent }[]): string[] {
   return events.map((e) => e.event.type)
@@ -17,6 +22,18 @@ function types(events: { event: NormalizedEvent }[]): string[] {
 
 function tempJsonl(name: string): string {
   return path.join(os.tmpdir(), `cockpit-loader-${name}-${randomUUID()}.jsonl`)
+}
+
+function tempDb(name: string): string {
+  return path.join(os.tmpdir(), `cockpit-loader-${name}-${randomUUID()}.db`)
+}
+
+function sqlString(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`
+}
+
+async function sqliteExec(dbPath: string, sql: string) {
+  await execFileAsync('sqlite3', [dbPath, sql])
 }
 
 async function rmQuiet(filePath: string) {
@@ -179,6 +196,62 @@ test('codex loader: exec_command_begin/end map to tool_use/tool_result', async (
   if (shellResult && shellResult.event.type === 'tool_result') {
     assert.equal(shellResult.event.output, 'hi\n')
     assert.equal(shellResult.event.isError, false)
+  }
+})
+
+test('opencode loader: session_message rows normalize into timeline events', { skip: !HAS_SQLITE }, async () => {
+  const db = tempDb('opencode-session-message')
+  const id = 'ses_testSessionMessage123'
+  try {
+    await sqliteExec(
+      db,
+      [
+        'create table session (id text primary key, title text, directory text, time_created integer, time_updated integer, agent text, model text);',
+        'create table session_message (id text primary key, session_id text, type text, time_created integer, time_updated integer, data text, seq integer);',
+        `insert into session values (${sqlString(id)}, 'Greeting', '/tmp/project', 1783755000000, 1783755005000, 'build', ${sqlString(JSON.stringify({ id: 'glm-5.2', providerID: 'xingliu' }))});`,
+        `insert into session_message values ('m1', ${sqlString(id)}, 'user', 1783755000000, 1783755000000, ${sqlString(JSON.stringify({ time: { created: 1783755000000 }, text: 'hello' }))}, 1);`,
+        `insert into session_message values ('m2', ${sqlString(id)}, 'assistant', 1783755001000, 1783755002000, ${sqlString(JSON.stringify({ time: { created: 1783755001000 }, content: [{ type: 'reasoning', text: 'thinking' }, { type: 'text', text: 'hi there' }, { type: 'step-finish', tokens: { input: 3, output: 2 } }] }))}, 2);`,
+      ].join('\n'),
+    )
+
+    const { events, summaryPatch, warnings } = await opencodeLoader.loadEvents(db, id)
+    assert.deepEqual(warnings, [])
+    assert.equal(summaryPatch.title, 'Greeting')
+    assert.equal(summaryPatch.cwd, '/tmp/project')
+    assert.equal(summaryPatch.messageCount, 2)
+    assert.deepEqual(types(events), ['user_text', 'thinking', 'assistant_text', 'usage'])
+    const assistant = events.find((e) => e.event.type === 'assistant_text')
+    assert.ok(assistant?.event.type === 'assistant_text' && assistant.event.agent === 'opencode')
+  } finally {
+    await rmQuiet(db)
+  }
+})
+
+test('opencode loader: legacy message/part rows are used when session_message is empty', { skip: !HAS_SQLITE }, async () => {
+  const db = tempDb('opencode-legacy')
+  const id = 'ses_testLegacy123'
+  try {
+    await sqliteExec(
+      db,
+      [
+        'create table session (id text primary key, title text, directory text, time_created integer, time_updated integer, agent text, model text);',
+        'create table session_message (id text primary key, session_id text, type text, time_created integer, time_updated integer, data text, seq integer);',
+        'create table message (id text primary key, session_id text, time_created integer, time_updated integer, data text);',
+        'create table part (id text primary key, message_id text, session_id text, time_created integer, time_updated integer, data text);',
+        `insert into session values (${sqlString(id)}, '', '/tmp/legacy', 1783755100000, 1783755105000, 'build', '');`,
+        `insert into message values ('msg_user', ${sqlString(id)}, 1783755100000, 1783755100000, ${sqlString(JSON.stringify({ role: 'user' }))});`,
+        `insert into part values ('prt_user', 'msg_user', ${sqlString(id)}, 1783755100000, 1783755100000, ${sqlString(JSON.stringify({ type: 'text', text: 'who are you' }))});`,
+        `insert into message values ('msg_assistant', ${sqlString(id)}, 1783755101000, 1783755102000, ${sqlString(JSON.stringify({ role: 'assistant' }))});`,
+        `insert into part values ('prt_assistant', 'msg_assistant', ${sqlString(id)}, 1783755101000, 1783755102000, ${sqlString(JSON.stringify({ type: 'text', text: 'I am OpenCode' }))});`,
+      ].join('\n'),
+    )
+
+    const { events, summaryPatch } = await opencodeLoader.loadEvents(db, id)
+    assert.equal(summaryPatch.title, 'who are you')
+    assert.equal(summaryPatch.messageCount, 2)
+    assert.deepEqual(types(events), ['user_text', 'assistant_text'])
+  } finally {
+    await rmQuiet(db)
   }
 })
 

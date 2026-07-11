@@ -46,6 +46,37 @@ test('terminal status 可恢复', async () => {
   assert.deepEqual((status!.event as any).value, { status: 'completed' })
 })
 
+test('followupAgents collects target and assistant agents', async () => {
+  const id = randomUUID()
+  try {
+    await threadStore.appendEvent(SRC, id, {
+      origin: 'cockpit',
+      source: SRC,
+      sourceEventId: 'u1',
+      turnId: 'turn_agents',
+      runId: 'run_agents',
+      event: {
+        type: 'user_text',
+        text: '@opencode @cursor check this',
+        ts: 't',
+        targetAgents: ['opencode', 'cursor'],
+        mentions: ['opencode', 'cursor'],
+      },
+    })
+    await threadStore.appendEvent(SRC, id, {
+      origin: 'cockpit',
+      source: SRC,
+      sourceEventId: 'a1',
+      turnId: 'turn_agents',
+      runId: 'run_agents',
+      event: { type: 'assistant_text', text: 'ok', ts: 't', agent: 'opencode' },
+    })
+    assert.deepEqual(await threadStore.followupAgents(SRC, id), ['opencode', 'cursor'])
+  } finally {
+    await fsp.rm(threadDir(SRC, id), { recursive: true, force: true })
+  }
+})
+
 test('crash 半截行:best-effort 读出完整部分,坏行跳过', async () => {
   // 手动写一个合法行 + 一个半截损坏行(模拟崩溃)
   fs.appendFileSync(followupsFile(SRC, ID), '{"origin":"cockpit","type":"user_text","text":"ok","ts":"t"}\n')

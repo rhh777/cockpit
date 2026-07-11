@@ -1,5 +1,5 @@
 import type { SessionSourceLoader, SessionSummary } from './types'
-import { groupThreadStore } from '../store/group-thread-store'
+import { groupThreadStore, groupTranscriptAgents } from '../store/group-thread-store'
 
 export const cockpitLoader: SessionSourceLoader = {
   source: 'cockpit',
@@ -21,7 +21,7 @@ export const cockpitLoader: SessionSourceLoader = {
           startedAt: state.startedAt,
           updatedAt: state.updatedAt,
           messageCount: events.length,
-          extensions: { kind: 'group-chat', agents: state.agents },
+          extensions: { kind: 'group-chat', agents: groupTranscriptAgents(events) },
         }
       : {}
     return { summaryPatch, events, warnings: [] }

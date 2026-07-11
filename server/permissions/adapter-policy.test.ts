@@ -6,6 +6,7 @@ import {
   codexSandboxForPermissions,
   cursorPermissionArgs,
   openCodePermissionArgs,
+  openCodePermissionRuleset,
 } from './adapter-policy'
 import { permissionsForMode } from './types'
 
@@ -57,5 +58,25 @@ test('Cursor and OpenCode permissions keep ask read-only and full access explici
 
   assert.deepEqual(openCodePermissionArgs(permissionsForMode('ask')), ['--agent', 'plan'])
   assert.deepEqual(openCodePermissionArgs(permissionsForMode('auto-safe')), ['--agent', 'plan'])
-  assert.deepEqual(openCodePermissionArgs(permissionsForMode('full-access')), ['--dangerously-skip-permissions'])
+  assert.deepEqual(openCodePermissionArgs(permissionsForMode('full-access')), ['--auto'])
+})
+
+test('OpenCode SDK permissions map to session rulesets', () => {
+  assert.deepEqual(openCodePermissionRuleset(permissionsForMode('ask')), [
+    { permission: 'read', pattern: '*', action: 'allow' },
+    { permission: 'glob', pattern: '*', action: 'allow' },
+    { permission: 'grep', pattern: '*', action: 'allow' },
+    { permission: 'list', pattern: '*', action: 'allow' },
+    { permission: 'todowrite', pattern: '*', action: 'allow' },
+    { permission: '*', pattern: '*', action: 'ask' },
+  ])
+  assert.deepEqual(openCodePermissionRuleset(permissionsForMode('auto-safe')).slice(-4), [
+    { permission: 'bash', pattern: '*', action: 'ask' },
+    { permission: 'webfetch', pattern: '*', action: 'ask' },
+    { permission: 'websearch', pattern: '*', action: 'ask' },
+    { permission: '*', pattern: '*', action: 'ask' },
+  ])
+  assert.deepEqual(openCodePermissionRuleset(permissionsForMode('full-access')), [
+    { permission: '*', pattern: '*', action: 'allow' },
+  ])
 })

@@ -11,6 +11,13 @@ function firstString(...values: unknown[]): string {
   return ''
 }
 
+function eventTimestamp(raw: Record<string, any>): string {
+  const value = raw.timestamp ?? raw.ts ?? raw.createdAt ?? raw.created_at
+  if (typeof value === 'string' && value) return value
+  if (typeof value === 'number' && Number.isFinite(value)) return new Date(value).toISOString()
+  return new Date().toISOString()
+}
+
 function stringifyValue(value: unknown): string {
   if (typeof value === 'string') return value
   if (value == null) return ''
@@ -38,11 +45,12 @@ function eventType(o: Record<string, any>): string {
 }
 
 function maybeUsage(o: Record<string, any>, ts: string, agent: AgentName): NormalizedEvent | null {
-  const usage = asRecord(o.usage) ?? asRecord(o.tokenUsage) ?? asRecord(o.token_usage)
+  const part = asRecord(o.part)
+  const usage = asRecord(o.usage) ?? asRecord(o.tokenUsage) ?? asRecord(o.token_usage) ?? asRecord(part?.tokens)
   if (!usage) return null
-  const inputTokens = Number(usage.input_tokens ?? usage.inputTokens ?? usage.prompt_tokens ?? usage.promptTokens ?? 0)
+  const inputTokens = Number(usage.input_tokens ?? usage.inputTokens ?? usage.prompt_tokens ?? usage.promptTokens ?? usage.input ?? 0)
   const outputTokens = Number(
-    usage.output_tokens ?? usage.outputTokens ?? usage.completion_tokens ?? usage.completionTokens ?? 0,
+    usage.output_tokens ?? usage.outputTokens ?? usage.completion_tokens ?? usage.completionTokens ?? usage.output ?? 0,
   )
   if (!inputTokens && !outputTokens) return null
   return { type: 'usage', inputTokens, outputTokens, ts, agent }
@@ -50,29 +58,37 @@ function maybeUsage(o: Record<string, any>, ts: string, agent: AgentName): Norma
 
 function toolName(o: Record<string, any>): string {
   const tool = asRecord(o.tool)
-  return firstString(o.name, o.toolName, o.tool_name, o.tool, o.command, tool?.name, tool?.tool, tool?.id, o.function?.name, 'tool')
+  const part = asRecord(o.part)
+  return firstString(o.name, o.toolName, o.tool_name, o.tool, o.command, part?.tool, tool?.name, tool?.tool, tool?.id, o.function?.name, 'tool')
 }
 
 function toolInput(o: Record<string, any>): unknown {
   const tool = asRecord(o.tool)
-  return o.args ?? o.arguments ?? o.input ?? o.params ?? tool?.args ?? tool?.arguments ?? tool?.input ?? o.command ?? {}
+  const part = asRecord(o.part)
+  const state = asRecord(part?.state)
+  return o.args ?? o.arguments ?? o.input ?? o.params ?? state?.input ?? tool?.args ?? tool?.arguments ?? tool?.input ?? o.command ?? {}
 }
 
 function toolOutput(o: Record<string, any>): string {
-  return stringifyValue(o.output ?? o.result ?? o.content ?? o.error ?? o.message ?? o.data ?? '')
+  const part = asRecord(o.part)
+  const state = asRecord(part?.state)
+  return stringifyValue(o.output ?? o.result ?? state?.output ?? o.content ?? o.error ?? o.message ?? o.data ?? '')
 }
 
 export function normalizeJsonCliEvent(raw: Record<string, any>, agent: AgentName): NormalizedEvent[] {
-  const ts = firstString(raw.timestamp, raw.ts, raw.createdAt, raw.created_at) || new Date().toISOString()
+  const ts = eventTimestamp(raw)
   const type = eventType(raw)
+  const part = asRecord(raw.part)
+  const partType = String(part?.type ?? '').toLowerCase()
   const out: NormalizedEvent[] = []
 
   const usage = maybeUsage(raw, ts, agent)
   if (usage) out.push(usage)
 
-  if (type.includes('tool') || type.includes('function') || raw.tool || raw.toolName || raw.tool_name) {
-    const id = String(raw.id ?? raw.toolUseId ?? raw.tool_use_id ?? raw.callId ?? raw.call_id ?? `${agent}_${Date.now()}`)
-    const status = String(raw.status ?? raw.state ?? '').toLowerCase()
+  if (type.includes('tool') || type.includes('function') || raw.tool || raw.toolName || raw.tool_name || partType === 'tool') {
+    const state = asRecord(part?.state)
+    const id = String(raw.id ?? part?.callID ?? part?.callId ?? part?.call_id ?? raw.toolUseId ?? raw.tool_use_id ?? raw.callId ?? raw.call_id ?? part?.id ?? `${agent}_${Date.now()}`)
+    const status = String(raw.status ?? state?.status ?? raw.state ?? '').toLowerCase()
     const hasResult =
       type.includes('result') ||
       type.includes('complete') ||
@@ -81,6 +97,10 @@ export function normalizeJsonCliEvent(raw: Record<string, any>, agent: AgentName
       status === 'failed' ||
       raw.result != null ||
       raw.output != null
+
+    if (partType === 'tool' && state?.input != null) {
+      out.push({ type: 'tool_use', id, name: toolName(raw), input: toolInput(raw), ts, agent })
+    }
 
     if (hasResult) {
       out.push({
@@ -98,12 +118,14 @@ export function normalizeJsonCliEvent(raw: Record<string, any>, agent: AgentName
 
   const role = String(raw.role ?? raw.message?.role ?? '').toLowerCase()
   const text =
-    firstString(raw.delta, raw.text, raw.message, raw.result, raw.response, raw.content) ||
+    firstString(raw.delta, raw.text, part?.text, raw.message, raw.result, raw.response, raw.content) ||
     textFromContent(raw.content) ||
     textFromContent(raw.message?.content)
   const isAssistant =
     role === 'assistant' ||
     type.includes('assistant') ||
+    type === 'text' ||
+    partType === 'text' ||
     type.includes('content') ||
     type.includes('message') ||
     type.includes('delta') ||
@@ -115,7 +137,7 @@ export function normalizeJsonCliEvent(raw: Record<string, any>, agent: AgentName
       text,
       ts,
       agent,
-      streamId: String(raw.streamId ?? raw.stream_id ?? raw.messageId ?? raw.message_id ?? raw.id ?? `${agent}:stream`),
+      streamId: String(raw.streamId ?? raw.stream_id ?? raw.messageId ?? raw.message_id ?? raw.id ?? part?.id ?? `${agent}:stream`),
       delta: type.includes('delta') || type.includes('content') || raw.delta != null,
     })
     return out

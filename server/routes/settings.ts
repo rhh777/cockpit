@@ -5,6 +5,8 @@ import {
   CODEX_SESSIONS_ROOT,
   COCKPIT_ROOT,
   COCKPIT_THREADS_ROOT,
+  OPENCODE_DATA_ROOT,
+  OPENCODE_DB_PATH,
 } from '../config'
 import { listAgents, resolveAgent } from '../adapters/registry'
 import type { AgentName } from '../loaders/types'
@@ -80,6 +82,8 @@ export async function handleSettingsRoute(
       claudeProjects: CLAUDE_PROJECTS_ROOT,
       codexSessions: CODEX_SESSIONS_ROOT,
       codexIndex: CODEX_SESSION_INDEX,
+      opencodeData: OPENCODE_DATA_ROOT,
+      opencodeDb: OPENCODE_DB_PATH,
     },
     agents: await Promise.all(listAgents().map((a) => agentStatus(a.name))),
   })

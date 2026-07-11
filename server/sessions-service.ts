@@ -14,6 +14,10 @@ type NativeLoadResult = { summaryPatch: Partial<SessionSummary>; events: EventEn
 const nativeParseCache = new Map<string, { mtimeMs: number; size: number; result: NativeLoadResult }>()
 const NATIVE_PARSE_CACHE_MAX = 8
 
+function nativeCacheKey(source: Source, id: string, filePath: string): string {
+  return `${source}:${id}:${filePath}`
+}
+
 // 合并:[...原始 native, followup_boundary, ...follow-up cockpit]。
 // 永不按 ts 全局重排;只在 boundary 处拼接(不变量 11)。
 export async function loadSessionDetail(
@@ -32,16 +36,17 @@ export async function loadSessionDetail(
     /* cockpit 自建 thread 无原始文件;不缓存 */
   }
 
-  const cached = preStat ? nativeParseCache.get(filePath) : undefined
+  const cacheKey = nativeCacheKey(source, id, filePath)
+  const cached = preStat ? nativeParseCache.get(cacheKey) : undefined
   let native: NativeLoadResult
   if (cached && preStat && cached.mtimeMs === preStat.mtimeMs && cached.size === preStat.size) {
-    nativeParseCache.delete(filePath) // LRU:命中挪到队尾
-    nativeParseCache.set(filePath, cached)
+    nativeParseCache.delete(cacheKey) // LRU:命中挪到队尾
+    nativeParseCache.set(cacheKey, cached)
     native = cached.result
   } else {
-    native = await loader.loadEvents(filePath)
+    native = await loader.loadEvents(filePath, id)
     if (preStat) {
-      nativeParseCache.set(filePath, { ...preStat, result: native })
+      nativeParseCache.set(cacheKey, { ...preStat, result: native })
       while (nativeParseCache.size > NATIVE_PARSE_CACHE_MAX) {
         const oldest = nativeParseCache.keys().next().value
         if (oldest === undefined) break
@@ -110,6 +115,10 @@ export async function listSessions(): Promise<SessionSummary[]> {
       const fm = threadStore.followupsMtimeMs(s.source, s.id)
       if (fm != null && fm > new Date(s.updatedAt).getTime()) {
         s.updatedAt = new Date(fm).toISOString()
+      }
+      const followupAgents = await threadStore.followupAgents(s.source, s.id)
+      if (followupAgents.length > 0) {
+        s.extensions = { ...(s.extensions ?? {}), followupAgents }
       }
     }
   }

@@ -38,6 +38,38 @@ export function cursorPermissionArgs(permissions?: RunPermissions): string[] {
 }
 
 export function openCodePermissionArgs(permissions?: RunPermissions): string[] {
-  if (permissions?.mode === 'full-access') return ['--dangerously-skip-permissions']
+  if (permissions?.mode === 'full-access') return ['--auto']
   return ['--agent', 'plan']
+}
+
+export function openCodePermissionRuleset(permissions?: RunPermissions): Array<{
+  permission: string
+  pattern: string
+  action: 'allow' | 'deny' | 'ask'
+}> {
+  if (permissions?.mode === 'full-access') {
+    return [{ permission: '*', pattern: '*', action: 'allow' }]
+  }
+  if (permissions?.mode === 'auto-safe') {
+    return [
+      { permission: 'read', pattern: '*', action: 'allow' },
+      { permission: 'glob', pattern: '*', action: 'allow' },
+      { permission: 'grep', pattern: '*', action: 'allow' },
+      { permission: 'list', pattern: '*', action: 'allow' },
+      { permission: 'edit', pattern: '*', action: 'allow' },
+      { permission: 'todowrite', pattern: '*', action: 'allow' },
+      { permission: 'bash', pattern: '*', action: 'ask' },
+      { permission: 'webfetch', pattern: '*', action: 'ask' },
+      { permission: 'websearch', pattern: '*', action: 'ask' },
+      { permission: '*', pattern: '*', action: 'ask' },
+    ]
+  }
+  return [
+    { permission: 'read', pattern: '*', action: 'allow' },
+    { permission: 'glob', pattern: '*', action: 'allow' },
+    { permission: 'grep', pattern: '*', action: 'allow' },
+    { permission: 'list', pattern: '*', action: 'allow' },
+    { permission: 'todowrite', pattern: '*', action: 'allow' },
+    { permission: '*', pattern: '*', action: 'ask' },
+  ]
 }

@@ -111,7 +111,7 @@ export interface SessionSourceLoader {
   /** discovery 阶段:列出该来源所有 session 摘要,并产出 filePath 供 registry 用 */
   discover(): Promise<{ summaries: SessionSummary[]; warnings: LoaderWarning[] }>
   /** 详情阶段:给定已校验的 filePath,读出原始 events(origin='native') */
-  loadEvents(filePath: string): Promise<{
+  loadEvents(filePath: string, id?: string): Promise<{
     summaryPatch: Partial<SessionSummary>
     events: EventEnvelope[]
     warnings: LoaderWarning[]

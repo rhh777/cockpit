@@ -120,6 +120,38 @@ async function countTranscript(id: string): Promise<number> {
   return n
 }
 
+function addAgent(agents: Set<AgentName>, value: unknown) {
+  if (typeof value === 'string' && value) agents.add(value as AgentName)
+}
+
+function addAgentList(agents: Set<AgentName>, values: unknown) {
+  if (!Array.isArray(values)) return
+  for (const value of values) addAgent(agents, value)
+}
+
+export function groupTranscriptAgents(events: EventEnvelope[]): AgentName[] {
+  const agents = new Set<AgentName>()
+  for (const { event } of events) {
+    if (event.type === 'user_text') {
+      addAgent(agents, event.targetAgent)
+      addAgentList(agents, event.targetAgents)
+      addAgentList(agents, event.mentions)
+    } else if (event.type === 'assistant_text' || event.type === 'tool_use' || event.type === 'usage') {
+      addAgent(agents, event.agent)
+    } else if (event.type === 'meta' && event.value && typeof event.value === 'object') {
+      const value = event.value as { agent?: unknown; targetAgents?: unknown; runs?: unknown }
+      addAgent(agents, value.agent)
+      addAgentList(agents, value.targetAgents)
+      if (Array.isArray(value.runs)) {
+        for (const run of value.runs) {
+          if (run && typeof run === 'object') addAgent(agents, (run as { agent?: unknown }).agent)
+        }
+      }
+    }
+  }
+  return [...agents]
+}
+
 async function touchState(id: string, patch: Partial<GroupThreadState> = {}): Promise<void> {
   const state = await groupThreadStore.readState(id)
   if (!state) return
@@ -242,8 +274,8 @@ export const groupThreadStore = {
       } catch {
         /* empty thread */
       }
-      const messageCount = await countTranscript(id).catch(() => 0)
-      const events = state.title ? [] : await this.readTranscript(id)
+      const events = await this.readTranscript(id)
+      const messageCount = events.length
       const firstUser = events.find((e) => e.event.type === 'user_text')
       const fallbackTitle =
         firstUser?.event.type === 'user_text' ? cleanTitle(firstUser.event.text) : ''
@@ -259,7 +291,7 @@ export const groupThreadStore = {
         fileMtimeMs: st.mtimeMs,
         fileSize: st.size,
         hasFollowups: false,
-        extensions: { kind: 'group-chat', agents: state.agents },
+        extensions: { kind: 'group-chat', agents: groupTranscriptAgents(events) },
       })
     }
     return out

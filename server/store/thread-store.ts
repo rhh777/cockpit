@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { readJsonlLines } from '../util/jsonl'
-import type { EventEnvelope, NormalizedEvent, Source } from '../loaders/types'
+import type { AgentName, EventEnvelope, NormalizedEvent, Source } from '../loaders/types'
 import { followupsFile, threadDir } from './paths'
 
 // cockpit follow-up 读写。持久化格式见 docs/01 §八:每行一个扁平 JSON
@@ -71,6 +71,24 @@ export const threadStore = {
     } catch {
       return null
     }
+  },
+
+  async followupAgents(source: Source, id: string): Promise<AgentName[]> {
+    const agents = new Set<AgentName>()
+    for (const env of await this.readFollowups(source, id)) {
+      const ev = env.event
+      if (ev.type === 'user_text') {
+        if (ev.targetAgent) agents.add(ev.targetAgent)
+        for (const agent of ev.targetAgents ?? []) agents.add(agent)
+        for (const agent of ev.mentions ?? []) agents.add(agent)
+      } else if (
+        (ev.type === 'assistant_text' || ev.type === 'tool_use' || ev.type === 'usage') &&
+        ev.agent
+      ) {
+        agents.add(ev.agent)
+      }
+    }
+    return [...agents]
   },
 
   async readFollowups(source: Source, id: string): Promise<EventEnvelope[]> {
