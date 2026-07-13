@@ -1361,7 +1361,10 @@ class RunRegistry {
     const { runId, turnId, agent: agentNameForRun } = handle.record
     const agent = resolveAgent(agentNameForRun)
     try {
+      emitPhase(handle, 'runtime_ready')
+      emitPhase(handle, 'starting_turn')
       const toolInputById = new Map<string, unknown>()
+      let sawOutput = false
       for await (const raw of agent.resumeNative!({
         text: withAttachments(input.text, input.attachments),
         source: input.source,
@@ -1372,6 +1375,10 @@ class RunRegistry {
         effort: input.effort,
         signal: handle.controller.signal,
       })) {
+        if (!sawOutput) {
+          sawOutput = true
+          emitPhase(handle, 'streaming')
+        }
         let ev = raw
         if (ev.type === 'tool_use') {
           toolInputById.set(ev.id, ev.input)
@@ -1386,6 +1393,7 @@ class RunRegistry {
         handle.write({ kind: 'event', envelope })
       }
       if (await handle.finish('completed')) {
+        emitPhase(handle, 'completed')
         handle.write({ kind: 'done', turnId, status: 'completed' })
       }
     } catch (err) {
@@ -1393,6 +1401,7 @@ class RunRegistry {
       const status = aborted ? 'aborted' : 'failed'
       const message = aborted ? 'aborted' : String((err as Error)?.message ?? err)
       if (await handle.finish(status, aborted ? undefined : message)) {
+        emitPhase(handle, 'failed')
         handle.write({ kind: aborted ? 'aborted' : 'error', turnId, status, message })
       }
     } finally {

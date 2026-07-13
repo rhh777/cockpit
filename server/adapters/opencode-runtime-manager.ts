@@ -1,4 +1,5 @@
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import { withSanitizedOpenCodeProcessEnv } from './opencode-env'
 
 type OpenCodeSdkModule = typeof import('@opencode-ai/sdk/v2')
 
@@ -124,12 +125,14 @@ export class OpenCodeRuntimeManager {
 
   private async startRuntime(): Promise<ManagedRuntime> {
     const sdk = await loadOpenCodeSdk(this.importSdk)
-    const runtime = await sdk.createOpencodeServer({
-      hostname: '127.0.0.1',
-      port: 0,
-      timeout: 10_000,
-      config: { logLevel: 'ERROR' },
-    })
+    const runtime = await withSanitizedOpenCodeProcessEnv(() =>
+      sdk.createOpencodeServer({
+        hostname: '127.0.0.1',
+        port: 0,
+        timeout: 10_000,
+        config: { logLevel: 'ERROR' },
+      }),
+    )
     const managed: ManagedRuntime = {
       runtime,
       sdk,

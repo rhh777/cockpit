@@ -1,10 +1,14 @@
 // OpenCode adapter uses the official SDK to run an ephemeral OpenCode server session.
+import { spawn } from 'node:child_process'
+import readline from 'node:readline'
 import type { LlmToolContent, ModelRef, OpencodeClient, PermissionV2Reply, V2Event } from '@opencode-ai/sdk/v2'
 import type { NormalizedEvent } from '../loaders/types'
 import { openCodePermissionRuleset } from '../permissions/adapter-policy'
 import type { ApprovalDecision, Operation } from '../permissions/types'
 import { stringifyToolResult } from '../util/jsonl'
 import { commandExists } from './cli-utils'
+import { normalizeJsonCliEvent } from './json-cli-events'
+import { sanitizedOpenCodeEnv } from './opencode-env'
 import { openCodeRuntimeManager } from './opencode-runtime-manager'
 import { serializeForAgent } from './serialize'
 import type { AgentRunInput, NativeResumeInput, ReviewAgent } from './types'
@@ -80,6 +84,14 @@ function eventPayload(event: V2Event): Record<string, any> {
   const raw = event as any
   const value = raw.properties ?? raw.data ?? {}
   return value && typeof value === 'object' ? value : {}
+}
+
+function activeSessionMap(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object') return {}
+  const record = value as Record<string, unknown>
+  const data = record.data
+  if (data && typeof data === 'object') return data as Record<string, unknown>
+  return record
 }
 
 function normalizeOpenCodeSdkEvent(event: V2Event): NormalizedEvent[] {
@@ -250,7 +262,7 @@ async function waitForSessionIdle(client: OpencodeClient, sessionID: string, sig
   while (!signal.aborted) {
     await new Promise((resolve) => setTimeout(resolve, 500))
     const active = await assertSdkResult(client.v2.session.active())
-    const sessions = (active as any).data
+    const sessions = activeSessionMap(active)
     const isActive = !!sessions && typeof sessions === 'object' && sessionID in sessions
     if (isActive) seenActive = true
     else if (seenActive) return
@@ -267,14 +279,14 @@ async function updateSessionPermissions(input: {
   await assertSdkResult(input.client.session.update({ sessionID: input.sessionID, permission: ruleset }))
 }
 
-function startEventPump(input: {
+async function startEventPump(input: {
   client: OpencodeClient
   queue: AsyncQueue
   signal: AbortSignal
-}): void {
+}): Promise<void> {
+  const sse = await input.client.v2.event.subscribe({ signal: input.signal, sseMaxRetryAttempts: 0 })
   void (async () => {
     try {
-      const sse = await input.client.v2.event.subscribe({ signal: input.signal, sseMaxRetryAttempts: 0 })
       for await (const event of sse.stream) {
         input.queue.push({ kind: 'event', event: event as unknown as V2Event })
       }
@@ -293,7 +305,11 @@ async function* runOpenCodeSdk(input: AgentRunInput): AsyncGenerator<NormalizedE
   const lease = await openCodeRuntimeManager.acquire()
   const client = lease.clientFor(cwd)
   const streamController = new AbortController()
-  const onAbort = () => streamController.abort()
+  let activeSessionID: string | undefined
+  const onAbort = () => {
+    streamController.abort()
+    if (activeSessionID) void client.v2.session.interrupt({ sessionID: activeSessionID }).catch(() => undefined)
+  }
   input.signal.addEventListener('abort', onAbort, { once: true })
 
   try {
@@ -305,10 +321,11 @@ async function* runOpenCodeSdk(input: AgentRunInput): AsyncGenerator<NormalizedE
       }),
     )
     const sessionID = session.data.id
+    activeSessionID = sessionID
     await updateSessionPermissions({ client, sessionID, permissions: input.permissions })
 
     const queue = new AsyncQueue()
-    startEventPump({ client, queue, signal: streamController.signal })
+    await startEventPump({ client, queue, signal: streamController.signal })
 
     const promptPromise = assertSdkResult(
       client.v2.session.prompt({
@@ -358,65 +375,61 @@ async function* resumeOpenCodeNative(input: NativeResumeInput): AsyncGenerator<N
   }
 
   const cwd = input.cwd ?? process.cwd()
-  const lease = await openCodeRuntimeManager.acquire()
-  const client = lease.clientFor(cwd)
-  const streamController = new AbortController()
-  const onAbort = () => streamController.abort()
-  input.signal.addEventListener('abort', onAbort, { once: true })
+  const args = [
+    'run',
+    '-s',
+    input.sessionId,
+    '--format',
+    'json',
+    '--dir',
+    cwd,
+    ...(input.effort ? ['--variant', input.effort] : []),
+    ...(input.writeMode === 'trusted' ? ['--auto'] : []),
+    input.text,
+  ]
 
-  try {
-    await updateSessionPermissions({
-      client,
-      sessionID: input.sessionId,
-      permissions:
-        input.writeMode === 'trusted'
-          ? { mode: 'full-access', allowNetwork: true, allowWorkspaceWrite: true, allowOutsideWorkspaceWrite: true, allowShell: true }
-          : { mode: 'ask', allowNetwork: false, allowWorkspaceWrite: false, allowOutsideWorkspaceWrite: false, allowShell: false },
-    })
+  const child = spawn('opencode', args, {
+    cwd,
+    env: sanitizedOpenCodeEnv(),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    signal: input.signal,
+  })
 
-    const queue = new AsyncQueue()
-    startEventPump({ client, queue, signal: streamController.signal })
+  let stderr = ''
+  let plain = ''
+  let childError: Error | null = null
+  child.stderr.on('data', (d) => (stderr += String(d)))
+  child.on('error', (err) => {
+    childError = err instanceof Error ? err : new Error(String(err))
+  })
 
-    const promptPromise = assertSdkResult(
-      client.v2.session.prompt({
-        sessionID: input.sessionId,
-        prompt: { text: input.text },
-        delivery: 'queue',
-        resume: true,
-      }),
-    )
-    void promptPromise.catch((err) => {
-      queue.push({ kind: 'error', error: err instanceof Error ? err : new Error(String(err)) })
-    })
-    void promptPromise
-      .then(() => waitForSessionIdle(client, input.sessionId, input.signal))
-      .then(() => queue.push({ kind: 'done' }))
-      .catch((err) => {
-        queue.push({ kind: 'error', error: err instanceof Error ? err : new Error(String(err)) })
-      })
-
-    while (!input.signal.aborted) {
-      const item = await queue.next(input.signal)
-      if (item.kind === 'error') throw item.error
-      if (item.kind === 'done') break
-      if (eventSessionID(item.event) !== input.sessionId) continue
-      if (item.event.type === 'permission.v2.asked' || item.event.type === 'permission.asked') {
-        await replyToPermission({ client, event: item.event, cwd })
-        continue
+  const rl = readline.createInterface({ input: child.stdout, crlfDelay: Infinity })
+  for await (const line of rl) {
+    if (!line.trim()) continue
+    try {
+      const parsed = JSON.parse(line) as Record<string, any>
+      if (parsed.sessionID && parsed.sessionID !== input.sessionId) continue
+      for (const ev of normalizeJsonCliEvent(parsed, 'opencode')) {
+        if (ev.type === 'meta' && (ev.key === 'opencode_step_start' || ev.key === 'opencode_step_finish')) continue
+        yield ev
       }
-      for (const ev of normalizeOpenCodeSdkEvent(item.event)) yield ev
-      if (item.event.type === 'session.idle') break
+    } catch {
+      plain += `${line}\n`
     }
-    await promptPromise
-    if (input.signal.aborted) {
-      await client.v2.session.interrupt({ sessionID: input.sessionId }).catch(() => undefined)
-      throw new Error('aborted')
-    }
-  } finally {
-    input.signal.removeEventListener('abort', onAbort)
-    streamController.abort()
-    lease.release()
   }
+
+  if (plain.trim()) {
+    yield { type: 'assistant_text', text: plain.trim(), ts: new Date().toISOString(), agent: 'opencode' }
+  }
+
+  const code: number = await new Promise((resolve) => {
+    if (child.exitCode != null) return resolve(child.exitCode)
+    child.on('close', (c) => resolve(c ?? 0))
+  })
+
+  if (input.signal.aborted) throw new Error('aborted')
+  if (childError) throw childError
+  if (code !== 0) throw new Error(stderr.trim() || `opencode exited ${code}`)
 }
 
 interface OpenCodeProviderInfo {
@@ -501,3 +514,5 @@ export const opencodeAdapter: ReviewAgent = {
     yield* resumeOpenCodeNative(input)
   },
 }
+
+export const _internal = { activeSessionMap }

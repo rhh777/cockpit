@@ -35,10 +35,10 @@
 |---|---|---|---|---|
 | **claude** | 按有无 `requestApproval` 回调分岔(与权限档正交):ⓐ 有回调(逐工具审批,通常是 `ask` / `auto-safe`) → **Agent SDK** `query()`(本机 `claude` bin,`canUseTool` 拦截工具);ⓑ 无回调(纯生成,或 full-access 不打算弹审批) → CLI `claude -p --output-format stream-json --include-partial-messages` | 同左规则(路由是否传 `requestApproval`) | CLI `claude -p --resume <sessionId>` | `manual`:只返回 prompt,让用户自己贴进 Claude Code / Desktop |
 | **codex** | **`codex app-server --stdio` JSON-RPC**(所有权限档统一走这条,full-access 时 approval 自动放行) | 同左 | CLI `codex {--sandbox read-only \| --dangerously-bypass-approvals-and-sandbox} --cd <cwd> exec resume --json <sessionId> -` | ⓐ `deeplink` → `codex://threads/new?path=&prompt=`<br>ⓑ `app-server` → `codex app-server --stdio`,`thread/start` 拿 threadId,后续 `turn/start`<br>ⓒ `cli`(预留) |
-| **opencode** | **`@opencode-ai/sdk/v2` + `opencode serve`**:ephemeral session,`v2.event.subscribe()` 逐 token,permission events 回 Cockpit approval UI | 同左 | — | — |
+| **opencode** | **`@opencode-ai/sdk/v2` + `opencode serve`**:ephemeral session,`v2.event.subscribe()` 逐 token,permission events 回 Cockpit approval UI | 同左 | CLI `opencode run -s <sessionId> --format json --dir <cwd> <prompt>` | — |
 | **cursor** | CLI `cursor-agent -p --output-format stream-json --stream-partial-output` | 同左 | — | — |
 
-- Handoff 目前只调用 claude / codex。opencode / cursor 支持 Cockpit follow-up 与 group chat,但不支持 native resume / handoff open-native。
+- Handoff 目前只调用 claude / codex。opencode 支持 Cockpit follow-up、group chat 与 native resume,但不支持 handoff open-native;cursor 暂不支持 native resume / handoff open-native。
 - Codex handoff 三档语义详见 [docs/07 § 和 Codex 继续](07-native-continuation-and-handoff.md#和-codex-继续)。
 
 ### 表 B — 逐 token 流式(SSE 逐字增量)
@@ -47,7 +47,7 @@
 |---|---|---|---|
 | **claude** | ✅ SDK:`includePartialMessages: true` → `stream_event.content_block_delta`<br>✅ CLI:`--include-partial-messages` → 同上 | ✅ 同 SDK 分支 | ✅ CLI `--include-partial-messages` |
 | **codex** | ✅ app-server `item/agentMessage/delta` notification | ✅ 同上 | ❌ 上游 CLI 限制,只在 `item.completed` 一次性给全,详见 [docs/07 § 已知限制](07-native-continuation-and-handoff.md#已知限制codex-native-resume-不逐-token-流) |
-| **opencode** | ✅ SDK v2 `session.next.text.delta` / `session.next.text.ended` | ✅ 同上 | — |
+| **opencode** | ✅ SDK v2 `session.next.text.delta` / `session.next.text.ended` | ✅ 同上 | ⚠️ CLI `--format json` 事件粒度依赖上游,通常按 part 输出 |
 | **cursor** | ⚠️ 已开 `--stream-partial-output`,同样依赖上游 CLI 事件形状 | 同左 | — |
 
 - 传输层一律 SSE(`text/event-stream` + `flush`)。"不流"指**上游 agent runtime 不吐 delta**,不是 cockpit 前后端丢帧。
@@ -59,12 +59,12 @@
 |---|---|---|---|
 | **claude** | `~/.cockpit/threads/claude-code/<id>/followups.jsonl`<br>+ `summary.md` + `context-state.json` | `~/.cockpit/group-threads/<id>/transcript.jsonl` + `summary.md` + `state.json` | **写回 `~/.claude/projects/<hash>/<sessionId>.jsonl`**(由 `claude` 进程完成) |
 | **codex** | `~/.cockpit/threads/codex/<id>/followups.jsonl` | 同上 | **写回 `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`**(由 `codex exec resume` 完成) |
-| **opencode** | `~/.cockpit/threads/opencode/<id>/followups.jsonl`;原生历史只读自 `~/.local/share/opencode/opencode.db` | `~/.cockpit/group-threads/<id>/transcript.jsonl` | — |
+| **opencode** | `~/.cockpit/threads/opencode/<id>/followups.jsonl`;原生历史只读自 `~/.local/share/opencode/opencode.db` | `~/.cockpit/group-threads/<id>/transcript.jsonl` | **写回 `~/.local/share/opencode/opencode.db`**(由 `opencode run -s` 完成;loader 合并 `session_message` 与 legacy `message`/`part`) |
 | **cursor** | `~/.cockpit/threads/<src>/<id>/followups.jsonl`(用于兼容后续接入的原生 loader) | `~/.cockpit/group-threads/<id>/transcript.jsonl` | — |
 | 附件(图片) | 群聊:`~/.cockpit/group-threads/<id>/attachments/`;单聊:`~/.cockpit/threads/<src>/<id>/attachments/`;**都不进原生 CLI 目录** | 同左 | 附件由 CLI 子进程处理写回,cockpit 只传路径 |
 
 - Cockpit 侧写盘的都是 `EventEnvelope`(`origin: 'cockpit'` 或 `'native'`),loader 端可以按 `followup_boundary` 拼接。
-- Native resume 的 cockpit SSE 事件带 `origin: 'native'`,运行中只写影子日志 `~/.cockpit/runs/native-shadow/`(不进最终 timeline);刷新后事实源仍是 `~/.claude/projects/` 或 `~/.codex/sessions/` 的 JSONL。
+- Native resume 的 cockpit SSE 事件带 `origin: 'native'`,运行中只写影子日志 `~/.cockpit/runs/native-shadow/`(不进最终 timeline);刷新后事实源仍是对应原生历史:Claude/Codex JSONL 或 OpenCode SQLite。
 
 ### 表 D — 权限与审批
 
@@ -166,7 +166,8 @@ interface ReviewAgent {
 - 仅当 `agent.canResumeNative(source)` 且 `agent.resumeNative` 存在。目前只有:
   - `claude-code` ↔ `claude adapter`([claude-call.ts:657](../server/adapters/claude-call.ts:657)):`claude -p --resume <sessionId> [--effort]`,prompt 走 stdin,读 `--include-partial-messages` 流。
   - `codex` ↔ `codex adapter`([codex-call.ts:402](../server/adapters/codex-call.ts:402)):`codex {--sandbox read-only | --dangerously-bypass-approvals-and-sandbox} --cd <cwd> exec resume --json --skip-git-repo-check -c model_reasoning_effort="<effort>" -c model_reasoning_summary="auto" <sessionId> -`(`writeMode=read-only`/`trusted` 两档,`--cd` 在 `exec` 之前是 codex CLI 全局 flag)。prompt 走 stdin。
-- SSE 事件带 `origin: 'native'`;运行中事件只写 Cockpit 影子日志 `~/.cockpit/runs/native-shadow/<src>/<id>/<runId>.jsonl`(展示/审计用,不进最终 timeline)。真正的写回由 CLI 追加到 `~/.claude/projects/…` 或 `~/.codex/sessions/…`,完成后前端重拉全量,以原生 jsonl 为唯一事实来源(不变量 2/3)。
+- `opencode` ↔ `opencode adapter`:`opencode run -s <sessionId> --format json --dir <cwd> [--variant <effort>] [--auto] <prompt>`。prompt 走 CLI argv;CLI 写入 SQLite legacy `message`/`part` 表。
+- SSE 事件带 `origin: 'native'`;运行中事件只写 Cockpit 影子日志 `~/.cockpit/runs/native-shadow/<src>/<id>/<runId>.jsonl`(展示/审计用,不进最终 timeline)。真正的写回由 CLI 追加到 `~/.claude/projects/…`、`~/.codex/sessions/…` 或 OpenCode SQLite,完成后前端重拉全量,以原生历史为唯一事实来源(不变量 2/3)。
 - Codex 这条**不逐 token 流**,见表 B 与 [docs/07 § 已知限制](07-native-continuation-and-handoff.md#已知限制codex-native-resume-不逐-token-流)。
 
 ### 4. Handoff(把上下文交给另一条原生会话)
