@@ -11,11 +11,30 @@ type NativeLoadResult = { summaryPatch: Partial<SessionSummary>; events: EventEn
 // 变的是 followups.jsonl,原生大文件没动——按 (mtimeMs, size) 命中即复用上次解析结果。
 // 约定:所有消费方只读不改 events 数组与 envelope(现有代码均为 copy-on-use)。
 // 原生文件自身追加的 watcher 热路径另走 session-watcher 的 byte-offset 增量。
-const nativeParseCache = new Map<string, { mtimeMs: number; size: number; result: NativeLoadResult }>()
+const nativeParseCache = new Map<string, { sig: string; result: NativeLoadResult }>()
 const NATIVE_PARSE_CACHE_MAX = 8
 
 function nativeCacheKey(source: Source, id: string, filePath: string): string {
   return `${source}:${id}:${filePath}`
+}
+
+async function statPart(filePath: string): Promise<string> {
+  try {
+    const s = await fsp.stat(filePath)
+    return `${s.mtimeMs}:${s.size}`
+  } catch {
+    return '0:0'
+  }
+}
+
+async function nativeCacheSig(source: Source, filePath: string, preStat: { mtimeMs: number; size: number }): Promise<string> {
+  const base = `${preStat.mtimeMs}:${preStat.size}`
+  // OpenCode stores conversations in SQLite. Recent writes often live in WAL sidecar files
+  // before the main db is checkpointed, so the main db mtime/size alone can be stale.
+  if (source === 'opencode') {
+    return `${base}|wal:${await statPart(`${filePath}-wal`)}|shm:${await statPart(`${filePath}-shm`)}`
+  }
+  return base
 }
 
 // 合并:[...原始 native, followup_boundary, ...follow-up cockpit]。
@@ -37,16 +56,17 @@ export async function loadSessionDetail(
   }
 
   const cacheKey = nativeCacheKey(source, id, filePath)
-  const cached = preStat ? nativeParseCache.get(cacheKey) : undefined
+  const sig = preStat ? await nativeCacheSig(source, filePath, preStat) : null
+  const cached = sig ? nativeParseCache.get(cacheKey) : undefined
   let native: NativeLoadResult
-  if (cached && preStat && cached.mtimeMs === preStat.mtimeMs && cached.size === preStat.size) {
+  if (cached && sig && cached.sig === sig) {
     nativeParseCache.delete(cacheKey) // LRU:命中挪到队尾
     nativeParseCache.set(cacheKey, cached)
     native = cached.result
   } else {
     native = await loader.loadEvents(filePath, id)
-    if (preStat) {
-      nativeParseCache.set(cacheKey, { ...preStat, result: native })
+    if (sig) {
+      nativeParseCache.set(cacheKey, { sig, result: native })
       while (nativeParseCache.size > NATIVE_PARSE_CACHE_MAX) {
         const oldest = nativeParseCache.keys().next().value
         if (oldest === undefined) break

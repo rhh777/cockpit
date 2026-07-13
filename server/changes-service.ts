@@ -30,6 +30,16 @@ async function statSig(filePath: string): Promise<string> {
   }
 }
 
+async function nativeStatSig(source: Source, filePath: string): Promise<string> {
+  const base = await statSig(filePath)
+  // OpenCode uses SQLite WAL mode; native writes may change only sidecar files until a
+  // checkpoint updates opencode.db itself.
+  if (source === 'opencode') {
+    return `${base}|wal:${await statSig(`${filePath}-wal`)}|shm:${await statSig(`${filePath}-shm`)}`
+  }
+  return base
+}
+
 export async function getChanges(
   source: Source,
   id: string,
@@ -38,7 +48,7 @@ export async function getChanges(
 ): Promise<ChangesResult> {
   const key = `${source}:${id}`
   // 原始文件 + follow-up 文件任一变化都要重读。
-  const sig = `${await statSig(filePath)}|${await statSig(followupsFile(source, id))}`
+  const sig = `${await nativeStatSig(source, filePath)}|${await statSig(followupsFile(source, id))}`
 
   const cached = cache.get(key)
   if (cached && cached.sig === sig) {
