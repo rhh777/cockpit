@@ -30,6 +30,7 @@ interface OpenCodeSessionMessageRow {
   type: string
   seq: number
   time_created: number
+  time_updated?: number
   data: string
 }
 
@@ -175,8 +176,7 @@ function normalizeLegacyPart(row: OpenCodePartRow): NormalizedEvent[] {
 }
 
 function messageCountFromRows(rows: OpenCodeSessionMessageRow[], legacyRows: OpenCodePartRow[]): number {
-  if (rows.length > 0) return rows.filter((r) => r.type === 'user' || r.type === 'assistant').length
-  return new Set(legacyRows.map((r) => r.message_id)).size
+  return rows.filter((r) => r.type === 'user' || r.type === 'assistant').length + new Set(legacyRows.map((r) => r.message_id)).size
 }
 
 function firstTitle(events: EventEnvelope[]): string {
@@ -188,7 +188,7 @@ async function readSessionRows(dbPath: string, id: string): Promise<OpenCodeSess
   return sqliteJson<OpenCodeSessionMessageRow>(
     dbPath,
     [
-      'select id, type, seq, time_created, data',
+      'select id, type, seq, time_created, time_updated, data',
       'from session_message',
       `where session_id = ${sqlString(id)}`,
       'order by seq asc, id asc',
@@ -208,6 +208,16 @@ async function readLegacyPartRows(dbPath: string, id: string): Promise<OpenCodeP
       'order by m.time_created asc, m.id asc, p.time_created asc, p.id asc',
     ].join(' '),
   )
+}
+
+async function readLegacyPartRowsBestEffort(dbPath: string, id: string): Promise<OpenCodePartRow[]> {
+  try {
+    return await readLegacyPartRows(dbPath, id)
+  } catch (err) {
+    const message = String((err as Error)?.message ?? err)
+    if (message.includes('no such table: message') || message.includes('no such table: part')) return []
+    throw err
+  }
 }
 
 export const opencodeLoader: SessionSourceLoader = {
@@ -284,36 +294,44 @@ export const opencodeLoader: SessionSourceLoader = {
       )
       session = sessions[0]
       rows = await readSessionRows(filePath, id)
-      if (rows.length === 0) legacyRows = await readLegacyPartRows(filePath, id)
+      legacyRows = await readLegacyPartRowsBestEffort(filePath, id)
     } catch (err) {
       warnings.push({ code: 'opencode_sqlite_failed', message: String((err as Error)?.message ?? err) })
       return { summaryPatch, events, warnings }
     }
 
     let seq = 0
-    if (rows.length > 0) {
-      for (const row of rows) {
-        for (const ev of normalizeSessionMessage(row)) {
-          events.push({
+    const pending: Array<{ sort: number; seq: number; envelope: EventEnvelope }> = []
+    for (const row of rows) {
+      for (const ev of normalizeSessionMessage(row)) {
+        pending.push({
+          sort: Number(row.time_created ?? row.time_updated ?? 0),
+          seq: seq++,
+          envelope: {
             origin: 'native',
             source: SOURCE,
-            sourceEventId: `${id}:session_message:${row.seq}:${seq++}`,
+            sourceEventId: `${id}:session_message:${row.seq}:${seq}`,
             event: ev,
-          })
-        }
-      }
-    } else {
-      for (const row of legacyRows) {
-        for (const ev of normalizeLegacyPart(row)) {
-          events.push({
-            origin: 'native',
-            source: SOURCE,
-            sourceEventId: `${id}:part:${row.part_id}:${seq++}`,
-            event: ev,
-          })
-        }
+          },
+        })
       }
     }
+    for (const row of legacyRows) {
+      for (const ev of normalizeLegacyPart(row)) {
+        pending.push({
+          sort: Number(row.part_time_created ?? 0),
+          seq: seq++,
+          envelope: {
+            origin: 'native',
+            source: SOURCE,
+            sourceEventId: `${id}:part:${row.part_id}:${seq}`,
+            event: ev,
+          },
+        })
+      }
+    }
+    pending.sort((a, b) => a.sort - b.sort || a.seq - b.seq)
+    events.push(...pending.map((item) => item.envelope))
 
     summaryPatch.title = session?.title?.trim() || firstTitle(events) || 'OpenCode session'
     summaryPatch.cwd = session?.directory ?? null

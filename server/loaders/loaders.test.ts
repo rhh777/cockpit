@@ -255,6 +255,37 @@ test('opencode loader: legacy message/part rows are used when session_message is
   }
 })
 
+test('opencode loader: session_message and legacy message/part rows are merged by time', { skip: !HAS_SQLITE }, async () => {
+  const db = tempDb('opencode-mixed')
+  const id = 'ses_testMixed123'
+  try {
+    await sqliteExec(
+      db,
+      [
+        'create table session (id text primary key, title text, directory text, time_created integer, time_updated integer, agent text, model text);',
+        'create table session_message (id text primary key, session_id text, type text, time_created integer, time_updated integer, data text, seq integer);',
+        'create table message (id text primary key, session_id text, time_created integer, time_updated integer, data text);',
+        'create table part (id text primary key, message_id text, session_id text, time_created integer, time_updated integer, data text);',
+        `insert into session values (${sqlString(id)}, '', '/tmp/mixed', 1783755200000, 1783755205000, 'build', '');`,
+        `insert into session_message values ('sm1', ${sqlString(id)}, 'user', 1783755200000, 1783755200000, ${sqlString(JSON.stringify({ time: { created: 1783755200000 }, text: 'old hello' }))}, 1);`,
+        `insert into message values ('msg_user_new', ${sqlString(id)}, 1783755206000, 1783755206000, ${sqlString(JSON.stringify({ role: 'user' }))});`,
+        `insert into part values ('prt_user_new', 'msg_user_new', ${sqlString(id)}, 1783755206000, 1783755206000, ${sqlString(JSON.stringify({ type: 'text', text: 'new hello' }))});`,
+        `insert into message values ('msg_assistant_new', ${sqlString(id)}, 1783755207000, 1783755208000, ${sqlString(JSON.stringify({ role: 'assistant' }))});`,
+        `insert into part values ('prt_assistant_new', 'msg_assistant_new', ${sqlString(id)}, 1783755207000, 1783755208000, ${sqlString(JSON.stringify({ type: 'text', text: 'new reply' }))});`,
+      ].join('\n'),
+    )
+
+    const { events, summaryPatch } = await opencodeLoader.loadEvents(db, id)
+    assert.equal(summaryPatch.title, 'old hello')
+    assert.equal(summaryPatch.messageCount, 3)
+    assert.deepEqual(types(events), ['user_text', 'user_text', 'assistant_text'])
+    assert.ok(events[0]?.event.type === 'user_text' && events[0].event.text === 'old hello')
+    assert.ok(events[1]?.event.type === 'user_text' && events[1].event.text === 'new hello')
+  } finally {
+    await rmQuiet(db)
+  }
+})
+
 test('claude loader: incremental append ids match full parse', async () => {
   const file = tempJsonl('claude-inc')
   const line1 = JSON.stringify({
