@@ -2,11 +2,13 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEve
 import { Link, useMatch, useNavigate } from 'react-router-dom'
 import {
   createGroupThread,
+  createReviewRoom,
   deleteGroupThread,
   fetchRunningRuns,
   fetchSessions,
   renameGroupThread,
   type ActiveRunDTO,
+  type CreateReviewRoomBody,
   type SessionSummaryDTO,
 } from '../lib/api'
 import { displayTitle, relativeTime } from '../lib/display'
@@ -128,6 +130,17 @@ function agentForSource(source: string | undefined): AgentName | null {
   return agent?.value ?? null
 }
 
+function reviewRoomExtension(s: SessionSummaryDTO): { parentReviewRoomId?: string; sourceKind?: string } | null {
+  const raw = s.extensions?.reviewRoom
+  if (!raw || typeof raw !== 'object') return null
+  const meta = raw as { parentReviewRoomId?: unknown; sourceKind?: unknown; enabled?: unknown }
+  if (!meta.enabled) return null
+  return {
+    parentReviewRoomId: typeof meta.parentReviewRoomId === 'string' ? meta.parentReviewRoomId : undefined,
+    sourceKind: typeof meta.sourceKind === 'string' ? meta.sourceKind : undefined,
+  }
+}
+
 function extensionAgents(s: SessionSummaryDTO, key: 'agents' | 'followupAgents'): AgentName[] {
   const raw = s.extensions?.[key]
   return Array.isArray(raw) ? raw.filter((v): v is AgentName => typeof v === 'string') : []
@@ -176,6 +189,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
   const [openProjects, setOpenProjects] = useState<Set<string>>(new Set())
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
   const [creatingGroup, setCreatingGroup] = useState(false)
+  const [newChooserOpen, setNewChooserOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [busyGroupId, setBusyGroupId] = useState<string | null>(null)
@@ -306,7 +320,25 @@ export function SessionList({ style }: { style?: CSSProperties }) {
       const fresh = await fetchSessions()
       setSessions(fresh)
       setViewMode('cockpit')
+      setNewChooserOpen(false)
       navigate(`/cockpit/${state.id}`)
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setCreatingGroup(false)
+    }
+  }
+
+  const handleCreateReviewRoom = async (body: CreateReviewRoomBody) => {
+    setCreatingGroup(true)
+    try {
+      const created = await createReviewRoom(body)
+      const fresh = await fetchSessions()
+      setSessions(fresh)
+      setViewMode('cockpit')
+      setNewChooserOpen(false)
+      if (created.startError) setError(`Review Room created but auto-start failed: ${created.startError}`)
+      navigate(`/cockpit/${created.groupThreadId}`)
     } catch (e) {
       setError(String(e))
     } finally {
@@ -376,6 +408,8 @@ export function SessionList({ style }: { style?: CSSProperties }) {
     const busy = busyGroupId === s.id
     const activeRuns = activeBySession.get(key) ?? []
     const isRunning = activeRuns.length > 0
+    const reviewExt = reviewRoomExtension(s)
+    const isFreshChild = !!reviewExt?.parentReviewRoomId
     const activeAgents = [...new Set(activeRuns.map((r) => r.agent))]
     const runningLabel =
       activeAgents.length === 1
@@ -446,6 +480,11 @@ export function SessionList({ style }: { style?: CSSProperties }) {
             )}
             <span className="project-session-title" title={s.title}>
               {displayTitle(s.title, 60, locale)}
+              {isFreshChild && (
+                <span className="project-session-fresh" title="Fresh review · 有父 room">
+                  {' '}↑
+                </span>
+              )}
             </span>
             {isRunning ? (
               <span className="project-session-running" title={runningLabel}>
@@ -479,7 +518,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
       <div className="project-nav">
         <button
           className="project-nav-item"
-          onClick={handleCreateGroup}
+          onClick={() => setNewChooserOpen(true)}
           disabled={creatingGroup}
         >
           <Icon name="edit" size={16} />
@@ -676,6 +715,247 @@ export function SessionList({ style }: { style?: CSSProperties }) {
           </div>
         )
       })()}
+      {newChooserOpen && (
+        <NewConversationDialog
+          busy={creatingGroup}
+          onCancel={() => setNewChooserOpen(false)}
+          onCreateGroup={handleCreateGroup}
+          onCreateReviewRoom={handleCreateReviewRoom}
+        />
+      )}
     </aside>
+  )
+}
+
+type ReviewSourceKind = 'repository' | 'directory' | 'files' | 'document' | 'freeform'
+const DEFAULT_REVIEW_AGENTS: AgentName[] = ['claude', 'codex']
+const REVIEW_KIND_OPTIONS: { value: ReviewSourceKind; label: string; hint: string; placeholder?: string }[] = [
+  { value: 'repository', label: '仓库', hint: '一个 git 项目根目录', placeholder: '/Users/me/project' },
+  { value: 'directory', label: '文件夹', hint: '任意目录', placeholder: '/Users/me/some/folder' },
+  { value: 'files', label: '文件', hint: '一个或多个文件路径(逗号或换行分隔)', placeholder: '/Users/me/a.ts,/Users/me/b.ts' },
+  { value: 'document', label: '文档', hint: '一份设计文档 / 方案 / PRD', placeholder: '/Users/me/docs/design.md' },
+  { value: 'freeform', label: '自由文本', hint: '直接粘贴一段方案让两个 agent 讨论' },
+]
+
+function parsePaths(raw: string): string[] {
+  return raw
+    .split(/[\s,\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+function NewConversationDialog({
+  busy,
+  onCancel,
+  onCreateGroup,
+  onCreateReviewRoom,
+}: {
+  busy: boolean
+  onCancel: () => void
+  onCreateGroup: () => void
+  onCreateReviewRoom: (body: CreateReviewRoomBody) => void
+}) {
+  const [mode, setMode] = useState<'review' | 'group'>('review')
+  const [kind, setKind] = useState<ReviewSourceKind>('repository')
+  const [rawPath, setRawPath] = useState(() => {
+    try {
+      return window.localStorage.getItem('cockpit.lastReviewRoomPath') || ''
+    } catch {
+      return ''
+    }
+  })
+  const [freeformText, setFreeformText] = useState('')
+  const [goal, setGoal] = useState('')
+  const [participants, setParticipants] = useState<AgentName[]>(DEFAULT_REVIEW_AGENTS)
+  const [discussion, setDiscussion] = useState<'parallel' | 'serial'>('parallel')
+
+  const activeKind = REVIEW_KIND_OPTIONS.find((k) => k.value === kind)!
+  const paths = parsePaths(rawPath)
+  const canSubmit = mode === 'group'
+    ? true
+    : kind === 'freeform'
+      ? freeformText.trim().length > 0
+      : paths.length > 0 && participants.length >= 1
+
+  const toggleAgent = (agent: AgentName) => {
+    setParticipants((prev) => (prev.includes(agent) ? prev.filter((a) => a !== agent) : [...prev, agent]))
+  }
+
+  const submit = () => {
+    if (mode === 'group') {
+      onCreateGroup()
+      return
+    }
+    try {
+      if (kind !== 'freeform' && paths.length) {
+        window.localStorage.setItem('cockpit.lastReviewRoomPath', paths[0])
+      }
+    } catch {
+      /* ignore */
+    }
+    const goalText = goal.trim() || 'Review this source with the selected reviewers. Identify risks, disagreements, and next steps.'
+    let source: CreateReviewRoomBody['source']
+    if (kind === 'freeform') {
+      source = { kind: 'freeform', freeformText: freeformText.trim() }
+    } else if (kind === 'files') {
+      source = { kind: 'files', paths }
+    } else {
+      source = { kind, path: paths[0] }
+    }
+    onCreateReviewRoom({
+      source,
+      goal: goalText,
+      participants,
+      mode: discussion,
+      startReview: true,
+    })
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal new-conversation-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <span className="modal-title">新对话</span>
+          <button className="modal-close" onClick={onCancel} aria-label="关闭">×</button>
+        </div>
+        <div className="modal-body">
+          <div className="new-conversation-grid">
+            <button
+              type="button"
+              className={`new-conversation-option ${mode === 'review' ? 'active' : ''}`}
+              onClick={() => setMode('review')}
+            >
+              <Icon name="folder" size={18} />
+              <span>Review Room</span>
+            </button>
+            <button
+              type="button"
+              className={`new-conversation-option ${mode === 'group' ? 'active' : ''}`}
+              onClick={() => setMode('group')}
+            >
+              <Icon name="users" size={18} />
+              <span>空白群聊</span>
+            </button>
+          </div>
+          {mode === 'review' && (
+            <>
+              <div className="modal-section">
+                <span className="modal-label">来源类型</span>
+                <div className="review-kind-row" role="group" aria-label="来源类型">
+                  {REVIEW_KIND_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      className={`review-kind-item ${kind === opt.value ? 'active' : ''}`}
+                      onClick={() => setKind(opt.value)}
+                      title={opt.hint}
+                      aria-pressed={kind === opt.value}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <span className="modal-hint">{activeKind.hint}</span>
+              </div>
+              {kind === 'freeform' ? (
+                <label className="modal-section">
+                  <span className="modal-label">内容</span>
+                  <textarea
+                    className="modal-textarea"
+                    value={freeformText}
+                    onChange={(e) => setFreeformText(e.target.value)}
+                    placeholder="粘贴要 review 的方案 / 想法 / 代码片段…"
+                    rows={5}
+                    autoFocus
+                  />
+                </label>
+              ) : (
+                <label className="modal-section">
+                  <span className="modal-label">{kind === 'files' ? '路径(可多个)' : '路径'}</span>
+                  {kind === 'files' ? (
+                    <textarea
+                      className="modal-textarea"
+                      value={rawPath}
+                      onChange={(e) => setRawPath(e.target.value)}
+                      placeholder={activeKind.placeholder}
+                      rows={3}
+                      autoFocus
+                    />
+                  ) : (
+                    <input
+                      className="modal-input"
+                      value={rawPath}
+                      onChange={(e) => setRawPath(e.target.value)}
+                      placeholder={activeKind.placeholder}
+                      autoFocus
+                    />
+                  )}
+                </label>
+              )}
+              <div className="modal-section">
+                <span className="modal-label">参与 agent</span>
+                <div className="review-agents-row" role="group" aria-label="参与 agent">
+                  {AGENT_OPTIONS.map((agent) => (
+                    <button
+                      key={agent.value}
+                      type="button"
+                      className={`review-agent-chip ${participants.includes(agent.value) ? 'active' : ''}`}
+                      onClick={() => toggleAgent(agent.value)}
+                      aria-pressed={participants.includes(agent.value)}
+                    >
+                      <AgentIcon source={agent.value} size={16} />
+                      <span>{agent.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="modal-section">
+                <span className="modal-label">讨论方式</span>
+                <div className="review-kind-row" role="group" aria-label="讨论方式">
+                  <button
+                    type="button"
+                    className={`review-kind-item ${discussion === 'parallel' ? 'active' : ''}`}
+                    onClick={() => setDiscussion('parallel')}
+                    aria-pressed={discussion === 'parallel'}
+                    title="所有 agent 同时独立 review"
+                  >
+                    并行
+                  </button>
+                  <button
+                    type="button"
+                    className={`review-kind-item ${discussion === 'serial' ? 'active' : ''}`}
+                    onClick={() => setDiscussion('serial')}
+                    aria-pressed={discussion === 'serial'}
+                    title="按顺序接力,后一个回应前一个"
+                  >
+                    接力
+                  </button>
+                </div>
+              </div>
+              <label className="modal-section">
+                <span className="modal-label">目标(可选)</span>
+                <textarea
+                  className="modal-textarea"
+                  value={goal}
+                  onChange={(e) => setGoal(e.target.value)}
+                  placeholder="让 Claude 和 Codex 讨论这个方案,指出风险和下一步。"
+                  rows={2}
+                />
+              </label>
+            </>
+          )}
+        </div>
+        <div className="modal-actions">
+          <button className="modal-btn" onClick={onCancel} disabled={busy}>取消</button>
+          <button
+            className="modal-btn primary"
+            onClick={submit}
+            disabled={busy || !canSubmit}
+          >
+            创建
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }

@@ -17,6 +17,7 @@ export interface GroupThreadState {
   updatedAt: string
   summaryUpdatedAt: string | null
   summaryRevision: number
+  extensions?: Record<string, unknown>
 }
 
 const TOP_KEYS = ['origin', 'source', 'sourceEventId', 'parentEventId', 'turnId', 'runId'] as const
@@ -159,7 +160,7 @@ async function touchState(id: string, patch: Partial<GroupThreadState> = {}): Pr
 }
 
 export const groupThreadStore = {
-  async create(input: { title?: string; cwd?: string | null; agents?: AgentName[] } = {}) {
+  async create(input: { title?: string; cwd?: string | null; agents?: AgentName[]; extensions?: Record<string, unknown> } = {}) {
     const id = randomUUID()
     const now = new Date().toISOString()
     const agents = input.agents?.length
@@ -175,6 +176,7 @@ export const groupThreadStore = {
       updatedAt: now,
       summaryUpdatedAt: null,
       summaryRevision: 0,
+      ...(input.extensions ? { extensions: input.extensions } : {}),
     }
     await writeState(state)
     await fsp.writeFile(groupTranscriptFile(id), '', 'utf8')
@@ -186,7 +188,7 @@ export const groupThreadStore = {
     return readJsonFile<GroupThreadState>(groupStateFile(id))
   },
 
-  async update(id: string, patch: { title?: string }): Promise<GroupThreadState | null> {
+  async update(id: string, patch: { title?: string; extensions?: Record<string, unknown> }): Promise<GroupThreadState | null> {
     return enqueue(id, async () => {
       const state = await this.readState(id)
       if (!state) return null
@@ -194,6 +196,7 @@ export const groupThreadStore = {
       const next: GroupThreadState = {
         ...state,
         ...(title ? { title } : {}),
+        ...(patch.extensions ? { extensions: { ...(state.extensions ?? {}), ...patch.extensions } } : {}),
         updatedAt: new Date().toISOString(),
       }
       await writeState(next)
@@ -291,7 +294,11 @@ export const groupThreadStore = {
         fileMtimeMs: st.mtimeMs,
         fileSize: st.size,
         hasFollowups: false,
-        extensions: { kind: 'group-chat', agents: groupTranscriptAgents(events) },
+        extensions: {
+          kind: 'group-chat',
+          agents: groupTranscriptAgents(events),
+          ...(state.extensions ?? {}),
+        },
       })
     }
     return out

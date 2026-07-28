@@ -4,6 +4,7 @@ import { Icon } from './Icon'
 import { nativeAgentForSource } from '../lib/agents'
 import {
   createHandoff,
+  createReviewRoom,
   fetchHandoff,
   groupFromSession,
   mirrorNativeLink,
@@ -23,7 +24,7 @@ interface Props {
   cwd?: string | null
 }
 
-type BusyKind = 'to-group' | 'codex' | 'codex-app-server' | 'claude' | 'handoff' | null
+type BusyKind = 'to-group' | 'review-room' | 'codex' | 'codex-app-server' | 'claude' | 'handoff' | null
 
 type GroupScope = 'all' | number
 
@@ -75,6 +76,25 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
           navigate(`/cockpit/${encodeURIComponent(groupThreadId)}`)
           return
         }
+        if (kind === 'review-room') {
+          const ref = sourceRefFor(source, sessionId, isGroup)
+          const reviewSource = ref.kind === 'group-thread'
+            ? { kind: 'group-thread' as const, groupThreadId: ref.groupThreadId ?? sessionId }
+            : {
+                kind: ref.kind as 'native-session' | 'cockpit-followup',
+                source,
+                sessionId,
+              }
+          const created = await createReviewRoom({
+            source: reviewSource,
+            goal: '和 Claude、Codex 一起 review 本次会话:指出风险、分歧和下一步。',
+            participants: ['claude', 'codex'],
+            startReview: true,
+          })
+          if (created.startError) setError(`Review Room 已创建,但自动启动失败:${created.startError}`)
+          navigate(`/cockpit/${encodeURIComponent(created.groupThreadId)}`)
+          return
+        }
         const ref = sourceRefFor(source, sessionId, isGroup)
         if (kind === 'handoff') {
           const manifest = await createHandoff({ source: ref, target: 'both' })
@@ -117,6 +137,9 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
       </button>
       {open && (
         <div className="session-actions-menu" role="menu">
+          <button role="menuitem" onClick={() => runAction('review-room')}>
+            创建 Review Room
+          </button>
           <button
             role="menuitem"
             disabled={isGroup}

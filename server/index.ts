@@ -10,6 +10,7 @@ import { handleRunsRoute } from './routes/runs'
 import { handleSessionsRoute } from './routes/sessions'
 import { handleSettingsRoute } from './routes/settings'
 import { handleThreadsRoute } from './routes/threads'
+import { handleReviewRoomsRoute } from './routes/review-rooms'
 
 type Next = (err?: unknown) => void
 
@@ -34,6 +35,7 @@ export function cockpitApi() {
       if (await handleGitRoute(req, res, url)) return
       if (await handleRunsRoute(req, res, url)) return
       if (await handleHandoffsRoute(req, res, url)) return
+      if (await handleReviewRoomsRoute(req, res, url)) return
       if (await handleGroupThreadsRoute(req, res, url)) return
       if (await handleThreadsRoute(req, res, url)) return
       if (await handleSettingsRoute(req, res, url)) return

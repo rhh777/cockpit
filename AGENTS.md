@@ -19,6 +19,8 @@ Codex reads this file before working in this repository. Keep it aligned with `C
 - `docs/04-ui-design.md` — UI visual and interaction rules.
 - `docs/05-group-chat-design.md` — group chat transcript, summary, and @mention scheduling.
 - `docs/07-native-continuation-and-handoff.md` — native continuation, deep links, handoff bundles.
+- `docs/13-serial-agent-discussion-design.md` — serial relay discussion mode for group threads.
+- `docs/14-review-room-workflow-design.md` — Review Room workflow for session, repository, file, and document based Claude/Codex collaboration.
 
 Documented decisions are project contracts, not loose suggestions.
 

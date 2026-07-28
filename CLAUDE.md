@@ -34,6 +34,8 @@ This file gives guidance to anyone working in this repository (Claude Code or ot
 - `docs/09-approval-and-write-access.md` — 权限档位与审批层。
 - `docs/10-agent-integration.md` / `docs/11-agent-runtime-latency-plan.md` — agent 接入与运行时延迟优化。
 - `docs/12-design-review-findings.md` — 设计评审问题清单与修复进度(动手修复前先看这里)。
+- `docs/13-serial-agent-discussion-design.md` — 群聊串行/接力讨论模式。
+- `docs/14-review-room-workflow-design.md` — 从 session、仓库、文件、文档触发 Claude/Codex 方案协作与 fresh review。
 
 文档记录的是已定决策。
 

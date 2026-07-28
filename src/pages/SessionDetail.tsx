@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
-import { fetchChanges, fetchRunningRuns, fetchSessionDetail, revealSession, type SessionDetailDTO } from '../lib/api'
+import { useNavigate, useParams } from 'react-router-dom'
+import { extractReviewIssues, fetchChanges, fetchReviewRoom, fetchRunningRuns, fetchSessionDetail, revealSession, startFreshReview, type ReviewRoomState, type SessionDetailDTO } from '../lib/api'
+import { ReviewCompareView } from '../components/ReviewCompareView'
 import {
   attachGroupTurnStream,
   attachRunStream,
@@ -10,11 +11,12 @@ import {
   subscribeSessionStream,
   startFollowupRun,
   startGroupRun,
+  startReviewRoomRun,
   startNativeResumeRun,
   type RunRecord,
   type RunStreamMessage,
 } from '../lib/sse'
-import { sessionAgentOf } from '../lib/agents'
+import { labelForAgent, sessionAgentOf } from '../lib/agents'
 import { sourceLabel, displayTitle } from '../lib/display'
 import { buildTimeline, summarizeTools, type FilterKind, type TraceGroup } from '../lib/timeline'
 import type { AgentName, ApprovalRequest, ChatAttachment, EventEnvelope, RunPermissions, Source } from '../lib/types'
@@ -115,8 +117,22 @@ function lastGroupDiscussionMode(events: EventEnvelope[]): 'parallel' | 'serial'
   return 'parallel'
 }
 
+interface ReviewRoomMeta {
+  enabled?: boolean
+  sourceKind?: string
+  parentReviewRoomId?: string
+}
+
+function reviewRoomMeta(summary: SessionDetailDTO['summary'] | null): ReviewRoomMeta | null {
+  const raw = summary?.extensions?.reviewRoom
+  if (!raw || typeof raw !== 'object') return null
+  const meta = raw as ReviewRoomMeta
+  return meta.enabled ? meta : null
+}
+
 export function SessionDetail() {
   const { source, id } = useParams()
+  const navigate = useNavigate()
   const { width: reviewWidth, onDragStart: onReviewDrag } = useResizable(
     'cockpit.reviewWidth',
     360,
@@ -125,6 +141,9 @@ export function SessionDetail() {
     'right',
   )
   const [detail, setDetail] = useState<SessionDetailDTO | null>(null)
+  const [reviewRoom, setReviewRoom] = useState<ReviewRoomState | null>(null)
+  const [extractingIssues, setExtractingIssues] = useState(false)
+  const [freshReviewBusy, setFreshReviewBusy] = useState(false)
   const [events, setEvents] = useState<EventEnvelope[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -672,6 +691,7 @@ export function SessionDetail() {
     setLoading(true)
     setError(null)
     setDetail(null)
+    setReviewRoom(null)
     setEvents([])
     setSendError(null)
     setPendingApprovals([])
@@ -686,6 +706,12 @@ export function SessionDetail() {
         resetFrom(d)
         setLoading(false)
         if (isGroupSource(source)) {
+          const isReview = d.summary?.extensions?.reviewRoom
+          if (isReview) {
+            fetchReviewRoom(id)
+              .then((r) => alive && setReviewRoom(r))
+              .catch(() => {})
+          }
           fetchRunningRuns()
             .then((runs) => {
               if (!alive) return
@@ -854,6 +880,9 @@ export function SessionDetail() {
     }
     if (!hadStreamsRef.current) return
     hadStreamsRef.current = false
+    if (id && isGroupSource(source) && reviewRoom) {
+      fetchReviewRoom(id).then((r) => r && setReviewRoom(r)).catch(() => {})
+    }
     if (!source || !id || !autoRefresh || loading || error) return
     let alive = true
     fetchChanges(source, id, eventsLenRef.current)
@@ -872,7 +901,7 @@ export function SessionDetail() {
     return () => {
       alive = false
     }
-  }, [streams.length, source, id, autoRefresh, loading, error, resetFrom, appendEnvelopes])
+  }, [streams.length, source, id, autoRefresh, loading, error, resetFrom, appendEnvelopes, reviewRoom])
 
   // 发一条 follow-up,可能并行发到多个 agent(@-mentions)。
   const handleSend = useCallback(
@@ -971,6 +1000,26 @@ export function SessionDetail() {
           appendEnvelopes([userEnvelope, ...(turnStart ? [turnStart] : [])])
           if (mode === 'serial') attachGroupTurn(groupTurnId)
           else for (const run of records) attachGroupRun(run)
+        })
+        .catch((e) => setSendError(String(e)))
+    },
+    [id, appendEnvelopes, attachGroupRun, attachGroupTurn],
+  )
+
+  const handleReviewRoomStart = useCallback(
+    (opts?: { kind?: 'review' | 'fix' | 'verify'; mode?: 'parallel' | 'serial'; participants?: AgentName[] }) => {
+      if (!id) return
+      setSendError(null)
+      startReviewRoomRun(id, {
+        mode: opts?.mode ?? 'parallel',
+        kind: opts?.kind ?? 'review',
+        participants: opts?.participants,
+      })
+        .then(({ groupTurnId, mode, records, userEnvelope, turnStart }) => {
+          appendEnvelopes([userEnvelope, ...(turnStart ? [turnStart] : [])])
+          if (mode === 'serial') attachGroupTurn(groupTurnId)
+          else for (const run of records) attachGroupRun(run)
+          fetchReviewRoom(id).then((r) => r && setReviewRoom(r)).catch(() => {})
         })
         .catch((e) => setSendError(String(e)))
     },
@@ -1092,6 +1141,10 @@ export function SessionDetail() {
   if (!detail) return <div className="detail" />
 
   const s = detail.summary
+  const reviewMeta = reviewRoomMeta(s)
+  const isReviewRoom = groupMode && reviewMeta != null
+  const reviewStarted = isReviewRoom && (reviewRoom?.rounds.length ?? 0) > 0
+  const reviewPhase = reviewRoom?.phase ?? (reviewStarted ? 'review' : 'draft')
   const hasMainStreams = groupMode
     ? streams.length > 0
     : streams.some((s) => s.agent === sessionAgentOf(source))
@@ -1157,6 +1210,50 @@ export function SessionDetail() {
           </div>
         </div>
         <WarningsBanner warnings={detail.warnings} />
+        {isReviewRoom && (
+          <>
+            <ReviewRoomPanel
+              phase={reviewPhase}
+              sourceKind={reviewMeta?.sourceKind}
+              parentReviewRoomId={reviewMeta?.parentReviewRoomId}
+              room={reviewRoom}
+              busy={streams.length > 0}
+              onStart={handleReviewRoomStart}
+            />
+            {reviewRoom && (
+              <ReviewCompareView
+                room={reviewRoom}
+                busy={extractingIssues}
+                freshBusy={freshReviewBusy}
+                onExtract={async () => {
+                  if (!id) return
+                  setExtractingIssues(true)
+                  try {
+                    const next = await extractReviewIssues(id, { force: true })
+                    if (next) setReviewRoom(next)
+                  } catch (e) {
+                    setSendError(`抽取 findings 失败:${String(e)}`)
+                  } finally {
+                    setExtractingIssues(false)
+                  }
+                }}
+                onFreshReview={async () => {
+                  if (!id) return
+                  setFreshReviewBusy(true)
+                  try {
+                    const created = await startFreshReview(id, { reason: 'user-requested' })
+                    if (created.startError) setSendError(`Fresh review 已创建,但自动启动失败:${created.startError}`)
+                    navigate(`/cockpit/${encodeURIComponent(created.groupThreadId)}`)
+                  } catch (e) {
+                    setSendError(`Fresh review 失败:${String(e)}`)
+                  } finally {
+                    setFreshReviewBusy(false)
+                  }
+                }}
+              />
+            )}
+          </>
+        )}
         <ToolActivityBar
           activity={activity}
           filter={filter}
@@ -1304,5 +1401,141 @@ export function SessionDetail() {
         onClose={() => setShowFiles(false)}
       />
     </div>
+  )
+}
+
+const ROUND_KIND_LABEL: Record<string, string> = {
+  review: 'Review',
+  fix: 'Fix',
+  verify: 'Verify',
+  'fresh-review': 'Fresh review',
+}
+
+function relativeTs(iso: string): string {
+  const t = new Date(iso).getTime()
+  if (!Number.isFinite(t)) return ''
+  const diff = Math.max(0, Date.now() - t)
+  const min = Math.floor(diff / 60000)
+  if (min < 1) return 'just now'
+  if (min < 60) return `${min}m ago`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}h ago`
+  return `${Math.floor(hr / 24)}d ago`
+}
+
+function ReviewRoomPanel({
+  phase,
+  sourceKind,
+  parentReviewRoomId,
+  room,
+  busy,
+  onStart,
+}: {
+  phase: string
+  sourceKind?: string
+  parentReviewRoomId?: string
+  room: ReviewRoomState | null
+  busy: boolean
+  onStart: (opts?: { kind?: 'review' | 'fix' | 'verify'; mode?: 'parallel' | 'serial'; participants?: import('../lib/types').AgentName[] }) => void
+}) {
+  const rounds = room?.rounds ?? []
+  const started = rounds.length > 0
+  const anyRunning = rounds.some((r) => r.status === 'running')
+  const [nextKind, setNextKind] = useState<'review' | 'fix' | 'verify'>('review')
+  const [nextMode, setNextMode] = useState<'parallel' | 'serial'>('parallel')
+  useEffect(() => {
+    if (!started) return setNextKind('review')
+    const last = rounds[rounds.length - 1]
+    if (last.status === 'running') return
+    setNextKind(last.kind === 'review' ? 'fix' : last.kind === 'fix' ? 'verify' : 'review')
+  }, [started, rounds])
+
+  return (
+    <>
+      <div className="review-room-banner">
+        <div className="review-room-main">
+          <span className="review-room-kicker">Review Room</span>
+          <span className="review-room-title">
+            {(room?.participants ?? ['claude', 'codex']).map(labelForAgent).join(' × ')} 方案协作
+          </span>
+          <span className="review-room-meta">
+            {sourceKind ? `${sourceKind} · ` : ''}
+            {phase}
+            {rounds.length ? ` · ${rounds.length} 轮` : ''}
+            {parentReviewRoomId && (
+              <>
+                {' · '}
+                <a
+                  href={`/cockpit/${encodeURIComponent(parentReviewRoomId)}`}
+                  className="review-parent-link"
+                  title="回到父 Review Room"
+                >
+                  ↑ 父 room
+                </a>
+              </>
+            )}
+          </span>
+        </div>
+        <div className="review-room-actions">
+          <button
+            className="review-room-primary"
+            onClick={() => onStart({ kind: nextKind, mode: nextMode })}
+            disabled={busy || anyRunning}
+            title={anyRunning ? '有轮次在进行中' : `启动 ${ROUND_KIND_LABEL[nextKind]}(${nextMode === 'serial' ? '接力' : '并行'})`}
+          >
+            <Icon name="sparkle" size={14} />
+            {anyRunning ? '进行中…' : started ? `启动 ${ROUND_KIND_LABEL[nextKind]}` : 'Start Review'}
+          </button>
+        </div>
+      </div>
+      <div className="review-rounds">
+        <div className="review-rounds-head">
+          <span className="review-rounds-title">轮次</span>
+          <span>·</span>
+          <span>下一轮</span>
+          <div className="review-kind-row">
+            {(['review', 'fix', 'verify'] as const).map((k) => (
+              <button
+                key={k}
+                type="button"
+                className={`review-kind-item ${nextKind === k ? 'active' : ''}`}
+                onClick={() => setNextKind(k)}
+                aria-pressed={nextKind === k}
+              >
+                {ROUND_KIND_LABEL[k]}
+              </button>
+            ))}
+          </div>
+          <div className="review-kind-row">
+            {(['parallel', 'serial'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                className={`review-kind-item ${nextMode === m ? 'active' : ''}`}
+                onClick={() => setNextMode(m)}
+                aria-pressed={nextMode === m}
+              >
+                {m === 'parallel' ? '并行' : '接力'}
+              </button>
+            ))}
+          </div>
+        </div>
+        {rounds.length === 0 ? (
+          <div className="review-round-row" style={{ gridTemplateColumns: '1fr' }}>
+            <span className="review-round-agents">还没有轮次。默认将启动 review,由 {(room?.participants ?? ['claude', 'codex']).map(labelForAgent).join(' 和 ')} 独立分析。</span>
+          </div>
+        ) : (
+          rounds.map((r, idx) => (
+            <div className="review-round-row" key={r.id}>
+              <span className={`review-round-status ${r.status}`}>{r.status}</span>
+              <span className="review-round-agents">
+                #{idx + 1} · {ROUND_KIND_LABEL[r.kind] ?? r.kind} · {r.mode} · {r.agents.map(labelForAgent).join(', ')}
+              </span>
+              <span className="review-round-agents">{relativeTs(r.startedAt)}</span>
+            </div>
+          ))
+        )}
+      </div>
+    </>
   )
 }

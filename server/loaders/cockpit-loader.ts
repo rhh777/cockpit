@@ -21,7 +21,11 @@ export const cockpitLoader: SessionSourceLoader = {
           startedAt: state.startedAt,
           updatedAt: state.updatedAt,
           messageCount: events.length,
-          extensions: { kind: 'group-chat', agents: groupTranscriptAgents(events) },
+          extensions: {
+            kind: 'group-chat',
+            agents: groupTranscriptAgents(events),
+            ...(state.extensions ?? {}),
+          },
         }
       : {}
     return { summaryPatch, events, warnings: [] }

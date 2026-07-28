@@ -235,6 +235,39 @@ export async function startGroupRun(
   return res.json()
 }
 
+export async function startReviewRoomRun(
+  id: string,
+  body: {
+    mode?: 'parallel' | 'serial'
+    permissions?: RunPermissions
+    kind?: 'review' | 'fix' | 'verify'
+    participants?: string[]
+  } = {},
+): Promise<{
+  groupTurnId: string
+  baseEventSeq: number
+  records: RunRecord[]
+  userEnvelope: EventEnvelope
+  turnStart?: EventEnvelope
+  mode?: 'parallel' | 'serial'
+}> {
+  const res = await fetch(`/api/review-rooms/${encodeURIComponent(id)}/review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    let detail = `${res.status}`
+    try {
+      detail = (await res.json()).error ?? detail
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail)
+  }
+  return res.json()
+}
+
 export async function attachGroupTurnStream(
   id: string,
   groupTurnId: string,

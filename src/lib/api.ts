@@ -64,6 +64,142 @@ export async function createGroupThread(body: { title?: string; cwd?: string | n
   return (await res.json()) as { id: string }
 }
 
+export interface CreateReviewRoomBody {
+  source:
+    | { kind: 'native-session' | 'cockpit-followup'; source: string; sessionId: string; title?: string }
+    | { kind: 'group-thread'; groupThreadId: string; title?: string }
+    | { kind: 'repository' | 'directory' | 'document'; path: string; title?: string }
+    | { kind: 'files'; paths: string[]; title?: string }
+    | { kind: 'freeform'; freeformText?: string; title?: string }
+  goal?: string
+  preset?: string
+  participants?: string[]
+  mode?: 'parallel' | 'serial'
+  startReview?: boolean
+}
+
+export type ReviewIssueSeverity = 'blocker' | 'major' | 'minor' | 'nit'
+export type ReviewIssueOutcome = 'verified' | 'still-broken' | 'needs-discussion'
+export interface ReviewIssueDTO {
+  id: string
+  agent: string
+  title: string
+  severity: ReviewIssueSeverity
+  path?: string
+  line?: number
+  body: string
+  refIssueIds?: string[]
+  outcome?: ReviewIssueOutcome
+}
+export interface ReviewIssueSetDTO {
+  id: string
+  reviewRoomId: string
+  roundId: string
+  createdAt: string
+  issues: ReviewIssueDTO[]
+  agreements: string[]
+  disagreements: string[]
+  recommendedNextStep?: string
+}
+export interface ReviewRoomState {
+  reviewRoomId: string
+  groupThreadId: string
+  goal: string
+  preset: string | null
+  phase: 'draft' | 'review' | 'compare' | 'fix' | 'verify' | 'done'
+  participants: string[]
+  rounds: {
+    id: string
+    kind: 'review' | 'fix' | 'verify' | 'fresh-review'
+    mode: 'parallel' | 'serial' | 'single'
+    agents: string[]
+    startedAt: string
+    completedAt?: string
+    status: 'running' | 'completed' | 'failed' | 'aborted'
+    groupTurnId?: string
+  }[]
+  issueSets: ReviewIssueSetDTO[]
+  freshReviews?: {
+    parentReviewRoomId: string
+    childReviewRoomId: string
+    reviewerAgents: string[]
+    createdAt: string
+    reason: string
+  }[]
+  source: {
+    kind: string
+    title: string
+    cwd: string | null
+    snapshotCreatedAt: string
+    nativeSession?: { source: string; sessionId: string }
+    groupThreadId?: string
+    paths?: { kind: string; path: string; name: string }[]
+    freeformText?: string
+  }
+  createdAt: string
+  updatedAt: string
+}
+
+export interface FreshReviewResponse {
+  parentReviewRoomId: string
+  childReviewRoomId: string
+  groupThreadId: string
+  startError?: string
+}
+
+export async function startFreshReview(
+  id: string,
+  body: {
+    reviewerAgents?: string[]
+    reason?: 'verify' | 'new-risks' | 'user-requested'
+    mode?: 'parallel' | 'serial'
+    goal?: string
+  } = {},
+): Promise<FreshReviewResponse> {
+  const res = await fetch(`/api/review-rooms/${encodeURIComponent(id)}/fresh-review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`${res.status} ${res.statusText}${detail ? `: ${detail}` : ''}`)
+  }
+  return (await res.json()) as FreshReviewResponse
+}
+
+export async function extractReviewIssues(id: string, opts?: { roundId?: string; force?: boolean }): Promise<ReviewRoomState | null> {
+  const res = await fetch(`/api/review-rooms/${encodeURIComponent(id)}/extract`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts ?? {}),
+  })
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  const json = await res.json()
+  return (json.review ?? null) as ReviewRoomState | null
+}
+
+export interface ReviewRoomDTO {
+  reviewRoomId: string
+  groupThreadId: string
+  state: { id: string }
+  review?: ReviewRoomState
+  started?: unknown
+  startError?: string
+}
+
+export function createReviewRoom(body: CreateReviewRoomBody): Promise<ReviewRoomDTO> {
+  return postJson('/api/review-rooms', body)
+}
+
+export async function fetchReviewRoom(id: string): Promise<ReviewRoomState | null> {
+  const res = await fetch(`/api/review-rooms/${encodeURIComponent(id)}`)
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  const json = await res.json()
+  return (json.review ?? null) as ReviewRoomState | null
+}
+
 export async function renameGroupThread(id: string, title: string): Promise<void> {
   const res = await fetch(`/api/group-threads/${encodeURIComponent(id)}`, {
     method: 'PATCH',

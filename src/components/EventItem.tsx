@@ -3,6 +3,8 @@ import type { EventEnvelope } from '../lib/types'
 import { prettyToolName, summarizeToolNames, type ToolPair, type TraceGroup } from '../lib/timeline'
 import { agentAvatarClass } from '../lib/display'
 import { Markdown } from './Markdown'
+import { FindingsChip } from './FindingsChip'
+import { splitFindings } from '../lib/findings'
 import { ToolCallCard } from './ToolCallCard'
 import { Icon } from './Icon'
 import { AgentIcon, agentLabel } from './AgentIcon'
@@ -151,7 +153,16 @@ export function EventItem({
           <div className="bubble">
             <div className="event-name">{agentLabel(agentName)}</div>
             <div className="bubble-body">
-              <Markdown text={serial.body || ev.text} />
+              {(() => {
+                const rendered = serial.body || ev.text
+                const split = splitFindings(rendered)
+                return (
+                  <>
+                    <Markdown text={split.prose || rendered} />
+                    {split.rawBlock && <FindingsChip block={split} />}
+                  </>
+                )
+              })()}
               {serial.status && serial.status !== 'consensus' && (
                 <div className={`serial-protocol-chip ${serial.status}`}>
                   <Icon name={serial.status === 'consensus' ? 'check' : serial.status === 'blocked' ? 'alert-triangle' : 'chevron-right'} size={13} />
