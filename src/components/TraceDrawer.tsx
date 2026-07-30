@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { TraceGroup } from '../lib/timeline'
 import { ToolCallCard } from './ToolCallCard'
+import { useI18n } from '../lib/i18n'
 
 export function TraceDrawer({
   group,
@@ -9,6 +10,7 @@ export function TraceDrawer({
   group: TraceGroup | null
   onClose: () => void
 }) {
+  const { t } = useI18n()
   // Listen for Escape key to close the drawer
   useEffect(() => {
     if (!group) return
@@ -26,12 +28,16 @@ export function TraceDrawer({
       <div className="drawer-content" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-header">
           <div className="drawer-title-area">
-            <h3>🤖 Agent 执行细节与思维轨迹</h3>
+            <h3>🤖 {t('trace.title')}</h3>
             <span className="drawer-subtitle">
-              轮次: {group.turnId.slice(0, 12)}... · 共 {group.thinkingCount} 步思考, {group.callCount} 次工具调用
+              {t('trace.subtitle', {
+                turn: group.turnId.slice(0, 12),
+                thinking: group.thinkingCount,
+                calls: group.callCount,
+              })}
             </span>
           </div>
-          <button className="drawer-close" onClick={onClose} title="关闭抽屉 (Esc)">
+          <button className="drawer-close" onClick={onClose} title={t('trace.close')}>
             ✕
           </button>
         </div>
@@ -50,13 +56,15 @@ export function TraceDrawer({
                     <>
                       <div className="trace-node-icon icon-thinking">💡</div>
                       <div className="trace-card">
-                        <div className="trace-card-title">思考进程 #{idx + 1}</div>
+                        <div className="trace-card-title">{t('trace.thinkingStep', { index: idx + 1 })}</div>
                         <div className="trace-card-content">
                           {ev.text.trim() ? (
                             <pre className="thinking-raw-text">{ev.text}</pre>
                           ) : (
                             <div className="thinking-empty">
-                              加密 reasoning,无明文 —— Claude 仅在 JSONL 里写了 <code>signature</code>,没有把推理文字暴露给客户端。
+                              {t('trace.encryptedReasoningPre')}
+                              <code>signature</code>
+                              {t('trace.encryptedReasoningPost')}
                             </div>
                           )}
                         </div>
@@ -71,7 +79,7 @@ export function TraceDrawer({
                       </div>
                       <div className="trace-card">
                         <div className="trace-card-title">
-                          工具调用 #{idx + 1} 
+                          {t('trace.toolCall', { index: idx + 1 })}{' '}
                           {isError && <span className="trace-badge danger">error</span>}
                         </div>
                         <div className="trace-card-content">

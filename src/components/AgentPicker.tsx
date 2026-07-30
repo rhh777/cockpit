@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { AgentName } from '../lib/types'
 import { AGENT_OPTIONS } from '../lib/agents'
 import { AgentIcon } from './AgentIcon'
+import { useI18n } from '../lib/i18n'
 import { Icon } from './Icon'
 
 export function AgentPicker({
@@ -17,6 +18,7 @@ export function AgentPicker({
   options?: typeof AGENT_OPTIONS
   variant?: 'menu' | 'grid'
 }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement | null>(null)
   const selected = options.find((a) => a.value === value) ?? options[0]
@@ -67,7 +69,7 @@ export function AgentPicker({
           onClick={() => setOpen((v) => !v)}
           aria-haspopup="listbox"
           aria-expanded={open}
-          title="选择 agent"
+          title={t('agent.select')}
         >
           <AgentIcon agent={selected?.value} size={16} />
           <span>{selected?.label}</span>

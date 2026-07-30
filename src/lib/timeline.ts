@@ -337,6 +337,17 @@ export interface TurnMetrics {
   files: string[]     // 去重
 }
 
+/** 一个 assistant turn 干了什么。判别用 kind,显示交给 i18n。 */
+export type NarrativeAction =
+  | { kind: 'test'; failed: boolean }
+  | { kind: 'read-write'; read: number; write: number; diff: string }
+  | { kind: 'write'; write: number; diff: string }
+  | { kind: 'analyze'; read: number }
+  | { kind: 'review'; read: number }
+  | { kind: 'bash'; count: number }
+  | { kind: 'think'; steps: number }
+  | { kind: 'reply'; preview: string }
+
 export type NarrativeRow =
   | { kind: 'user'; key: string; envelope: EventEnvelope; text: string; ts?: string }
   | { kind: 'boundary'; key: string; envelope: EventEnvelope }
@@ -347,8 +358,8 @@ export type NarrativeRow =
       agent?: string
       events: Array<{ envelope: EventEnvelope; pair?: ToolPair }>
       metrics: TurnMetrics
-      verb: string
-      object: string
+      /** 结构化动作描述;显示文案由组件用 i18n 渲染,timeline 层不产出人类语言。 */
+      action: NarrativeAction
       preview?: string     // 第一句 assistant_text,浅色副行
       firstEnvelope: EventEnvelope
       durationMs?: number
@@ -373,21 +384,20 @@ function firstSentence(text: string): string {
   return (m ? m[1] : s.slice(0, 120)).trim()
 }
 
-// 主动词规则:优先级从高到低。返回的 object 已经能用作行内摘要。
-function verbFor(m: TurnMetrics, preview: string | undefined): { verb: string; object: string } {
-  const diffChunk = m.adds || m.dels ? ` +${m.adds} −${m.dels}` : ''
-  if (m.hasTest) return { verb: '跑测试', object: m.errors ? '有错' : '通过' }
+// 主动词规则:优先级从高到低。只产出结构化描述,不产出人类语言 —— 文案由 NarrativeTimeline
+// 经 i18n 渲染,组件也据 kind(而非显示字符串)判断是不是「回复」行。
+function actionFor(m: TurnMetrics, preview: string | undefined): NarrativeAction {
+  const diff = m.adds || m.dels ? ` +${m.adds} −${m.dels}` : ''
+  if (m.hasTest) return { kind: 'test', failed: m.errors > 0 }
   if (m.writeFiles > 0 && m.readFiles > 0) {
-    return { verb: '读改', object: `读 ${m.readFiles},改 ${m.writeFiles} 文件${diffChunk}` }
+    return { kind: 'read-write', read: m.readFiles, write: m.writeFiles, diff }
   }
-  if (m.writeFiles > 0) {
-    return { verb: '改', object: `${m.writeFiles} 个文件${diffChunk}` }
-  }
-  if (m.readFiles >= 4) return { verb: '分析', object: `${m.readFiles} 个文件` }
-  if (m.readFiles > 0) return { verb: '查阅', object: `${m.readFiles} 个文件` }
-  if (m.bashCount > 0) return { verb: '跑命令', object: `${m.bashCount} 条` }
-  if (m.thinkingCount > 0 && !preview) return { verb: '思考', object: `${m.thinkingCount} 步` }
-  return { verb: '回复', object: preview ?? '' }
+  if (m.writeFiles > 0) return { kind: 'write', write: m.writeFiles, diff }
+  if (m.readFiles >= 4) return { kind: 'analyze', read: m.readFiles }
+  if (m.readFiles > 0) return { kind: 'review', read: m.readFiles }
+  if (m.bashCount > 0) return { kind: 'bash', count: m.bashCount }
+  if (m.thinkingCount > 0 && !preview) return { kind: 'think', steps: m.thinkingCount }
+  return { kind: 'reply', preview: preview ?? '' }
 }
 
 // 从一批 assistant turn 内的 events 抽取 metrics。
@@ -455,7 +465,7 @@ export function buildTurns(
   const flush = () => {
     if (!bucket.length || !bucketFirst) return
     const { metrics, preview } = collectMetrics(bucket)
-    const { verb, object } = verbFor(metrics, preview)
+    const action = actionFor(metrics, preview)
     const ev0 = bucketFirst.event
     const agent = ('agent' in ev0 && ev0.agent) ? ev0.agent : undefined
     const lastTs = bucket[bucket.length - 1].envelope.event.ts
@@ -467,8 +477,7 @@ export function buildTurns(
       agent,
       events: bucket,
       metrics,
-      verb,
-      object,
+      action,
       preview,
       firstEnvelope: bucketFirst,
       durationMs,

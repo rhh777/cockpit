@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { CodeBlock } from './CodeBlock'
+import { useI18n } from '../lib/i18n'
 
 // react-markdown 把 ```lang...``` 渲染成 <pre><code className="language-xxx">,
 // 用 components.code 覆盖即可。inline code 走同一个组件,内部自行分支。
@@ -26,6 +27,7 @@ export function Markdown({
   collapseAt?: number
 }) {
   const [expanded, setExpanded] = useState(false)
+  const { t } = useI18n()
   const long = collapseAt > 0 && text.length > collapseAt
   // 折叠时取一个语义友好的截断点:优先在段落 / 行边界切,避免把代码围栏 / 表格断在一半。
   const preview = useMemo(() => (long ? safeTruncate(text, PREVIEW_CHARS) : text), [text, long])
@@ -40,7 +42,7 @@ export function Markdown({
             className="markdown-toggle"
             onClick={() => setExpanded(false)}
           >
-            收起
+            {t('markdown.collapse')}
           </button>
         )}
       </div>
@@ -54,9 +56,9 @@ export function Markdown({
         type="button"
         className="markdown-toggle"
         onClick={() => setExpanded(true)}
-        title={`完整 ${text.length.toLocaleString()} 字符`}
+        title={t('markdown.fullLength', { count: text.length.toLocaleString() })}
       >
-        展开剩余 {(text.length - preview.length).toLocaleString()} 字符
+        {t('markdown.expandRest', { count: (text.length - preview.length).toLocaleString() })}
       </button>
     </div>
   )

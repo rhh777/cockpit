@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import type { EventEnvelope } from '../lib/types'
-import { buildTimeline, buildTurns, type NarrativeRow, type TraceGroup } from '../lib/timeline'
+import { buildTimeline, buildTurns, type NarrativeAction, type NarrativeRow, type TraceGroup } from '../lib/timeline'
+import { useI18n } from '../lib/i18n'
+import type { MessageKey } from '../lib/i18n'
 import { EventItem } from './EventItem'
 import { AgentIcon, agentLabel } from './AgentIcon'
 import { Icon } from './Icon'
@@ -17,6 +19,7 @@ export function NarrativeTimeline({
   events: EventEnvelope[]
   onViewTrace?: (group: TraceGroup) => void
 }) {
+  const { t } = useI18n()
   const rows = useMemo<NarrativeRow[]>(
     () => buildTurns(buildTimeline(events).rows),
     [events],
@@ -57,7 +60,7 @@ export function NarrativeTimeline({
           />
         ),
       )}
-      {rows.length === 0 && <div className="narrative-empty">还没有事件</div>}
+      {rows.length === 0 && <div className="narrative-empty">{t('narrative.empty')}</div>}
       </div>
       <JumpToBottom visible={!atBottom} hasNew={hasNew} onClick={jumpToBottom} />
     </div>
@@ -65,11 +68,12 @@ export function NarrativeTimeline({
 }
 
 function UserNarrativeRow({ row }: { row: Extract<NarrativeRow, { kind: 'user' }> }) {
+  const { t } = useI18n()
   const preview = row.text.replace(/\s+/g, ' ').trim()
   const short = preview.length > 140 ? preview.slice(0, 140) + '…' : preview
   return (
     <div className="narr-row narr-user">
-      <span className="narr-avatar narr-avatar-user">你</span>
+      <span className="narr-avatar narr-avatar-user">{t('narrative.you')}</span>
       <div className="narr-body">
         <div className="narr-text">{short}</div>
       </div>
@@ -88,7 +92,9 @@ function AssistantNarrativeRow({
   onToggle: () => void
   onViewTrace?: (group: TraceGroup) => void
 }) {
-  const { verb, object, preview, metrics, agent, durationMs } = row
+  const { t } = useI18n()
+  const { action, preview, metrics, agent, durationMs } = row
+  const { verb, object } = describeAction(action, t)
   const label = agent ? agentLabel(agent) : 'assistant'
   const dur = durationMs && durationMs > 800 ? formatDur(durationMs) : ''
 
@@ -102,12 +108,14 @@ function AssistantNarrativeRow({
         <span className="narr-agent">{label}</span>
         <span className="narr-verb">{verb}</span>
         {object && <span className="narr-object">{object}</span>}
-        {preview && verb !== '回复' && (
+        {preview && action.kind !== 'reply' && (
           <span className="narr-preview" title={preview}>· {preview}</span>
         )}
         <span className="narr-meta">
-          {metrics.errors > 0 && <span className="narr-err" title={`${metrics.errors} 个错误`}>● {metrics.errors}</span>}
-          {metrics.events > 0 && <span className="narr-count">{metrics.events} 事件</span>}
+          {metrics.errors > 0 && (
+            <span className="narr-err" title={t('trace.errorCount', { count: metrics.errors })}>● {metrics.errors}</span>
+          )}
+          {metrics.events > 0 && <span className="narr-count">{t('narrative.eventCount', { count: metrics.events })}</span>}
           {dur && <span className="narr-dur">{dur}</span>}
         </span>
       </button>
@@ -130,15 +138,43 @@ function AssistantNarrativeRow({
                   errorCount: metrics.errors,
                 })
               }
-              title="打开轨迹抽屉"
+              title={t('narrative.openTrace')}
             >
-              <Icon name="wrench" size={11} /> 查看完整轨迹
+              <Icon name="wrench" size={11} /> {t('narrative.viewFullTrace')}
             </button>
           )}
         </div>
       )}
     </div>
   )
+}
+
+// NarrativeAction(结构化)→ 显示用的动词 + 宾语。timeline 层不产人类语言,文案只在这里。
+function describeAction(
+  action: NarrativeAction,
+  t: (key: MessageKey, values?: Record<string, string | number>) => string,
+): { verb: string; object: string } {
+  switch (action.kind) {
+    case 'test':
+      return { verb: t('verb.runTests'), object: action.failed ? t('verb.testsFailed') : t('verb.testsPassed') }
+    case 'read-write':
+      return {
+        verb: t('verb.readWrite'),
+        object: t('verb.readWriteObject', { read: action.read, write: action.write, diff: action.diff }),
+      }
+    case 'write':
+      return { verb: t('verb.write'), object: t('verb.writeObject', { count: action.write, diff: action.diff }) }
+    case 'analyze':
+      return { verb: t('verb.analyze'), object: t('verb.fileCount', { count: action.read }) }
+    case 'review':
+      return { verb: t('verb.review'), object: t('verb.fileCount', { count: action.read }) }
+    case 'bash':
+      return { verb: t('verb.runCommands'), object: t('verb.commandCount', { count: action.count }) }
+    case 'think':
+      return { verb: t('verb.think'), object: t('verb.stepCount', { count: action.steps }) }
+    case 'reply':
+      return { verb: t('verb.reply'), object: action.preview }
+  }
 }
 
 function formatDur(ms: number): string {

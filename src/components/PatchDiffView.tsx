@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { parseApplyPatch, shortPath, type PatchFile } from '../lib/apply-patch'
+import { useI18n } from '../lib/i18n'
 
 const KIND_LABEL: Record<PatchFile['kind'], string> = {
   update: 'modified',
@@ -23,6 +24,7 @@ export function PatchDiffView({ input }: { input: unknown }) {
 }
 
 function PatchFileView({ file }: { file: PatchFile }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(true)
   const isAdd = file.kind === 'add'
   const isDel = file.kind === 'delete'
@@ -61,7 +63,7 @@ function PatchFileView({ file }: { file: PatchFile }) {
             </div>
           ))}
           {isAdd && file.hunks[0]?.lines.length === 0 && (
-            <div className="patch-empty">(空文件)</div>
+            <div className="patch-empty">{t('patch.emptyFile')}</div>
           )}
         </div>
       )}

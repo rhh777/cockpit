@@ -6,6 +6,7 @@ import { EventItem } from './EventItem'
 import { Icon } from './Icon'
 import { useStickToBottom } from '../hooks/useStickToBottom'
 import { JumpToBottom } from './JumpToBottom'
+import { useI18n } from '../lib/i18n'
 
 // 灰白分段 + 虚拟化(docs/05 §4.3,不变量:timeline 必虚拟化)。
 export function EventTimeline({
@@ -20,6 +21,7 @@ export function EventTimeline({
   onViewTrace?: (group: TraceGroup) => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const { t } = useI18n()
   // 用 session 标识(首条事件 id)而不是布尔 flag,避免 StrictMode 第二次 mount 被跳过。
   const lastSessionKey = useRef<string>('')
 
@@ -109,11 +111,11 @@ export function EventTimeline({
                 <button
                   className="grouped-trace-pill"
                   onClick={() => onViewTrace?.(row.group!)}
-                  title="点击查看运行细节"
+                  title={t('trace.viewRunDetail')}
                 >
                   <div className="trace-summary-info">
                     {row.group!.thinkingCount > 0 && (
-                      <span className="trace-stat" title={`${row.group!.thinkingCount} 次思考`}>
+                      <span className="trace-stat" title={t('trace.thinkingCount', { count: row.group!.thinkingCount })}>
                         <Icon name="bulb" size={11} />
                         {row.group!.thinkingCount > 1 && row.group!.thinkingCount}
                       </span>
@@ -124,12 +126,12 @@ export function EventTimeline({
                       </span>
                     ))}
                     {row.group!.errorCount > 0 && (
-                      <span className="trace-stat danger" title={`${row.group!.errorCount} 个错误`}>
+                      <span className="trace-stat danger" title={t('trace.errorCount', { count: row.group!.errorCount })}>
                         <Icon name="close" size={11} /> {row.group!.errorCount}
                       </span>
                     )}
                   </div>
-                  <span className="view-trace-hint">查看 →</span>
+                  <span className="view-trace-hint">{t('trace.view')}</span>
                 </button>
               ) : ev && ev.type === 'followup_boundary' ? (
                 <div className="followup-divider">✦ Cockpit follow-up</div>

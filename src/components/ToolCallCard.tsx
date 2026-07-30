@@ -3,12 +3,14 @@ import type { ToolPair } from '../lib/timeline'
 import { parseApplyPatch, shortPath } from '../lib/apply-patch'
 import { prettyToolName } from '../lib/timeline'
 import { PatchDiffView } from './PatchDiffView'
+import { useI18n } from '../lib/i18n'
 
 // tool_result output 里如果带 markdown 图片(stringifyToolResult 给 Claude image 片段生成的
 // `![image](data:...)`),把图片单独抽出来渲染,文字部分仍用 <pre>(shell stdout 等等需要等宽)。
 const IMG_RE = /!\[([^\]]*)\]\((data:[^)]+|https?:\/\/[^)]+)\)/g
 function ToolResultBody({ output }: { output: string }) {
-  if (!output) return <pre>(空)</pre>
+  const { t } = useI18n()
+  if (!output) return <pre>{t('tool.emptyOutput')}</pre>
   if (!IMG_RE.test(output)) return <pre>{output}</pre>
   IMG_RE.lastIndex = 0
   const parts: Array<{ kind: 'text' | 'img'; value: string; alt?: string }> = []
@@ -52,6 +54,7 @@ function mainArg(use: { name: string; input: unknown }): string {
 }
 
 export function ToolCallCard({ pair, readOnly }: { pair: ToolPair; readOnly?: boolean }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const { use, result } = pair
   const arg = mainArg(use)
@@ -74,12 +77,12 @@ export function ToolCallCard({ pair, readOnly }: { pair: ToolPair; readOnly?: bo
           {result && (
             <>
               <div className={`tool-result-label ${result.isError ? 'error' : ''}`}>
-                {result.isError ? '⚠ 结果(错误)' : '结果'}
+                {result.isError ? `⚠ ${t('tool.resultError')}` : t('tool.result')}
               </div>
               <ToolResultBody output={result.output} />
             </>
           )}
-          {!result && <div className="tool-result-label">(无结果 / 未配对)</div>}
+          {!result && <div className="tool-result-label">{t('tool.noResult')}</div>}
         </div>
       )}
     </div>
