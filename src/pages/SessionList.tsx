@@ -413,8 +413,8 @@ export function SessionList({ style }: { style?: CSSProperties }) {
     const activeAgents = [...new Set(activeRuns.map((r) => r.agent))]
     const runningLabel =
       activeAgents.length === 1
-        ? `${labelForAgent(activeAgents[0])} 回答中`
-        : `${activeAgents.length} 个 agent 回答中`
+        ? t('sessions.oneAgentReplying', { agent: labelForAgent(activeAgents[0]) })
+        : t('sessions.nAgentsReplying', { count: activeAgents.length })
     const openContextMenu = (e: ReactMouseEvent) => {
       e.preventDefault()
       if (editing) return
@@ -481,7 +481,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
             <span className="project-session-title" title={s.title}>
               {displayTitle(s.title, 60, locale)}
               {isFreshChild && (
-                <span className="project-session-fresh" title="Fresh review · 有父 room">
+                <span className="project-session-fresh" title={t('sessions.freshReviewChild')}>
                   {' '}↑
                 </span>
               )}
@@ -729,12 +729,18 @@ export function SessionList({ style }: { style?: CSSProperties }) {
 
 type ReviewSourceKind = 'repository' | 'directory' | 'files' | 'document' | 'freeform'
 const DEFAULT_REVIEW_AGENTS: AgentName[] = ['claude', 'codex']
-const REVIEW_KIND_OPTIONS: { value: ReviewSourceKind; label: string; hint: string; placeholder?: string }[] = [
-  { value: 'repository', label: '仓库', hint: '一个 git 项目根目录', placeholder: '/Users/me/project' },
-  { value: 'directory', label: '文件夹', hint: '任意目录', placeholder: '/Users/me/some/folder' },
-  { value: 'files', label: '文件', hint: '一个或多个文件路径(逗号或换行分隔)', placeholder: '/Users/me/a.ts,/Users/me/b.ts' },
-  { value: 'document', label: '文档', hint: '一份设计文档 / 方案 / PRD', placeholder: '/Users/me/docs/design.md' },
-  { value: 'freeform', label: '自由文本', hint: '直接粘贴一段方案让两个 agent 讨论' },
+// label / hint 只存 message key,显示时经 t() 渲染;placeholder 是路径示例,不翻译。
+const REVIEW_KIND_OPTIONS: {
+  value: ReviewSourceKind
+  labelKey: MessageKey
+  hintKey: MessageKey
+  placeholder?: string
+}[] = [
+  { value: 'repository', labelKey: 'newChat.kindRepository', hintKey: 'newChat.kindRepositoryHint', placeholder: '/Users/me/project' },
+  { value: 'directory', labelKey: 'newChat.kindDirectory', hintKey: 'newChat.kindDirectoryHint', placeholder: '/Users/me/some/folder' },
+  { value: 'files', labelKey: 'newChat.kindFiles', hintKey: 'newChat.kindFilesHint', placeholder: '/Users/me/a.ts,/Users/me/b.ts' },
+  { value: 'document', labelKey: 'newChat.kindDocument', hintKey: 'newChat.kindDocumentHint', placeholder: '/Users/me/docs/design.md' },
+  { value: 'freeform', labelKey: 'newChat.kindFreeform', hintKey: 'newChat.kindFreeformHint' },
 ]
 
 function parsePaths(raw: string): string[] {
@@ -755,6 +761,7 @@ function NewConversationDialog({
   onCreateGroup: () => void
   onCreateReviewRoom: (body: CreateReviewRoomBody) => void
 }) {
+  const { t } = useI18n()
   const [mode, setMode] = useState<'review' | 'group'>('review')
   const [kind, setKind] = useState<ReviewSourceKind>('repository')
   const [rawPath, setRawPath] = useState(() => {
@@ -815,8 +822,8 @@ function NewConversationDialog({
     <div className="modal-backdrop" onClick={onCancel}>
       <div className="modal new-conversation-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="modal-title">新对话</span>
-          <button className="modal-close" onClick={onCancel} aria-label="关闭">×</button>
+          <span className="modal-title">{t('newChat.title')}</span>
+          <button className="modal-close" onClick={onCancel} aria-label={t('common.close')}>×</button>
         </div>
         <div className="modal-body">
           <div className="new-conversation-grid">
@@ -834,44 +841,44 @@ function NewConversationDialog({
               onClick={() => setMode('group')}
             >
               <Icon name="users" size={18} />
-              <span>空白群聊</span>
+              <span>{t('newChat.blankGroup')}</span>
             </button>
           </div>
           {mode === 'review' && (
             <>
               <div className="modal-section">
-                <span className="modal-label">来源类型</span>
-                <div className="review-kind-row" role="group" aria-label="来源类型">
+                <span className="modal-label">{t('newChat.sourceKind')}</span>
+                <div className="review-kind-row" role="group" aria-label={t('newChat.sourceKind')}>
                   {REVIEW_KIND_OPTIONS.map((opt) => (
                     <button
                       key={opt.value}
                       type="button"
                       className={`review-kind-item ${kind === opt.value ? 'active' : ''}`}
                       onClick={() => setKind(opt.value)}
-                      title={opt.hint}
+                      title={t(opt.hintKey)}
                       aria-pressed={kind === opt.value}
                     >
-                      {opt.label}
+                      {t(opt.labelKey)}
                     </button>
                   ))}
                 </div>
-                <span className="modal-hint">{activeKind.hint}</span>
+                <span className="modal-hint">{t(activeKind.hintKey)}</span>
               </div>
               {kind === 'freeform' ? (
                 <label className="modal-section">
-                  <span className="modal-label">内容</span>
+                  <span className="modal-label">{t('newChat.content')}</span>
                   <textarea
                     className="modal-textarea"
                     value={freeformText}
                     onChange={(e) => setFreeformText(e.target.value)}
-                    placeholder="粘贴要 review 的方案 / 想法 / 代码片段…"
+                    placeholder={t('newChat.freeformPlaceholder')}
                     rows={5}
                     autoFocus
                   />
                 </label>
               ) : (
                 <label className="modal-section">
-                  <span className="modal-label">{kind === 'files' ? '路径(可多个)' : '路径'}</span>
+                  <span className="modal-label">{kind === 'files' ? t('newChat.pathsMulti') : t('newChat.paths')}</span>
                   {kind === 'files' ? (
                     <textarea
                       className="modal-textarea"
@@ -893,8 +900,8 @@ function NewConversationDialog({
                 </label>
               )}
               <div className="modal-section">
-                <span className="modal-label">参与 agent</span>
-                <div className="review-agents-row" role="group" aria-label="参与 agent">
+                <span className="modal-label">{t('newChat.participants')}</span>
+                <div className="review-agents-row" role="group" aria-label={t('newChat.participants')}>
                   {AGENT_OPTIONS.map((agent) => (
                     <button
                       key={agent.value}
@@ -910,35 +917,35 @@ function NewConversationDialog({
                 </div>
               </div>
               <div className="modal-section">
-                <span className="modal-label">讨论方式</span>
-                <div className="review-kind-row" role="group" aria-label="讨论方式">
+                <span className="modal-label">{t('newChat.discussionMode')}</span>
+                <div className="review-kind-row" role="group" aria-label={t('newChat.discussionMode')}>
                   <button
                     type="button"
                     className={`review-kind-item ${discussion === 'parallel' ? 'active' : ''}`}
                     onClick={() => setDiscussion('parallel')}
                     aria-pressed={discussion === 'parallel'}
-                    title="所有 agent 同时独立 review"
+                    title={t('newChat.parallelHint')}
                   >
-                    并行
+                    {t('newChat.parallel')}
                   </button>
                   <button
                     type="button"
                     className={`review-kind-item ${discussion === 'serial' ? 'active' : ''}`}
                     onClick={() => setDiscussion('serial')}
                     aria-pressed={discussion === 'serial'}
-                    title="按顺序接力,后一个回应前一个"
+                    title={t('newChat.serialHint')}
                   >
-                    接力
+                    {t('newChat.serial')}
                   </button>
                 </div>
               </div>
               <label className="modal-section">
-                <span className="modal-label">目标(可选)</span>
+                <span className="modal-label">{t('newChat.goal')}</span>
                 <textarea
                   className="modal-textarea"
                   value={goal}
                   onChange={(e) => setGoal(e.target.value)}
-                  placeholder="让 Claude 和 Codex 讨论这个方案,指出风险和下一步。"
+                  placeholder={t('newChat.goalPlaceholder')}
                   rows={2}
                 />
               </label>
@@ -946,13 +953,13 @@ function NewConversationDialog({
           )}
         </div>
         <div className="modal-actions">
-          <button className="modal-btn" onClick={onCancel} disabled={busy}>取消</button>
+          <button className="modal-btn" onClick={onCancel} disabled={busy}>{t('common.cancel')}</button>
           <button
             className="modal-btn primary"
             onClick={submit}
             disabled={busy || !canSubmit}
           >
-            创建
+            {t('newChat.create')}
           </button>
         </div>
       </div>

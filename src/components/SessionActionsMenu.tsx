@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Icon } from './Icon'
 import { nativeAgentForSource } from '../lib/agents'
+import { useI18n } from '../lib/i18n'
 import {
   createHandoff,
   createReviewRoom,
@@ -43,6 +44,7 @@ function sourceRefFor(source: string, sessionId: string, isGroup: boolean): Hand
 
 export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
   const navigate = useNavigate()
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<BusyKind>(null)
   const [error, setError] = useState<string | null>(null)
@@ -69,7 +71,7 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
       setOpen(false)
       try {
         if (kind === 'to-group') {
-          if (isGroup) throw new Error('已经是群聊')
+          if (isGroup) throw new Error(t('actions.alreadyGroup'))
           const scope = opts?.groupScope ?? 'all'
           const includeRecentEvents = scope === 'all' ? 'all' : scope * 2
           const { groupThreadId } = await groupFromSession({ source, sessionId, includeRecentEvents })
@@ -87,11 +89,11 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
               }
           const created = await createReviewRoom({
             source: reviewSource,
-            goal: '和 Claude、Codex 一起 review 本次会话:指出风险、分歧和下一步。',
+            goal: t('actions.reviewRoomGoal'),
             participants: ['claude', 'codex'],
             startReview: true,
           })
-          if (created.startError) setError(`Review Room 已创建,但自动启动失败:${created.startError}`)
+          if (created.startError) setError(t('actions.reviewRoomStartFailed', { error: created.startError }))
           navigate(`/cockpit/${encodeURIComponent(created.groupThreadId)}`)
           return
         }
@@ -130,15 +132,15 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
         className="head-icon-btn"
         onClick={() => setOpen((v) => !v)}
         disabled={busy != null}
-        title="更多动作"
-        aria-label="更多动作"
+        title={t('actions.more')}
+        aria-label={t('actions.more')}
       >
         <Icon name="more-horizontal" size={13} />
       </button>
       {open && (
         <div className="session-actions-menu" role="menu">
           <button role="menuitem" onClick={() => runAction('review-room')}>
-            创建 Review Room
+            {t('actions.createReviewRoom')}
           </button>
           <button
             role="menuitem"
@@ -148,33 +150,33 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
               setGroupChooserOpen(true)
             }}
           >
-            {isGroup ? '已是群聊' : '转为群聊…'}
+            {isGroup ? t('actions.alreadyGroup') : t('actions.toGroup')}
           </button>
           {showCodexContinue && (
             <>
               <button role="menuitem" onClick={() => runAction('codex')}>
-                和 Codex 继续
+                {t('actions.continueCodex')}
               </button>
               <button role="menuitem" onClick={() => runAction('codex-app-server')}>
-                和 Codex 继续(深集成)
+                {t('actions.continueCodexDeep')}
               </button>
             </>
           )}
           {showClaudeContinue && (
             <button role="menuitem" onClick={() => runAction('claude')}>
-              和 Claude 继续
+              {t('actions.continueClaude')}
             </button>
           )}
           <button role="menuitem" onClick={() => runAction('handoff')}>
-            生成 Handoff
+            {t('actions.createHandoff')}
           </button>
         </div>
       )}
-      {busy && <span className="session-actions-busy">处理中…</span>}
+      {busy && <span className="session-actions-busy">{t('actions.busy')}</span>}
       {error && (
         <div className="banner warn session-actions-banner" role="alert">
           {error}
-          <button className="banner-close" onClick={() => setError(null)} aria-label="关闭">
+          <button className="banner-close" onClick={() => setError(null)} aria-label={t('common.close')}>
             ×
           </button>
         </div>
@@ -206,6 +208,7 @@ function GroupChooserDialog({
   onCancel: () => void
   onConfirm: (scope: GroupScope) => void
 }) {
+  const { t } = useI18n()
   const [mode, setMode] = useState<'all' | 'recent'>('all')
   const [turns, setTurns] = useState(10)
 
@@ -219,12 +222,12 @@ function GroupChooserDialog({
     <div className="modal-backdrop" onClick={onCancel}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="modal-title">转为群聊</span>
-          <button className="modal-close" onClick={onCancel} aria-label="关闭">×</button>
+          <span className="modal-title">{t('group.convertTitle')}</span>
+          <button className="modal-close" onClick={onCancel} aria-label={t('common.close')}>×</button>
         </div>
         <div className="modal-body">
           <p className="modal-hint">
-            将本会话导入新群聊。只带 user / assistant 文本消息,不搬 tool_call / tool_result(工具事件绑定具体 agent,跨 agent 会被误读)。要完整 trace 请用「生成 Handoff」。
+            {t('group.convertHint')}
           </p>
           <label
             style={{
@@ -241,7 +244,7 @@ function GroupChooserDialog({
               checked={mode === 'all'}
               onChange={() => setMode('all')}
             />
-            <span>全部对话(推荐)</span>
+            <span>{t('group.allMessages')}</span>
           </label>
           <label
             style={{
@@ -258,7 +261,7 @@ function GroupChooserDialog({
               checked={mode === 'recent'}
               onChange={() => setMode('recent')}
             />
-            <span>最近</span>
+            <span>{t('group.recent')}</span>
             <input
               type="number"
               min={1}
@@ -280,11 +283,11 @@ function GroupChooserDialog({
                 fontSize: 12,
               }}
             />
-            <span>轮对话</span>
+            <span>{t('group.turnsSuffix')}</span>
           </label>
           <div className="modal-actions">
-            <button className="modal-btn" onClick={onCancel}>取消</button>
-            <button className="modal-btn primary" onClick={submit}>确定</button>
+            <button className="modal-btn" onClick={onCancel}>{t('common.cancel')}</button>
+            <button className="modal-btn primary" onClick={submit}>{t('common.confirm')}</button>
           </div>
         </div>
       </div>
@@ -293,6 +296,7 @@ function GroupChooserDialog({
 }
 
 function NativeLinkRow({ handoffId, link }: { handoffId: string; link: NativeLinkDTO }) {
+  const { t } = useI18n()
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [level, setLevel] = useState(link.linkLevel)
@@ -318,12 +322,12 @@ function NativeLinkRow({ handoffId, link }: { handoffId: string; link: NativeLin
       {link.nativeThreadId && <code className="modal-value">{link.nativeThreadId}</code>}
       {link.url && (
         <a className="modal-btn" href={link.url}>
-          打开
+          {t('handoff.open')}
         </a>
       )}
       {canMirror && (
         <button className="modal-btn" onClick={runMirror} disabled={busy}>
-          {busy ? '同步中…' : level === 'mirrored' ? '重新同步' : '同步 (Phase 4)'}
+          {busy ? t('handoff.syncing') : level === 'mirrored' ? t('handoff.resync') : t('handoff.sync')}
         </button>
       )}
       {msg && <span className="modal-hint">{msg}</span>}
@@ -340,6 +344,7 @@ function HandoffResultDialog({
   cwd?: string | null
   onClose: () => void
 }) {
+  const { t } = useI18n()
   const [copied, setCopied] = useState(false)
   const [freshness, setFreshness] = useState<HandoffDetailDTO['freshness'] | null>(null)
   const [checking, setChecking] = useState(false)
@@ -383,7 +388,12 @@ function HandoffResultDialog({
   const overBudget = result.nativeLink?.status === 'failed'
   const deeplinkUrl = result.nativeLink?.provider === 'codex' ? result.nativeLink.url : undefined
   const manifest = result.manifest
-  const title = result.provider === 'codex' ? '和 Codex 继续' : result.provider === 'claude' ? '和 Claude 继续' : '生成 Handoff'
+  const title =
+    result.provider === 'codex'
+      ? t('actions.continueCodex')
+      : result.provider === 'claude'
+      ? t('actions.continueClaude')
+      : t('actions.createHandoff')
 
   const copy = async (text: string) => {
     try {
@@ -400,7 +410,7 @@ function HandoffResultDialog({
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span className="modal-title">{title}</span>
-          <button className="modal-close" onClick={onClose} aria-label="关闭">×</button>
+          <button className="modal-close" onClick={onClose} aria-label={t('common.close')}>×</button>
         </div>
         <div className="modal-body">
           <div className="modal-row">
@@ -411,21 +421,21 @@ function HandoffResultDialog({
             <span className="modal-label">Freshness</span>
             <div className="modal-freshness">
               <span className={`freshness-badge freshness-${freshness?.status ?? 'unset'}`}>
-                {freshness?.status ?? '未检查'}
+                {freshness?.status ?? t('handoff.notChecked')}
               </span>
               {freshness?.reason && <span className="modal-hint">{freshness.reason}</span>}
               <button className="modal-btn" onClick={checkFreshness} disabled={checking}>
-                {checking ? '检查中…' : '重新检查'}
+                {checking ? t('handoff.checking') : t('handoff.recheck')}
               </button>
               <button className="modal-btn" onClick={doRefresh} disabled={refreshing}>
-                {refreshing ? '刷新中…' : '刷新 Handoff'}
+                {refreshing ? t('handoff.refreshing') : t('handoff.refresh')}
               </button>
-              <button className="modal-btn" onClick={reveal}>在 Finder 中打开</button>
+              <button className="modal-btn" onClick={reveal}>{t('handoff.revealFinder')}</button>
             </div>
           </div>
           {refreshedTo && (
             <div className="modal-hint">
-              新 Handoff:<code>{refreshedTo}</code>(旧 handoff / native link 保留)
+              {t('handoff.newHandoff')}<code>{refreshedTo}</code>{t('handoff.newHandoffKept')}
             </div>
           )}
           {manifest.stats && (
@@ -471,14 +481,14 @@ function HandoffResultDialog({
                 <code className="modal-value">{result.nativeLink.nativeThreadId}</code>
               </div>
               <p className="modal-hint">
-                已通过 codex app-server 创建 thread 并发送 handoff prompt。Cockpit 将在后台流式接收本轮事件。
+                {t('handoff.appServerCreated')}
               </p>
               <div className="modal-actions">
                 {result.nativeLink.url && (
-                  <a className="modal-btn primary" href={result.nativeLink.url}>在 Codex Desktop 打开</a>
+                  <a className="modal-btn primary" href={result.nativeLink.url}>{t('handoff.openInCodexDesktop')}</a>
                 )}
                 {result.nativeLink.url && (
-                  <button className="modal-btn" onClick={() => copy(result.nativeLink!.url!)}>复制 URL</button>
+                  <button className="modal-btn" onClick={() => copy(result.nativeLink!.url!)}>{t('handoff.copyUrl')}</button>
                 )}
               </div>
             </div>
@@ -486,21 +496,21 @@ function HandoffResultDialog({
 
           {result.provider === 'codex' && deeplinkUrl && result.nativeLink?.method === 'deeplink' && !overBudget && (
             <div className="modal-section">
-              <p className="modal-hint">已尝试在 Codex Desktop 中打开新会话。若未响应,可手动打开:</p>
+              <p className="modal-hint">{t('handoff.deeplinkTried')}</p>
               <div className="modal-actions">
-                <a className="modal-btn primary" href={deeplinkUrl}>打开 Codex</a>
-                <button className="modal-btn" onClick={() => copy(deeplinkUrl)}>复制 URL</button>
+                <a className="modal-btn primary" href={deeplinkUrl}>{t('handoff.openCodex')}</a>
+                <button className="modal-btn" onClick={() => copy(deeplinkUrl)}>{t('handoff.copyUrl')}</button>
               </div>
             </div>
           )}
 
           {result.provider === 'codex' && overBudget && (
             <div className="modal-section">
-              <p className="modal-hint">Prompt 超过 deeplink 长度限制。请复制下面 prompt 手动发起:</p>
+              <p className="modal-hint">{t('handoff.overBudget')}</p>
               <textarea className="modal-textarea" readOnly value={promptText} />
               <div className="modal-actions">
                 <button className="modal-btn primary" onClick={() => copy(promptText)}>
-                  {copied ? '已复制' : '复制 Prompt'}
+                  {copied ? t('handoff.copied') : t('handoff.copyPrompt')}
                 </button>
               </div>
             </div>
@@ -508,11 +518,11 @@ function HandoffResultDialog({
 
           {result.provider === 'claude' && (
             <div className="modal-section">
-              <p className="modal-hint">Claude 端默认走手动 prompt。复制发送即可:</p>
+              <p className="modal-hint">{t('handoff.claudeManual')}</p>
               <textarea className="modal-textarea" readOnly value={promptText} />
               <div className="modal-actions">
                 <button className="modal-btn primary" onClick={() => copy(promptText)}>
-                  {copied ? '已复制' : '复制 Prompt'}
+                  {copied ? t('handoff.copied') : t('handoff.copyPrompt')}
                 </button>
               </div>
             </div>
@@ -520,13 +530,13 @@ function HandoffResultDialog({
 
           {!result.provider && (
             <div className="modal-section">
-              <p className="modal-hint">Handoff 已生成。可继续发起 Codex / Claude 或直接打开目录。</p>
+              <p className="modal-hint">{t('handoff.readyHint')}</p>
               <div className="modal-actions">
                 <button className="modal-btn" onClick={() => copy(manifest.files.entries.codex)}>
-                  复制 Codex Entry 路径
+                  {t('handoff.copyCodexEntry')}
                 </button>
                 <button className="modal-btn" onClick={() => copy(manifest.files.entries.claude)}>
-                  复制 Claude Entry 路径
+                  {t('handoff.copyClaudeEntry')}
                 </button>
               </div>
             </div>

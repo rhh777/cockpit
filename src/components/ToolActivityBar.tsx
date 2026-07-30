@@ -1,5 +1,6 @@
 import type { ToolActivity, FilterKind } from '../lib/timeline'
 import { Icon } from './Icon'
+import { useI18n } from '../lib/i18n'
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -27,20 +28,21 @@ export function ToolActivityBar({
   viewMode?: 'narrative' | 'detail'
   onViewMode?: (m: 'narrative' | 'detail') => void
 }) {
+  const { t } = useI18n()
   return (
     <div className="activity-bar">
       {onViewMode && (
-        <div className="view-mode-toggle" role="tablist" aria-label="视图">
+        <div className="view-mode-toggle" role="tablist" aria-label={t('toolbar.viewMode')}>
           <button
             className={`view-mode-item ${viewMode === 'narrative' ? 'active' : ''}`}
             onClick={() => onViewMode('narrative')}
-            title="每 turn 一行,快速浏览"
-          >叙事</button>
+            title={t('toolbar.narrativeHint')}
+          >{t('toolbar.narrative')}</button>
           <button
             className={`view-mode-item ${viewMode !== 'narrative' ? 'active' : ''}`}
             onClick={() => onViewMode('detail')}
-            title="完整事件流"
-          >详细</button>
+            title={t('toolbar.detailHint')}
+          >{t('toolbar.detail')}</button>
         </div>
       )}
       <div className="filter-tabs">
@@ -48,13 +50,13 @@ export function ToolActivityBar({
           className={`tab-item ${filter === 'all' ? 'active' : ''}`}
           onClick={() => onFilter('all')}
         >
-          全部
+          {t('toolbar.all')}
         </button>
         <button
           className={`tab-item ${filter === 'tools' ? 'active' : ''}`}
           onClick={() => onFilter('tools')}
         >
-          工具
+          {t('toolbar.tools')}
           {activity.callCount > 0 && (
             <span className="tab-badge">{activity.callCount}</span>
           )}
@@ -64,7 +66,7 @@ export function ToolActivityBar({
             className={`tab-item ${filter === 'errors' ? 'active' : ''}`}
             onClick={() => onFilter('errors')}
           >
-            错误
+            {t('toolbar.errors')}
             <span className="tab-badge danger">{activity.errorCount}</span>
           </button>
         )}
@@ -80,7 +82,10 @@ export function ToolActivityBar({
         {(activity.inputTokens > 0 || activity.outputTokens > 0) && (
           <div
             className="files-indicator"
-            title={`累计 tokens: ↑${activity.inputTokens.toLocaleString()} 输入 / ↓${activity.outputTokens.toLocaleString()} 输出`}
+            title={t('toolbar.tokens', {
+              input: activity.inputTokens.toLocaleString(),
+              output: activity.outputTokens.toLocaleString(),
+            })}
           >
             <Icon name="coin" size={12} /> <span>{formatTokens(activity.inputTokens + activity.outputTokens)}</span>
           </div>
@@ -90,14 +95,14 @@ export function ToolActivityBar({
             <button
               className="files-indicator files-indicator-btn"
               onClick={onShowFiles}
-              title="查看文件热力(点击展开)"
+              title={t('toolbar.fileHeat')}
             >
               <Icon name="folder" size={12} /> <span>{activity.files.length}</span>
             </button>
           ) : (
             <div
               className="files-indicator"
-              title={`涉及文件:\n${activity.files.join('\n')}`}
+              title={`${t('toolbar.filesInvolved')}\n${activity.files.join('\n')}`}
             >
               <Icon name="folder" size={12} /> <span>{activity.files.length}</span>
             </div>
@@ -107,7 +112,7 @@ export function ToolActivityBar({
           <span className="search-icon"><Icon name="search" size={12} /></span>
           <input
             className="search-input-field"
-            placeholder="过滤关键词..."
+            placeholder={t('toolbar.filterPlaceholder')}
             value={keyword}
             onChange={(e) => onKeyword(e.target.value)}
           />

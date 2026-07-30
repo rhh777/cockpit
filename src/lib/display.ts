@@ -73,6 +73,8 @@ export function displayTitle(raw: string, maxLen = 60, locale?: ResolvedLocale):
     if (idx >= 0) {
       const tail = text.slice(idx).replace(/^#\s*Current Request\b.*\n?/, '')
       const lines = tail.split('\n').map((l) => l.trim()).filter(Boolean)
+      // 这行中文是 serialize.ts 写进 agent prompt 的固定前缀(不是 UI 文案),跳过它取真实请求。
+      // 不要跟着界面语言翻译:一改就和 server 侧 prompt 以及已落盘的历史对不上。
       const real = lines.find((l) => !/^请以\s+\S+\s+的身份/.test(l)) ?? lines[0] ?? ''
       const cleaned = stripMarkup(real)
       if (cleaned) return cleaned.slice(0, maxLen)

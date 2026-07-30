@@ -28,59 +28,36 @@ import {
 } from '../lib/preferences'
 import { useI18n, type LocalePreference } from '../lib/i18n'
 
+// 只列具体模型;「CLI 默认」那一项在渲染时用 t('common.cliDefault') 前置,不在这里写死文案。
 const MODEL_OPTIONS: Record<AgentName, { value: string; label: string }[]> = {
   claude: [
-    { value: '', label: 'CLI 默认' },
     { value: 'claude-opus-4-8', label: 'Opus 4.8' },
     { value: 'claude-opus-4-7', label: 'Opus 4.7' },
     { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
     { value: 'claude-haiku-4-5', label: 'Haiku 4.5' },
   ],
   codex: [
-    { value: '', label: 'CLI 默认' },
     { value: 'gpt-5.5', label: 'GPT-5.5' },
     { value: 'gpt-5.4-mini', label: 'GPT-5.4-Mini' },
   ],
   opencode: [
-    { value: '', label: 'CLI 默认' },
     { value: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet' },
     { value: 'openai/gpt-5.5', label: 'GPT-5.5' },
     { value: 'qwen/qwen3-coder-plus', label: 'Qwen Coder' },
   ],
   cursor: [
-    { value: '', label: 'CLI 默认' },
     { value: 'auto', label: 'Auto' },
     { value: 'gpt-5.5', label: 'GPT-5.5' },
     { value: 'claude-sonnet-4-6', label: 'Claude Sonnet' },
   ],
 }
 
-const EFFORT_OPTIONS: Record<AgentName, { value: string; label: string }[]> = {
-  claude: [
-    { value: '', label: 'CLI 默认' },
-    { value: 'low', label: '低' },
-    { value: 'medium', label: '中' },
-    { value: 'high', label: '高' },
-    { value: 'xhigh', label: '超高' },
-    { value: 'max', label: '极致' },
-  ],
-  codex: [
-    { value: '', label: 'CLI 默认' },
-    { value: 'low', label: '低' },
-    { value: 'medium', label: '中' },
-    { value: 'high', label: '高' },
-    { value: 'xhigh', label: '超高' },
-  ],
-  opencode: [
-    { value: '', label: 'CLI 默认' },
-    { value: 'low', label: '低' },
-    { value: 'medium', label: '中' },
-    { value: 'high', label: '高' },
-    { value: 'max', label: '极致' },
-  ],
-  cursor: [
-    { value: '', label: 'CLI 默认' },
-  ],
+// effort 档位只存值;显示文案渲染时从 i18n 取(effortLabels),不在这里写死。
+const EFFORT_VALUES: Record<AgentName, string[]> = {
+  claude: ['', 'low', 'medium', 'high', 'xhigh', 'max'],
+  codex: ['', 'low', 'medium', 'high', 'xhigh'],
+  opencode: ['', 'low', 'medium', 'high', 'max'],
+  cursor: [''],
 }
 
 function SelectRow({
@@ -213,17 +190,12 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const selectedStatus = diagnostics?.agents.find((a) => a.name === defaultAgent)
   const baseModelOptions =
     defaultAgent === 'opencode' && openCodeModels?.length
-      ? [
-          { value: '', label: 'CLI 默认' },
-          ...openCodeModels.map((model) => ({
-            value: model.value,
-            label: model.hint ? `${model.label} · ${model.hint}` : model.label,
-          })),
-        ]
+      ? openCodeModels.map((model) => ({
+          value: model.value,
+          label: model.hint ? `${model.label} · ${model.hint}` : model.label,
+        }))
       : MODEL_OPTIONS[defaultAgent]
-  const modelOptions = baseModelOptions.map((option) =>
-    option.value ? option : { ...option, label: t('common.cliDefault') },
-  )
+  const modelOptions = [{ value: '', label: t('common.cliDefault') }, ...baseModelOptions]
   const effortLabels: Record<string, string> = {
     '': t('common.cliDefault'),
     low: t('common.low'),
@@ -232,9 +204,9 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
     xhigh: t('common.xhigh'),
     max: t('common.max'),
   }
-  const effortOptions = EFFORT_OPTIONS[defaultAgent].map((option) => ({
-    ...option,
-    label: effortLabels[option.value] ?? option.label,
+  const effortOptions = EFFORT_VALUES[defaultAgent].map((value) => ({
+    value,
+    label: effortLabels[value] ?? value,
   }))
   const agentPaths =
     defaultAgent === 'claude'

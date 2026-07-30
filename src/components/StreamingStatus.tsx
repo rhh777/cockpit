@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react'
 import type { AgentName, EventEnvelope } from '../lib/types'
 import { labelForAgent } from '../lib/agents'
 import type { RunPhase } from '../lib/sse'
+import { useI18n, type MessageKey } from '../lib/i18n'
+
+type Translate = (key: MessageKey, values?: Record<string, string | number>) => string
 
 export interface ActiveStream {
   clientId: string
@@ -13,31 +16,33 @@ export interface ActiveStream {
   phase?: RunPhase
 }
 
-const PHASE_LABELS: Record<RunPhase, { icon: string; text: string }> = {
-  queued: { icon: '⏳', text: '等待开始…' },
-  warming_runtime: { icon: '⏳', text: '正在预热运行时…' },
-  runtime_ready: { icon: '✓', text: '运行时已就绪…' },
-  building_context: { icon: '🧩', text: '正在整理上下文…' },
-  starting_turn: { icon: '⏳', text: '正在启动本轮回复…' },
-  streaming: { icon: '✍️', text: '正在生成回复…' },
-  waiting_approval: { icon: '⏸', text: '等待操作审批…' },
-  completed: { icon: '✓', text: '已完成' },
-  failed: { icon: '!', text: '运行失败' },
+// icon 固定,文案走 i18n:只存 message key,渲染时用 t() 取。
+const PHASE_LABELS: Record<RunPhase, { icon: string; key: MessageKey }> = {
+  queued: { icon: '⏳', key: 'phase.queued' },
+  warming_runtime: { icon: '⏳', key: 'phase.warmingRuntime' },
+  runtime_ready: { icon: '✓', key: 'phase.runtimeReady' },
+  building_context: { icon: '🧩', key: 'phase.buildingContext' },
+  starting_turn: { icon: '⏳', key: 'phase.startingTurn' },
+  streaming: { icon: '✍️', key: 'phase.streaming' },
+  waiting_approval: { icon: '⏸', key: 'phase.waitingApproval' },
+  completed: { icon: '✓', key: 'phase.completed' },
+  failed: { icon: '!', key: 'phase.failed' },
 }
 
 function latestActivityForTurn(
   events: EventEnvelope[],
   turnId: string | undefined,
+  t: Translate,
 ): { icon: string; text: string } | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const env = events[i]
     if (turnId && env.turnId !== turnId) continue
     if (!turnId && env.turnId) continue
     const ev = env.event
-    if (ev.type === 'thinking') return { icon: '💭', text: '正在思考…' }
-    if (ev.type === 'tool_use') return { icon: '🔧', text: `调用工具 ${ev.name}…` }
-    if (ev.type === 'tool_result') return { icon: '✓', text: '工具返回,继续处理…' }
-    if (ev.type === 'assistant_text') return { icon: '✍️', text: '正在生成回复…' }
+    if (ev.type === 'thinking') return { icon: '💭', text: t('activity.thinking') }
+    if (ev.type === 'tool_use') return { icon: '🔧', text: t('activity.toolUse', { name: ev.name }) }
+    if (ev.type === 'tool_result') return { icon: '✓', text: t('activity.toolResult') }
+    if (ev.type === 'assistant_text') return { icon: '✍️', text: t('activity.generating') }
     if (ev.type === 'user_text') return null
   }
   return null
@@ -50,6 +55,7 @@ export function StreamingStatus({
   streams: ActiveStream[]
   events: EventEnvelope[]
 }) {
+  const { t } = useI18n()
   // 每 200ms 重渲一次驱动 elapsed 数字。
   const [, setTick] = useState(0)
   useEffect(() => {
@@ -63,9 +69,9 @@ export function StreamingStatus({
   return (
     <div className="streaming-status-list">
       {streams.map((s) => {
-        const act = latestActivityForTurn(events, s.turnId)
+        const act = latestActivityForTurn(events, s.turnId, t)
         const phase = s.phase ? PHASE_LABELS[s.phase] : null
-        const headline = act ? act.text : phase?.text ?? '正在连接 agent…'
+        const headline = act ? act.text : phase ? t(phase.key) : t('activity.connecting')
         const icon = act?.icon ?? phase?.icon ?? '⏳'
         const agentLabel = labelForAgent(s.agent)
         const elapsed = Math.max(0, Math.floor((Date.now() - s.startedAt) / 1000))
