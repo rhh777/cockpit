@@ -248,6 +248,17 @@ export function EventItem({
           </div>
         )
       }
+      // 接力讨论里 agent 漏了末尾协议块,cockpit 补问了一次(docs/13)。
+      // 这条要可见:否则用户会看到一次莫名的额外短回复。
+      if (ev.key === 'serial_protocol_repair') {
+        const v = (ev.value ?? {}) as { agent?: string; reason?: string }
+        return (
+          <div className="serial-turn-status failed" title={`原因:${v.reason ?? 'protocol-missing'}`}>
+            <Icon name="alert-triangle" size={13} />
+            <span>缺少接力协议块,已请 {v.agent ? agentLabel(v.agent) : 'agent'} 补一次</span>
+          </div>
+        )
+      }
       // 其它噪音 meta:不渲染,让 timeline 留给真正有信息量的事件。
       if (META_HIDDEN_KEYS.has(ev.key)) return null
       return (

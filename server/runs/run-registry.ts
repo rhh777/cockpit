@@ -5,7 +5,7 @@ import { agentForNativeSource, resolveAgent } from '../adapters/registry'
 import { filterToolResult, redactSecrets } from '../adapters/sensitive'
 import { buildGroupContextEvents } from '../adapters/serialize'
 import { renderAttachmentLines } from '../util/attachments'
-import { parseSerialDirective, selectNextAgentFromDirective } from '../util/serial-directive'
+import { parseSerialDirective, selectNextAgentFromDirective, type SerialDirective } from '../util/serial-directive'
 import { projectContextEvents } from '../adapters/context-projector'
 import { threadContextStore } from '../store/thread-context-store'
 import { scheduleSummaryRefresh } from '../adapters/summary-refresh'
@@ -627,6 +627,109 @@ class RunRegistry {
     return parts.join('\n').trim()
   }
 
+  /**
+   * docs/13 §调度算法 / §解析优先级 6:agent 忘写末尾协议块时,先向**同一 agent** 补问一次,
+   * 只要那两行协议、不要重答;仍缺失才以 `protocol-missing` 结束。
+   *
+   * 少了这一步,agent 一次格式失误就会终止整场接力讨论 —— 这是接力模式最常见的失败模式。
+   *
+   * 约束:
+   * - 每个 step 只补问一次(由调用点保证,helper 自身不重试)。
+   * - **不占用发言预算**:`step` 与 `completedSteps` 都不推进。补协议不是一次发言。
+   * - 强制 `useTools: false`:只要两行协议,不该再去跑工具。
+   * - 独立 runId + `serial_protocol_repair` meta,timeline 能看出这是补协议而非正常发言。
+   */
+  private async requestProtocolRepairOnce(
+    input: GroupTurnStartInput,
+    cwd: string | null,
+    summary: string,
+    groupTurnId: string,
+    baseEventSeq: number,
+    agentName: AgentName,
+    previousAgent: AgentName | undefined,
+    step: number,
+    failure: SerialDirective,
+  ): Promise<
+    | { kind: 'repaired'; directive: SerialDirective }
+    | { kind: 'still-missing'; error?: string }
+    | { kind: 'agent-failed'; message?: string }
+    | { kind: 'aborted' }
+  > {
+    const serial = input.serial
+    if (!serial) return { kind: 'still-missing', error: failure.error }
+    const active = this.getGroupTurn(input.id, groupTurnId)
+    if (!active || active.aborted) return { kind: 'aborted' }
+
+    const handle = this.makeGroupHandle(this.createGroupRunRecord(input, groupTurnId, agentName, new Date().toISOString()))
+    await runStore.append(handle.record)
+    active.runIds.push(handle.record.runId)
+    this.runs.set(handle.record.runId, handle)
+    handle.write({
+      kind: 'meta',
+      groupTurnId,
+      baseEventSeq,
+      runs: [{ agent: agentName, runId: handle.record.runId }],
+    })
+    emitPhase(handle, 'queued')
+
+    const repairMeta = wrapGroup(
+      {
+        type: 'meta',
+        key: 'serial_protocol_repair',
+        value: { groupTurnId, step, agent: agentName, reason: failure.error ?? 'protocol-missing' },
+        ts: new Date().toISOString(),
+      },
+      groupTurnId,
+      handle.record.runId,
+    )
+    await groupThreadStore.appendEvent(input.id, repairMeta)
+    handle.write({ kind: 'event', groupTurnId, runId: handle.record.runId, agent: agentName, envelope: repairMeta })
+    // step 不变:进度条不该因为补协议而前进。
+    handle.write({ kind: 'serial_step', groupTurnId, step, maxSteps: serial.maxSteps, agent: agentName, runId: handle.record.runId })
+
+    // 全量 transcript(不 slice):agent 需要看到自己刚才那条缺协议的回复。
+    const transcript = await groupThreadStore.readTranscript(input.id)
+    await this.executeGroupMember(
+      handle,
+      {
+        ...input,
+        text: this.protocolRepairRequest(serial.participants, agentName, failure),
+        useTools: false,
+        serialContext: { step, previousAgent },
+      },
+      cwd,
+      transcript,
+      summary,
+      baseEventSeq,
+    )
+
+    if (handle.record.status === 'aborted') return { kind: 'aborted' }
+    if (handle.record.status !== 'completed') return { kind: 'agent-failed', message: handle.record.error }
+    const activeAfter = this.getGroupTurn(input.id, groupTurnId)
+    if (!activeAfter || activeAfter.aborted) return { kind: 'aborted' }
+
+    const repaired = parseSerialDirective(
+      this.latestAssistantText(await groupThreadStore.readTranscript(input.id), handle.record.runId),
+    )
+    return repaired.ok ? { kind: 'repaired', directive: repaired } : { kind: 'still-missing', error: repaired.error }
+  }
+
+  private protocolRepairRequest(participants: AgentName[], current: AgentName, failure: SerialDirective): string {
+    // 合法接棒目标不含自己(selectNextAgentFromDirective 会拒 next === current),外加 @user 终点。
+    const targets = [...participants.filter((a) => a !== current).map((a) => `@${a}`), '@user']
+    return [
+      `Your previous message is missing a valid protocol block (${failure.error ?? 'protocol-missing'}).`,
+      'Do not repeat, revise, or extend your analysis — it has already been recorded.',
+      'Reply with exactly these two lines and nothing else:',
+      'Next: <one target>',
+      'Status: needs-review | needs-changes | consensus | blocked',
+      '',
+      `Valid Next targets: ${targets.join(', ')} (exactly one).`,
+      'Use Next: @user together with Status: consensus if the participants have converged,',
+      'or Status: blocked if the discussion needs the user to decide.',
+    ].join('\n')
+  }
+
   private async executeSerialGroupTurn(
     input: GroupTurnStartInput,
     cwd: string | null,
@@ -697,11 +800,35 @@ class RunRegistry {
           break
         }
         const latest = this.latestAssistantText(await groupThreadStore.readTranscript(input.id), handle.record.runId)
-        const directive = parseSerialDirective(latest)
+        let directive = parseSerialDirective(latest)
         if (!directive.ok) {
-          stopReason = 'protocol-missing'
-          stopMessage = directive.error
-          break
+          // docs/13 §解析优先级 6:先补问一次协议,再决定是否终止。补问不占发言预算。
+          const repair = await this.requestProtocolRepairOnce(
+            input,
+            cwd,
+            summary,
+            groupTurnId,
+            baseEventSeq,
+            currentAgent,
+            previousAgent,
+            step,
+            directive,
+          )
+          if (repair.kind === 'aborted') {
+            stopReason = 'aborted'
+            break
+          }
+          if (repair.kind === 'agent-failed') {
+            stopReason = 'agent-failed'
+            stopMessage = repair.message
+            break
+          }
+          if (repair.kind === 'still-missing') {
+            stopReason = 'protocol-missing'
+            stopMessage = repair.error ?? directive.error
+            break
+          }
+          directive = repair.directive
         }
         if (serial.stopOnConsensus && directive.status === 'consensus') {
           stopReason = 'consensus'

@@ -386,7 +386,7 @@ Status: consensus
 3. 如果存在 `Status: consensus`,以 `consensus` 结束;此时 `Next` 必须是 `@user` 或为空。
 4. 如果存在 `Next: @agent`,按该 agent 接棒。
 5. 如果存在 `Next: @user` 或 `Status: blocked`,结束并通知用户。
-6. 如果缺少 `Next` 或 `Status`,追加一次协议修复请求给同一 agent,要求只补协议块;仍缺失则 `protocol-missing` 结束。
+6. 如果缺少 `Next` 或 `Status`,追加一次协议修复请求给同一 agent,要求只补协议块;仍缺失则 `protocol-missing` 结束。已实现,细节见 §实现进度「协议修复实现记录」。
 
 不要复用普通 `parseMentions` 解析 `Next:` 行。普通 parser 只认识 agent mention,不认识 `@user`;而接力协议需要区分 `@user`、非法 agent、多个 agent 和无目标。
 
@@ -509,7 +509,7 @@ Status: needs-review | needs-changes | consensus | blocked
 | 1 | `serial_step_start` / `serial_turn_status` / `user_notification` meta | 已完成 | `finishSerialTurn` |
 | 1 | group turn 级 stream(step 1..N 都发 `serial_step`) | 已完成 | `GET /api/group-threads/:id/turns/:groupTurnId/stream`,前端只有一个 runId 来源 |
 | 1 | `parseSerialDirective` / `selectNextAgentFromDirective` 单测 | 已完成 | `server/util/serial-directive.test.ts`(4 例) |
-| 1 | **协议修复请求(`requestProtocolRepairOnce`)** | **未开始** | §调度算法要求缺 `Next`/`Status` 时先向同一 agent 补问一次、仍缺失才 `protocol-missing`。当前 `run-registry.ts` 解析失败即终止整场讨论 —— agent 忘写结尾协议块等于讨论直接死掉,是接力模式最常见的失败模式 |
+| 1 | 协议修复请求(`requestProtocolRepairOnce`) | 已完成 | 见下方「协议修复实现记录」 |
 | 2 | composer 并行 / 接力 segmented control | 已完成 | `FollowupComposer` |
 | 2 | 最大发言数输入 | 已完成 | `serialMaxSteps`,默认 6 |
 | 2 | **首位 agent 与 participants 子集选择** | **未开始** | 首位取 targets 首个,participants 不能临时取消某些成员 |
@@ -519,9 +519,33 @@ Status: needs-review | needs-changes | consensus | blocked
 | 3 | 更好的 `@user` 收口文本 | 部分完成 | 当前是固定模板「接力讨论已结束: {reason}」,未按分歧/共识分别生成 |
 | 3 | 从文档附件创建接力模板 / 手动插队 / 分歧摘要 | 未开始 | 设计里已标为可选项 |
 
-测试覆盖现状:只有 `serial-directive.test.ts` 覆盖纯解析函数。下方「测试计划」里依赖
-orchestrator 的用例(`Next: @codex` 真的启动 Codex、`consensus` 后不再启动、步间取消不启动下一步、
-`max-steps` 终止、正文散文里的 `@codex` 不误触发)**尚未落地**。
+### 协议修复实现记录(2026-07-30)
+
+`RunRegistry.requestProtocolRepairOnce`(`server/runs/run-registry.ts`):
+
+- 触发点:step 结束后 `parseSerialDirective` 失败(缺 `Next`/`Status`、非法 status、多个目标)。
+- 行为:用**同一 agent** 起一个独立 run,prompt 明确「不要重答,只回两行协议」,并列出合法
+  `Next` 目标(participants 去掉自己 + `@user`)。解析这次回复;成功则照常接棒。
+- **每个 step 只补一次**:helper 自身不重试,失败即 `protocol-missing`。
+- **不占发言预算**:`step` 与 `completedSteps` 都不推进,`serial_turn_status.steps` 里不计入。
+  补协议是格式修复,不是一次发言,不该吃掉用户设的最大发言数。
+- **强制 `useTools: false`**:只要两行文本,不该再跑工具。
+- 可观测性:落 `meta key='serial_protocol_repair'`(含 agent + reason),`serial_step` 用**同一个
+  step 号**下发(进度不因补协议前进);`EventItem` 渲染成「缺少接力协议块,已请 X 补一次」提示,
+  否则用户会看到一次莫名的额外短回复。
+- 上下文用全量 transcript(不 slice),让 agent 看到自己刚才那条缺协议的回复。
+- 终止归因:补问 run 自身跑失败 → `agent-failed`;跑成功但仍无合法协议 → `protocol-missing`;
+  补问前后都检查 turn 级 `aborted`。
+
+测试覆盖现状:`server/util/serial-directive.test.ts`(4 例,纯解析)+
+`server/runs/serial-protocol-repair.test.ts`(6 例,**orchestrator 端到端**:注册脚本化 agent
+顶掉真实 CLI,跑真实 `startGroupTurn(mode='serial')` 再按 transcript 断言)。后者覆盖补问成功后
+接棒、补问仍失败终止且只补一次、补问不占预算、补问不带工具、prompt 内容约束、协议齐全时不触发。
+
+下方「测试计划」里其余依赖 orchestrator 的用例(步间取消不启动下一步、`max-steps` 终止、
+正文散文里的 `@codex` 不误触发、firstAgent 校验 400)**仍未落地**,但
+`serial-protocol-repair.test.ts` 已经把 orchestrator 的测试脚手架(脚本化 agent + 等
+`serial_turn_status` + 清理 group thread)搭好,后续补这些用例可以直接复用。
 
 ## 测试计划
 
