@@ -7,6 +7,7 @@ import type { AgentName, Source } from '../loaders/types'
 import { groupThreadStore } from '../store/group-thread-store'
 import { reviewRoomStore, type ReviewRoomPathSource, type ReviewRoomSource } from '../store/review-room-store'
 import { extractIssuesForRound } from '../review/extract-issues'
+import { planReviewRound, RoundPlanError, type RoundKind } from '../review/round-plan'
 import { randomUUID } from 'node:crypto'
 import { handoffDir, handoffStore } from '../store/handoff-store'
 import { buildContext } from '../handoffs/context-builder'
@@ -326,8 +327,6 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse) {
   })
 }
 
-type RoundKind = 'review' | 'fix' | 'verify'
-
 async function startReviewRound(
   id: string,
   mode: 'parallel' | 'serial',
@@ -338,22 +337,22 @@ async function startReviewRound(
   const group = await groupThreadStore.readState(id)
   const review = await reviewRoomStore.read(id)
   if (!group || !review) throw new Error('review room not found')
-  const filteredOverride = participantsOverride?.length
-    ? [...new Set(participantsOverride.filter((a): a is AgentName => typeof a === 'string' && a.length > 0))]
-    : undefined
-  const participants = filteredOverride?.length
-    ? filteredOverride
-    : review.participants.length
-      ? review.participants
-      : group.agents
+  const plan = planReviewRound({
+    kind,
+    mode,
+    participantsOverride,
+    review,
+    groupAgents: group.agents,
+  })
+  const { participants, runMode } = plan
   const snapshotText = await recoverSnapshotText(id)
   const priorFindings = kind !== 'review' ? formatPriorFindings(review) : ''
   const started = await runRegistry.startGroupTurn({
     id,
     text: reviewPrompt(review.source, review.goal, snapshotText, kind, priorFindings),
-    targetAgents: mode === 'serial' ? [participants[0]] : participants,
-    mode,
-    serial: mode === 'serial'
+    targetAgents: runMode === 'serial' ? [participants[0]] : participants,
+    mode: runMode,
+    serial: runMode === 'serial'
       ? {
           participants,
           firstAgent: participants[0],
@@ -367,7 +366,7 @@ async function startReviewRound(
   })
   await reviewRoomStore.startRound(id, {
     kind,
-    mode,
+    mode: plan.roundMode,
     agents: participants,
     groupTurnId: started.groupTurnId,
   })
@@ -750,7 +749,15 @@ async function handleStartReview(req: IncomingMessage, res: ServerResponse, id: 
     sendJson(res, 202, started)
   } catch (e) {
     const message = String((e as Error)?.message ?? e)
-    sendJson(res, message.includes('already running') ? 409 : message.includes('not found') ? 404 : 400, { error: message })
+    // 违反轮次约束(如 fix 传多个 fixer)是客户端错误,固定 400,不靠 message 猜。
+    const status = e instanceof RoundPlanError
+      ? 400
+      : message.includes('already running')
+        ? 409
+        : message.includes('not found')
+          ? 404
+          : 400
+    sendJson(res, status, { error: message })
   }
 }
 

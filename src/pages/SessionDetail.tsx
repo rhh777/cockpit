@@ -1443,6 +1443,10 @@ function ReviewRoomPanel({
   const anyRunning = rounds.some((r) => r.status === 'running')
   const [nextKind, setNextKind] = useState<'review' | 'fix' | 'verify'>('review')
   const [nextMode, setNextMode] = useState<'parallel' | 'serial'>('parallel')
+  // fix 轮只能有一个 writer(docs/14 §Fix)。'auto' = 交给后端按「非发现者」规则挑,
+  // 不在前端复制那套规则,避免两处逻辑漂移。
+  const [fixer, setFixer] = useState<AgentName | 'auto'>('auto')
+  const participants = room?.participants ?? (['claude', 'codex'] as AgentName[])
   useEffect(() => {
     if (!started) return setNextKind('review')
     const last = rounds[rounds.length - 1]
@@ -1479,9 +1483,21 @@ function ReviewRoomPanel({
         <div className="review-room-actions">
           <button
             className="review-room-primary"
-            onClick={() => onStart({ kind: nextKind, mode: nextMode })}
+            onClick={() =>
+              onStart({
+                kind: nextKind,
+                mode: nextKind === 'fix' ? 'parallel' : nextMode,
+                participants: nextKind === 'fix' && fixer !== 'auto' ? [fixer] : undefined,
+              })
+            }
             disabled={busy || anyRunning}
-            title={anyRunning ? '有轮次在进行中' : `启动 ${ROUND_KIND_LABEL[nextKind]}(${nextMode === 'serial' ? '接力' : '并行'})`}
+            title={
+              anyRunning
+                ? '有轮次在进行中'
+                : nextKind === 'fix'
+                  ? `启动 Fix(单写者:${fixer === 'auto' ? '自动选择' : labelForAgent(fixer)})`
+                  : `启动 ${ROUND_KIND_LABEL[nextKind]}(${nextMode === 'serial' ? '接力' : '并行'})`
+            }
           >
             <Icon name="sparkle" size={14} />
             {anyRunning ? '进行中…' : started ? `启动 ${ROUND_KIND_LABEL[nextKind]}` : 'Start Review'}
@@ -1506,19 +1522,40 @@ function ReviewRoomPanel({
               </button>
             ))}
           </div>
-          <div className="review-kind-row">
-            {(['parallel', 'serial'] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                className={`review-kind-item ${nextMode === m ? 'active' : ''}`}
-                onClick={() => setNextMode(m)}
-                aria-pressed={nextMode === m}
-              >
-                {m === 'parallel' ? '并行' : '接力'}
-              </button>
-            ))}
-          </div>
+          {nextKind === 'fix' ? (
+            // fix 只允许一个 writer,所以这里换成 fixer 选择,而不是并行/接力开关。
+            <div className="review-kind-row" role="group" aria-label="修复者(单写者)">
+              <span className="review-rounds-title" title="Fix 阶段只允许一个 agent 写文件">
+                单写者
+              </span>
+              {(['auto', ...participants] as const).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  className={`review-kind-item ${fixer === f ? 'active' : ''}`}
+                  onClick={() => setFixer(f as AgentName | 'auto')}
+                  aria-pressed={fixer === f}
+                  title={f === 'auto' ? '由 cockpit 选择提出问题较少的一方修复' : `由 ${labelForAgent(f as AgentName)} 修复`}
+                >
+                  {f === 'auto' ? '自动' : labelForAgent(f as AgentName)}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="review-kind-row">
+              {(['parallel', 'serial'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={`review-kind-item ${nextMode === m ? 'active' : ''}`}
+                  onClick={() => setNextMode(m)}
+                  aria-pressed={nextMode === m}
+                >
+                  {m === 'parallel' ? '并行' : '接力'}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         {rounds.length === 0 ? (
           <div className="review-round-row" style={{ gridTemplateColumns: '1fr' }}>

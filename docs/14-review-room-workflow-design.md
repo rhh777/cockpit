@@ -270,6 +270,20 @@ Apply fix with
 - 第一版建议 `ask` 为默认,避免 Review Room 一键入口默默写盘。
 - 多 agent 不并行写文件。Parallel review 只能只读;Fix 阶段只允许一个 selected fixer agent 运行。
 
+**实现记录(2026-07-30)**:单 writer 约束落在 `server/review/round-plan.ts` 的 `planReviewRound`
+(纯函数,便于单测),route 只负责读 store 和调 runRegistry:
+
+- `kind='fix'` 恒定唤醒 1 个 agent;显式传多个 fixer 抛 `RoundPlanError` → HTTP 400。
+- fix 轮的 `mode='serial'` 降为单发(serial orchestrator 对单 agent 无意义,第一步就 `no-next-agent`)。
+- fix 轮落盘 `ReviewRound.mode='single'`,与并行轮可区分。
+- 默认 fixer = 最近一轮已完成 review 里**提出问题较少**的一方(对自己结论锚定最少),
+  并列或无 issueSet 时按 participants 顺序取首位,保证默认值稳定。
+- 前端 `ReviewRoomPanel` 在 `nextKind='fix'` 时把「并行/接力」换成「单写者:自动 / Claude / Codex」;
+  选「自动」时不传 participants,由后端按上述规则挑,不在前端复制该规则。
+- 覆盖:`server/review/round-plan.test.ts`(13 例)。
+- **仍存在的敞口**:verify 轮允许多 agent 且 `useTools=true`,理论上仍可并发写盘;
+  当前只靠默认 `ask` 权限档逐操作拦截,没有结构性约束。
+
 ### Verify
 
 修复后提供两个复核方式:
