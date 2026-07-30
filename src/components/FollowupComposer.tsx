@@ -8,6 +8,7 @@ import { parseMentions } from '../lib/mentions'
 import { AGENT_OPTIONS, labelForAgent } from '../lib/agents'
 import { fetchAgentModels, type AgentModelOptionDTO } from '../lib/api'
 import type { ApprovalMode, RunPermissions } from '../lib/types'
+import { useI18n, type MessageKey } from '../lib/i18n'
 
 export type SendMode = 'followup' | 'native'
 type GroupDiscussionMode = 'parallel' | 'serial'
@@ -24,18 +25,26 @@ function mentionDraft(text: string, caret: number): { start: number; query: stri
 // CLI 选项分组:每个 agent 一组或多组(model / reasoning),每组独立持久化。
 // value === '' 表示 Default,不传对应 flag,完全交给 CLI 自己决定。
 type CliField = 'model' | 'effort'
-type CliOption = { value: string; label: string; hint?: string }
-type CliGroup = { key: CliField; label: string; flag: string; options: CliOption[] }
+// label / hint 是不翻译的内容(模型专有名、服务端返回的补充说明);
+// labelKey / hintKey 是需要跟随界面语言的静态文案。
+type CliOption = {
+  value: string
+  label?: string
+  labelKey?: MessageKey
+  hint?: string
+  hintKey?: MessageKey
+}
+type CliGroup = { key: CliField; labelKey: MessageKey; flag: string; options: CliOption[] }
 type CliSelection = Partial<Record<CliField, string>>
 
 const CLI_GROUPS: Record<AgentName, CliGroup[]> = {
   claude: [
     {
       key: 'model',
-      label: '模型',
+      labelKey: 'cli.model',
       flag: '--model',
       options: [
-        { value: '', label: 'Default', hint: 'CLI 默认' },
+        { value: '', label: 'Default', hintKey: 'cli.default' },
         { value: 'claude-opus-4-8', label: 'Opus 4.8' },
         { value: 'claude-opus-4-7', label: 'Opus 4.7' },
         { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
@@ -44,49 +53,49 @@ const CLI_GROUPS: Record<AgentName, CliGroup[]> = {
     },
     {
       key: 'effort',
-      label: '推理',
+      labelKey: 'cli.reasoning',
       flag: '--effort',
       options: [
-        { value: '', label: 'Default', hint: 'CLI 默认' },
-        { value: 'low', label: '低' },
-        { value: 'medium', label: '中' },
-        { value: 'high', label: '高' },
-        { value: 'xhigh', label: '超高' },
-        { value: 'max', label: '极致' },
+        { value: '', label: 'Default', hintKey: 'cli.default' },
+        { value: 'low', labelKey: 'common.low' },
+        { value: 'medium', labelKey: 'common.medium' },
+        { value: 'high', labelKey: 'common.high' },
+        { value: 'xhigh', labelKey: 'common.xhigh' },
+        { value: 'max', labelKey: 'common.max' },
       ],
     },
   ],
   codex: [
     {
       key: 'model',
-      label: '模型',
+      labelKey: 'cli.model',
       flag: '-m',
       options: [
-        { value: '', label: 'Default', hint: 'CLI 默认' },
+        { value: '', label: 'Default', hintKey: 'cli.default' },
         { value: 'gpt-5.5', label: 'GPT-5.5' },
         { value: 'gpt-5.4-mini', label: 'GPT-5.4-Mini' },
       ],
     },
     {
       key: 'effort',
-      label: '推理',
+      labelKey: 'cli.reasoning',
       flag: 'model_reasoning_effort',
       options: [
-        { value: '', label: 'Default', hint: 'CLI 默认' },
-        { value: 'low', label: '低' },
-        { value: 'medium', label: '中' },
-        { value: 'high', label: '高' },
-        { value: 'xhigh', label: '超高' },
+        { value: '', label: 'Default', hintKey: 'cli.default' },
+        { value: 'low', labelKey: 'common.low' },
+        { value: 'medium', labelKey: 'common.medium' },
+        { value: 'high', labelKey: 'common.high' },
+        { value: 'xhigh', labelKey: 'common.xhigh' },
       ],
     },
   ],
   opencode: [
     {
       key: 'model',
-      label: '模型',
+      labelKey: 'cli.model',
       flag: '--model',
       options: [
-        { value: '', label: 'Default', hint: 'OpenCode 默认' },
+        { value: '', label: 'Default', hintKey: 'cli.openCodeDefault' },
         { value: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet' },
         { value: 'openai/gpt-5.5', label: 'GPT-5.5' },
         { value: 'qwen/qwen3-coder-plus', label: 'Qwen Coder' },
@@ -94,24 +103,24 @@ const CLI_GROUPS: Record<AgentName, CliGroup[]> = {
     },
     {
       key: 'effort',
-      label: '变体',
+      labelKey: 'cli.variant',
       flag: '--variant',
       options: [
-        { value: '', label: 'Default', hint: 'OpenCode 默认' },
-        { value: 'low', label: '低' },
-        { value: 'medium', label: '中' },
-        { value: 'high', label: '高' },
-        { value: 'max', label: '极致' },
+        { value: '', label: 'Default', hintKey: 'cli.openCodeDefault' },
+        { value: 'low', labelKey: 'common.low' },
+        { value: 'medium', labelKey: 'common.medium' },
+        { value: 'high', labelKey: 'common.high' },
+        { value: 'max', labelKey: 'common.max' },
       ],
     },
   ],
   cursor: [
     {
       key: 'model',
-      label: '模型',
+      labelKey: 'cli.model',
       flag: '--model',
       options: [
-        { value: '', label: 'Default', hint: 'Cursor 默认' },
+        { value: '', label: 'Default', hintKey: 'cli.cursorDefault' },
         { value: 'auto', label: 'Auto' },
         { value: 'gpt-5.5', label: 'GPT-5.5' },
         { value: 'claude-sonnet-4-6', label: 'Claude Sonnet' },
@@ -120,19 +129,21 @@ const CLI_GROUPS: Record<AgentName, CliGroup[]> = {
   ],
 }
 
-const REVIEW_TEMPLATE =
-  'Please review the above session for correctness, design issues, and potential bugs. 如果有问题, 指出具体问题与改进建议。如果没有, 则回答没有。'
-
 type CliSelectionByAgent = Partial<Record<AgentName, CliSelection>>
 type AttachmentDraft =
   | Pick<Extract<ChatAttachment, { kind: 'file' | 'directory' }>, 'kind' | 'path' | 'name'>
   | { kind: 'imageData'; dataUrl: string; name: string; mimeType: string }
 
-const PERMISSION_OPTIONS: { mode: ApprovalMode; label: string; hint: string }[] = [
-  { mode: 'ask', label: '请求批准', hint: '编辑文件、命令和网络前询问' },
-  { mode: 'auto-safe', label: '替我审批', hint: '低风险自动允许,风险操作询问' },
-  { mode: 'full-access', label: '完全访问权限', hint: '允许访问网络和 workspace 写入' },
+const PERMISSION_OPTIONS: { mode: ApprovalMode; labelKey: MessageKey; hintKey: MessageKey }[] = [
+  { mode: 'ask', labelKey: 'perm.ask', hintKey: 'perm.askHint' },
+  { mode: 'auto-safe', labelKey: 'perm.autoSafe', hintKey: 'perm.autoSafeHint' },
+  { mode: 'full-access', labelKey: 'perm.full', hintKey: 'perm.fullHint' },
 ]
+
+// CLI 选项的显示名:优先 i18n key,其次不翻译的字面量(模型名 / 服务端 hint)。
+function optionLabel(o: CliOption, t: (k: MessageKey) => string): string {
+  return o.labelKey ? t(o.labelKey) : o.label ?? o.value
+}
 
 const DEFAULT_GROUP_AGENTS: AgentName[] = ['claude', 'codex']
 const MODEL_POPOVER_WIDTH = 360
@@ -215,6 +226,7 @@ export function FollowupComposer({
   codexAcceleratedMode?: boolean
   onCodexAcceleratedModeChange?: (next: boolean) => void
 }) {
+  const { t } = useI18n()
   const [text, setText] = useState('')
   const [agent, setAgent] = useState<AgentName>(sessionAgent)
   const [mode, setMode] = useState<SendMode>('followup')
@@ -352,15 +364,16 @@ export function FollowupComposer({
     setModelMenuOpen(null)
     setAdvancedMenuOpen(false)
     setReviewDraft(true)
-    setText(REVIEW_TEMPLATE)
+    setText(t('composer.reviewTemplate'))
   }
 
   const send = () => {
-    const t = text.trim()
-    if (!t && attachments.length === 0) return
+    // 原名 t,与 i18n 的 t 冲突,改名 body。
+    const body = text.trim()
+    if (!body && attachments.length === 0) return
     const outgoing = attachments.length ? attachments : undefined
     if (usingNative) {
-      onNativeSend(t, outgoing, nativeTrustWrite ? 'trusted' : 'read-only')
+      onNativeSend(body, outgoing, nativeTrustWrite ? 'trusted' : 'read-only')
       // 每次发送后回落到 read-only。native resume 是"跨出 cockpit 沙箱"的动作,
       // 不允许粘性授权 —— 用户下一条要写回必须重新勾选。
       setNativeTrustWrite(false)
@@ -374,7 +387,7 @@ export function FollowupComposer({
         codexAcceleratedMode && targets.includes('codex')
           ? { codexAcceleratedMode: true }
           : undefined
-      onSend(t, targets, options, outgoing, permissionsForMode(permissionMode), {
+      onSend(body, targets, options, outgoing, permissionsForMode(permissionMode), {
         ...extras,
         ...(groupMode
           ? {
@@ -431,7 +444,7 @@ export function FollowupComposer({
     if (window.cockpitNative) {
       return kind === 'file' ? window.cockpitNative.pickFiles() : window.cockpitNative.pickDirectory()
     }
-    throw new Error('当前环境无法打开本地选择框')
+    throw new Error(t('composer.noNativePicker'))
   }
 
   const pickFiles = async () => {
@@ -537,7 +550,7 @@ export function FollowupComposer({
       g.key === 'model'
         ? {
             ...g,
-            options: [{ value: '', label: 'Default', hint: 'OpenCode 默认' }, ...openCodeModels],
+            options: [{ value: '', label: 'Default', hintKey: 'cli.openCodeDefault' }, ...openCodeModels],
           }
         : g,
     )
@@ -548,7 +561,8 @@ export function FollowupComposer({
   const triggerLabel = (targetAgent: AgentName) => {
     const parts = cliGroupsForAgent(targetAgent).map((g) => {
       const v = cliByAgent[targetAgent]?.[g.key] ?? ''
-      return g.options.find((o) => o.value === v)?.label ?? 'Default'
+      const found = g.options.find((o) => o.value === v)
+      return found ? optionLabel(found, t) : 'Default'
     })
     return parts.every((p) => p === 'Default') ? 'Default' : parts.join(' · ')
   }
@@ -609,8 +623,8 @@ export function FollowupComposer({
           }}
           title={
             withAgent && !enabled
-              ? `点击启用 ${labelForAgent(targetAgent)}`
-              : `${labelForAgent(targetAgent)} CLI 参数${hasCustomSelection ? `: ${label}` : ''}`
+              ? t('composer.enableAgent', { agent: labelForAgent(targetAgent) })
+              : t('composer.cliArgsOf', { agent: labelForAgent(targetAgent), detail: hasCustomSelection ? `: ${label}` : '' })
           }
           aria-haspopup="menu"
           aria-expanded={modelMenuOpen === targetAgent}
@@ -636,8 +650,8 @@ export function FollowupComposer({
               setModelMenuRect(null)
               toggleGroupAgent(targetAgent)
             }}
-            title={`取消 ${labelForAgent(targetAgent)} 参与本轮群聊`}
-            aria-label={`取消 ${labelForAgent(targetAgent)}`}
+            title={t('composer.removeFromTurn', { agent: labelForAgent(targetAgent) })}
+            aria-label={t('composer.removeAgent', { agent: labelForAgent(targetAgent) })}
           >
             <Icon name="close" size={10} />
           </button>
@@ -659,7 +673,7 @@ export function FollowupComposer({
             {targetGroups.map((g, gi) => (
               <div key={g.key} className="model-popover-group">
                 {gi > 0 && <div className="model-popover-sep" />}
-                <div className="model-popover-title">{g.label}</div>
+                <div className="model-popover-title">{t(g.labelKey)}</div>
                 {g.options.map((o) => {
                   const active = (targetSel[g.key] ?? '') === o.value
                   return (
@@ -668,8 +682,10 @@ export function FollowupComposer({
                       className={`model-popover-item ${active ? 'active' : ''}`}
                       onClick={() => pickCli(targetAgent, g.key, o.value)}
                     >
-                      <span>{o.label}</span>
-                      {o.hint && <span className="model-popover-hint">{o.hint}</span>}
+                      <span>{optionLabel(o, t)}</span>
+                      {(o.hintKey || o.hint) && (
+                        <span className="model-popover-hint">{o.hintKey ? t(o.hintKey) : o.hint}</span>
+                      )}
                       {active && <Icon name="check" size={12} />}
                     </button>
                   )
@@ -686,14 +702,14 @@ export function FollowupComposer({
   const permissionOption = PERMISSION_OPTIONS.find((o) => o.mode === permissionMode) ?? PERMISSION_OPTIONS[0]
 
   const sendTitle = usingNative
-    ? `通过本机 ${agentLabel} CLI 续写原生 session`
+    ? t('composer.nativeHint', { agent: agentLabel })
     : groupMode && targets.length === 0
-    ? '只记录到群聊;输入 @ 可选择成员回答'
+    ? t('composer.groupOnlyHint')
     : groupMode && groupDiscussionMode === 'serial'
-    ? `接力讨论从 ${labelForAgent(targets[0])} 开始,最多 ${serialMaxSteps} 次发言`
+    ? t('composer.serialHint', { agent: labelForAgent(targets[0]), count: serialMaxSteps })
     : usingMentions
-    ? `并行发送给 ${targets.map(labelForAgent).join('、')}`
-    : `通过本机 ${labelForAgent(agent)} CLI 运行,权限: ${permissionOption.label}`
+    ? t('composer.parallelHint', { agents: targets.map(labelForAgent).join('、') })
+    : t('composer.followupHint', { agent: labelForAgent(agent), permission: t(permissionOption.labelKey) })
   const reviewTargets = usingMentions ? targets : [agent]
   const showReviewTarget = reviewDraft && !usingNative && !groupMode && reviewTargets.length > 0
 
@@ -707,10 +723,10 @@ export function FollowupComposer({
                 <button
                   className={`send-mode-item ${mode === 'followup' ? 'active' : ''}`}
                   onClick={() => chooseMode('followup')}
-                  title="在 Cockpit 中基于当前上下文追问,不修改原生会话;CLI 以只读权限运行"
+                  title={t('composer.cockpitFollowupTitle')}
                 >
                   <Icon name="arrow-up-right" size={12} />
-                  <span>Cockpit 追问</span>
+                  <span>{t('composer.cockpitFollowup')}</span>
                 </button>
                 <button
                   className={`send-mode-item ${usingNative ? 'active' : ''}`}
@@ -718,17 +734,17 @@ export function FollowupComposer({
                   disabled={!nativeAvailable}
                   title={
                     nativeAvailable
-                      ? `写回原 ${agentLabel} 会话历史`
-                      : '只有 Claude/Codex/OpenCode 原生会话支持回到原会话'
+                      ? t('composer.nativeResumeTitle', { agent: agentLabel })
+                      : t('composer.nativeResumeUnsupported')
                   }
                 >
                   <Icon name="rotate-ccw" size={12} />
-                  <span>回到原会话</span>
+                  <span>{t('composer.nativeResume')}</span>
                 </button>
                 <div id="send-mode-help" className="composer-help-popover" role="tooltip">
-                  <div className="composer-help-title">发送方式</div>
-                  <div><strong>Cockpit 追问</strong>: 只追加到 Cockpit,不改原生历史;CLI 只读。</div>
-                  <div><strong>回到原会话</strong>: 发送到原 Claude/Codex/OpenCode 会话,会进入原生历史。</div>
+                  <div className="composer-help-title">{t('composer.sendModeTitle')}</div>
+                  <div>{t('composer.sendModeCockpit')}</div>
+                  <div>{t('composer.sendModeNative')}</div>
                 </div>
               </div>
             </>
@@ -736,27 +752,27 @@ export function FollowupComposer({
 
           {groupMode ? (
             <div className="group-composer-controls">
-              <div className="send-mode-control" aria-label="群聊模式">
+              <div className="send-mode-control" aria-label={t('composer.groupModeLabel')}>
                 <button
                   className={`send-mode-item ${groupDiscussionMode === 'parallel' ? 'active' : ''}`}
                   onClick={() => setGroupDiscussionMode('parallel')}
-                  title="文本里的多个 @agent 会并行回复"
+                  title={t('composer.parallelTitle')}
                 >
                   <Icon name="users" size={12} />
-                  <span>并行</span>
+                  <span>{t('newChat.parallel')}</span>
                 </button>
                 <button
                   className={`send-mode-item ${groupDiscussionMode === 'serial' ? 'active' : ''}`}
                   onClick={() => setGroupDiscussionMode('serial')}
-                  title="首位 agent 回复后,通过末尾 Next: @agent 接力"
+                  title={t('composer.serialTitle')}
                 >
                   <Icon name="chevron-right" size={12} />
-                  <span>接力</span>
+                  <span>{t('newChat.serial')}</span>
                 </button>
               </div>
               {groupDiscussionMode === 'serial' && (
-                <label className="serial-step-control" title="一次 agent 回复算一次发言">
-                  <span>最多</span>
+                <label className="serial-step-control" title={t('composer.serialStepsTitle')}>
+                  <span>{t('composer.atMost')}</span>
                   <input
                     type="number"
                     min={2}
@@ -764,7 +780,7 @@ export function FollowupComposer({
                     value={serialMaxSteps}
                     onChange={(e) => setSerialMaxSteps(Math.max(2, Math.min(Number(e.target.value) || 6, 20)))}
                   />
-                  <span>次</span>
+                  <span>{t('composer.turnsUnit')}</span>
                 </label>
               )}
               <div className="group-model-settings" ref={modelMenuRef}>
@@ -799,7 +815,7 @@ export function FollowupComposer({
       <div className="composer-input-area">
         <div className="composer-input-wrap group-composer-shell">
         {attachments.length > 0 && (
-          <div className="attachment-tray" aria-label="附件">
+          <div className="attachment-tray" aria-label={t('composer.attachments')}>
             {attachments.map((a, index) => (
               <span key={`${a.kind}-${index}-${a.name}`} className={`attachment-chip ${a.kind === 'imageData' ? 'has-preview' : ''}`}>
                 {a.kind === 'imageData' ? (
@@ -808,7 +824,7 @@ export function FollowupComposer({
                   <Icon name={a.kind === 'directory' ? 'folder' : 'file-text'} size={12} />
                 )}
                 <span>{a.name}</span>
-                <button onClick={() => removeAttachment(index)} title="移除附件" aria-label="移除附件">
+                <button onClick={() => removeAttachment(index)} title={t('composer.removeAttachment')} aria-label={t('composer.removeAttachment')}>
                   <Icon name="close" size={10} />
                 </button>
               </span>
@@ -821,10 +837,10 @@ export function FollowupComposer({
           className="composer-input"
           placeholder={
             groupMode
-              ? '群聊消息;输入 @ 可选择成员回答…'
+              ? t('composer.groupPlaceholder')
               : usingNative
-              ? `回到原 ${agentLabel} 会话继续发送…`
-              : '继续追问,或输入 @ 选择多个 agent 同时回答…'
+              ? t('composer.nativePlaceholder', { agent: agentLabel })
+              : t('composer.followupPlaceholder')
           }
           value={text}
           onChange={(e) => {
@@ -891,7 +907,7 @@ export function FollowupComposer({
         {mentionConfirm && (
           <div className={`mention-confirm agent-${mentionConfirm}`} aria-live="polite">
             <AgentIcon agent={mentionConfirm} size={15} />
-            <span>已添加 @{mentionConfirm}</span>
+            <span>{t('composer.mentionAdded', { agent: mentionConfirm })}</span>
           </div>
         )}
         <div className="composer-action-bar">
@@ -901,8 +917,8 @@ export function FollowupComposer({
                 <button
                   className="composer-attach-btn"
                   onClick={() => setAttachmentMenuOpen((v) => !v)}
-                  title="添加附件"
-                  aria-label="添加附件"
+                  title={t('composer.addAttachment')}
+                  aria-label={t('composer.addAttachment')}
                   aria-expanded={attachmentMenuOpen}
                 >
                   <Icon name="paperclip" size={16} />
@@ -911,11 +927,11 @@ export function FollowupComposer({
                   <div className="attachment-menu">
                     <button onMouseDown={(e) => e.preventDefault()} onClick={pickFiles}>
                       <Icon name="file-text" size={13} />
-                      <span>文件</span>
+                      <span>{t('composer.file')}</span>
                     </button>
                     <button onMouseDown={(e) => e.preventDefault()} onClick={pickDirectory}>
                       <Icon name="folder" size={13} />
-                      <span>文件夹</span>
+                      <span>{t('composer.folder')}</span>
                     </button>
                   </div>
                 )}
@@ -928,13 +944,13 @@ export function FollowupComposer({
                 onClick={() => setNativeTrustWrite((v) => !v)}
                 title={
                   nativeTrustWrite
-                    ? '本次发送将允许 CLI 执行任意工具(等同 claude --continue / codex resume)。发送后自动关闭。'
-                    : '仅只读预览。勾选后允许写回:等同你在终端里跑原 CLI 续写命令。'
+                    ? t('composer.nativeTrustOn')
+                    : t('composer.nativeTrustOff')
                 }
                 aria-pressed={nativeTrustWrite}
               >
                 <Icon name={nativeTrustWrite ? 'alert-triangle' : 'lock'} size={13} />
-                <span>{nativeTrustWrite ? '允许写回(一次性)' : '只读预览'}</span>
+                <span>{nativeTrustWrite ? t('composer.trustWriteOnce') : t('composer.readOnlyPreview')}</span>
               </button>
             )}
             {!hasActiveStreams && !usingNative && (
@@ -942,16 +958,16 @@ export function FollowupComposer({
                 <button
                   className={`permission-trigger permission-${permissionMode}`}
                   onClick={() => setPermissionMenuOpen((v) => !v)}
-                  title={`权限: ${permissionOption.label}`}
-                  aria-label="权限设置"
+                  title={t('composer.permissionOf', { permission: t(permissionOption.labelKey) })}
+                  aria-label={t('composer.permissionSettings')}
                   aria-expanded={permissionMenuOpen}
                 >
                   <Icon name="wrench" size={14} />
-                  <span>{permissionOption.label}</span>
+                  <span>{t(permissionOption.labelKey)}</span>
                 </button>
                 {permissionMenuOpen && (
                   <div className="permission-menu" role="menu">
-                    <div className="permission-menu-title">应如何批准操作?</div>
+                    <div className="permission-menu-title">{t('composer.permissionMenuTitle')}</div>
                     {PERMISSION_OPTIONS.map((option) => {
                       const active = option.mode === permissionMode
                       return (
@@ -965,8 +981,8 @@ export function FollowupComposer({
                           }}
                         >
                           <span className="permission-menu-copy">
-                            <strong>{option.label}</strong>
-                            <span>{option.hint}</span>
+                            <strong>{t(option.labelKey)}</strong>
+                            <span>{t(option.hintKey)}</span>
                           </span>
                           {active && <Icon name="check" size={13} />}
                         </button>
@@ -981,8 +997,8 @@ export function FollowupComposer({
                 <button
                   className="composer-attach-btn"
                   onClick={() => setAdvancedMenuOpen((v) => !v)}
-                  title="高级"
-                  aria-label="高级"
+                  title={t('composer.advanced')}
+                  aria-label={t('composer.advanced')}
                   aria-expanded={advancedMenuOpen}
                 >
                   <Icon name="more-horizontal" size={16} />
@@ -1000,9 +1016,7 @@ export function FollowupComposer({
                           const next = !codexAcceleratedMode
                           if (next) {
                             const ok = window.confirm(
-                              'Codex 加速模式会通过官方 Codex runtime 复用 provider thread,\n' +
-                                '在 ~/.codex/sessions/ 生成/追加原生 session 文件。\n\n' +
-                                '仅本 thread 生效,可随时关闭。确定开启?',
+                              t('composer.codexAccelConfirm'),
                             )
                             if (!ok) return
                           }
@@ -1010,12 +1024,12 @@ export function FollowupComposer({
                         }}
                         title={
                           codexAcceleratedMode
-                            ? '关闭后,后续 Codex follow-up 恢复 ephemeral,不写原生 session'
-                            : '开启后,Codex follow-up 会复用官方 thread,速度更快,但会写 ~/.codex/sessions'
+                            ? t('composer.codexAccelOn')
+                            : t('composer.codexAccelOff')
                         }
                       >
                         <Icon name="sparkle" size={13} />
-                        <span>{codexAcceleratedMode ? '✓ Codex 加速(native-linked)' : 'Codex 加速(native-linked)'}</span>
+                        <span>{codexAcceleratedMode ? t('composer.codexAccelActive') : t('composer.codexAccel')}</span>
                       </button>
                     )}
                   </div>
@@ -1045,8 +1059,8 @@ export function FollowupComposer({
               className={`send-btn primary-action ${hasActiveStreams ? 'is-canceling' : 'is-ready'}`}
               onClick={hasActiveStreams ? onCancelAll : send}
               disabled={!hasActiveStreams && !text.trim() && attachments.length === 0}
-              title={hasActiveStreams ? '取消当前所有正在生成的回复' : `${sendTitle}; Enter 发送, Alt+Enter 换行`}
-              aria-label={hasActiveStreams ? '取消生成' : '发送'}
+              title={hasActiveStreams ? t('composer.cancelAllTitle') : t('composer.sendTitleSuffix', { title: sendTitle })}
+              aria-label={hasActiveStreams ? t('composer.cancelGenerating') : t('composer.send')}
             >
               {hasActiveStreams ? (
                 <>

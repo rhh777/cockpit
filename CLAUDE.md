@@ -46,7 +46,11 @@ This file gives guidance to anyone working in this repository (Claude Code or ot
 - 改 agent 名称、顺序、可选项、默认值:先改 `src/lib/agents.ts`,再检查 `AgentIcon`、`AgentPicker`、`FollowupComposer`、`SessionList`、`SessionDetail`、`ReviewPanel`、`StreamingStatus` 是否仍一致。
 - 改 agent 图标、颜色、尺寸、选中态:优先改共享组件/样式(`AgentIcon` / `AgentPicker` / 全局 agent class),不要在群聊或单聊页面各写一套。
 - 改 composer 布局或交互:同时检查单聊 follow-up、原生续写、群聊三个状态。群聊可以有多 agent 设置,但视觉语言必须和单聊 agent picker / model picker 对齐。
-- 改文案或占位符:同步中英文 i18n,并确认单聊与群聊的语义差异只是必要差异,不是风格漂移。
+- 改文案或占位符:**一律走 `src/lib/i18n.ts` 的 `t()`,不要在组件里写死任何用户可见文案**(en + zh-CN 两边同时加 key),并确认单聊与群聊的语义差异只是必要差异,不是风格漂移。
+  - 数据层 / 纯函数不产出人类语言:返回结构化描述或 `MessageKey`,由组件渲染时 `t()`(如 `timeline.ts` 的 `NarrativeAction`、`StreamingStatus` 的 `PHASE_LABELS`)。也不要用显示字符串做逻辑判断(用 kind/枚举)。
+  - 模块级 helper 需要文案时,把 `t` 作为参数传进去,别在模块作用域调 `translate()`——那样语言切换后不会重渲。
+  - 例外(不要"顺手翻译"):`serialize.ts` 写进 agent prompt 的 `请以 X 的身份…` 前缀是 prompt 契约,`display.ts` / `title.ts` / `EventItem` 都靠正则匹配它;源码注释保持中文。
+  - 自检:`grep -nP '[\x{4e00}-\x{9fff}]' src/**/*.tsx` 命中的应该只有注释。
 - 新增 agent 或 CLI 参数:必须同时覆盖 agent 列表、@mention、群聊成员、单聊默认 agent、streaming 状态、权限/模型 picker、设置页检测状态。
 - 复用优先级:先抽到共享组件或共享常量;只有页面确有不同信息架构时才允许局部差异,并在代码注释里说明原因。
 - 提交前至少人工走查两个入口:一个原生 session 详情页的单聊 composer,一个 cockpit 群聊页的 composer/agent 列表。

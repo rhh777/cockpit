@@ -30,7 +30,7 @@ Follow-up agents run read-only by default. The "resume native session" mode writ
 
 **Not built yet:** full-text search across sessions, export to Markdown/HTML, artifact/patch management, session notes and tags, branch visualization, a Cockpit-side policy engine (path/command classifiers for `auto-safe`), and sandboxed diff-then-merge for risky writes.
 
-**Known rough edges before you rely on this:** much of the UI copy is still hardcoded Simplified Chinese and bypasses the i18n layer, so the English locale is incomplete. Review Room has no "done" state or manual issue-status editing yet. See `docs/03-roadmap.md` for the authoritative capability map and `docs/13` / `docs/14` for per-phase implementation status.
+**Known rough edges before you rely on this:** Review Room has no "done" state or manual issue-status editing yet, and plural forms are not handled ("1 events"). See `docs/03-roadmap.md` for the authoritative capability map and `docs/13` / `docs/14` for per-phase implementation status.
 
 ## Documentation
 

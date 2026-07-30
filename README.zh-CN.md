@@ -28,7 +28,7 @@ Follow-up agent 默认只读。「回到原会话」模式只通过官方 CLI �
 
 **未做:** 跨会话全文搜索 · 导出 Markdown/HTML · 产物/补丁管理 · 会话笔记与标签 · 分支可视化 · cockpit 侧 policy engine(`auto-safe` 的路径/命令分类)· 高风险写入的 sandbox diff-then-merge。
 
-**已知粗糙处(依赖它之前请知悉):** 大量 UI 文案仍是硬编码简体中文、绕过了 i18n 层,英文 locale 不完整;Review Room 还没有 done 收口和 issue 状态手改。能力事实源见 `docs/03-roadmap.md`,分阶段实现状态见 `docs/13` / `docs/14`。
+**已知粗糙处(依赖它之前请知悉):** Review Room 还没有 done 收口和 issue 状态手改;i18n 不处理复数形式(英文会出现 "1 events")。能力事实源见 `docs/03-roadmap.md`,分阶段实现状态见 `docs/13` / `docs/14`。
 
 ## 文档
 

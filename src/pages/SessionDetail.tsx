@@ -17,6 +17,7 @@ import {
   type RunStreamMessage,
 } from '../lib/sse'
 import { labelForAgent, sessionAgentOf } from '../lib/agents'
+import { useI18n, type MessageKey } from '../lib/i18n'
 import { sourceLabel, displayTitle } from '../lib/display'
 import { buildTimeline, summarizeTools, type FilterKind, type TraceGroup } from '../lib/timeline'
 import type { AgentName, ApprovalRequest, ChatAttachment, EventEnvelope, RunPermissions, Source } from '../lib/types'
@@ -63,20 +64,35 @@ function isGroupTurnClientId(clientId: string): boolean {
   return clientId.startsWith('group_turn:')
 }
 
+// 只产出 message key,显示文案在渲染处经 t() 取(数据层不产人类语言)。
 function approvalIntent(approval: ApprovalRequest): {
-  verb: string
+  verbKey: MessageKey
   target: string
   tone: 'write' | 'shell' | 'network' | 'read'
-  label: string
+  labelKey: MessageKey
 } {
   const op = approval.operation
   if (op.kind === 'file_write') {
-    const action = op.action === 'delete' ? '删除' : op.action === 'create' ? '创建' : '写入'
-    return { verb: action, target: op.path, tone: 'write', label: '文件变更' }
+    const verbKey: MessageKey =
+      op.action === 'delete'
+        ? 'approval.actionDelete'
+        : op.action === 'create'
+        ? 'approval.actionCreate'
+        : 'approval.actionWrite'
+    return { verbKey, target: op.path, tone: 'write', labelKey: 'approval.fileChange' }
   }
-  if (op.kind === 'shell') return { verb: '执行', target: op.command, tone: 'shell', label: '终端命令' }
-  if (op.kind === 'network') return { verb: '访问', target: op.url ?? op.host ?? '网络', tone: 'network', label: '网络访问' }
-  return { verb: '读取', target: op.path, tone: 'read', label: '文件读取' }
+  if (op.kind === 'shell') {
+    return { verbKey: 'approval.execute', target: op.command, tone: 'shell', labelKey: 'approval.shell' }
+  }
+  if (op.kind === 'network') {
+    return {
+      verbKey: 'approval.visit',
+      target: op.url ?? op.host ?? '',
+      tone: 'network',
+      labelKey: 'approval.networkLabel',
+    }
+  }
+  return { verbKey: 'approval.read', target: op.path, tone: 'read', labelKey: 'approval.fileRead' }
 }
 
 function approvalPreview(target: string): string {
@@ -131,6 +147,7 @@ function reviewRoomMeta(summary: SessionDetailDTO['summary'] | null): ReviewRoom
 }
 
 export function SessionDetail() {
+  const { t } = useI18n()
   const { source, id } = useParams()
   const navigate = useNavigate()
   const { width: reviewWidth, onDragStart: onReviewDrag } = useResizable(
@@ -388,7 +405,7 @@ export function SessionDetail() {
         if (!res.ok) throw new Error(`${res.status}`)
         resolveApprovalInUi(approvalId)
       } catch (e) {
-        setSendError(`审批失败:${String((e as Error)?.message ?? e)}`)
+        setSendError(t('approval.failed', { error: String((e as Error)?.message ?? e) }))
       }
     },
     [resolveApprovalInUi],
@@ -455,7 +472,7 @@ export function SessionDetail() {
             },
           },
         ])
-        if (reason === 'error') setSendError(message ?? '请求失败')
+        if (reason === 'error') setSendError(message ?? t('detail.requestFailed'))
       }
 
       attachRunStream(
@@ -532,7 +549,7 @@ export function SessionDetail() {
       const cleanup = (reason: 'done' | 'aborted' | 'error', message?: string) => {
         abortsRef.current.delete(clientId)
         setStreams((prev) => prev.filter((s) => s.clientId !== clientId))
-        if (reason === 'error') setSendError(message ?? '群聊发送失败')
+        if (reason === 'error') setSendError(message ?? t('detail.groupSendFailed'))
       }
 
       attachRunStream(
@@ -574,7 +591,7 @@ export function SessionDetail() {
       const cleanup = (reason: 'done' | 'aborted' | 'error', message?: string) => {
         abortsRef.current.delete(clientId)
         setStreams((prev) => prev.filter((s) => s.turnId !== groupTurnId))
-        if (reason === 'error') setSendError(message ?? '接力讨论失败')
+        if (reason === 'error') setSendError(message ?? t('detail.serialFailed'))
       }
       attachGroupTurnStream(
         id,
@@ -646,14 +663,14 @@ export function SessionDetail() {
       const cleanup = async (reason: 'done' | 'aborted' | 'error', message?: string) => {
         abortsRef.current.delete(clientId)
         setStreams((prev) => prev.filter((s) => s.clientId !== clientId))
-        if (reason === 'error') setSendError(message ?? '原生续写失败')
+        if (reason === 'error') setSendError(message ?? t('detail.nativeResumeFailed'))
         if (reason === 'done') {
           try {
             const d = await fetchSessionDetail(source, id)
             resetFrom(d)
             setLive(true)
           } catch (e) {
-            setSendError(`原生续写已完成,但刷新失败:${String(e)}`)
+            setSendError(t('detail.nativeResumeRefreshFailed', { error: String(e) }))
           }
         }
       }
@@ -1063,7 +1080,7 @@ export function SessionDetail() {
   const handleReveal = useCallback(
     (target: 'native' | 'followups') => {
       if (!source || !id) return
-      revealSession(source, id, target).catch((e) => setSendError(`Finder 打开失败:${String(e)}`))
+      revealSession(source, id, target).catch((e) => setSendError(t('detail.revealFailed', { error: String(e) })))
     },
     [source, id],
   )
@@ -1129,13 +1146,13 @@ export function SessionDetail() {
   if (loading)
     return (
       <div className="detail">
-        <div className="empty">加载中…</div>
+        <div className="empty">{t('detail.loading')}</div>
       </div>
     )
   if (error)
     return (
       <div className="detail">
-        <div className="empty">加载失败:{error}</div>
+        <div className="empty">{t('detail.loadFailed', { error })}</div>
       </div>
     )
   if (!detail) return <div className="detail" />
@@ -1168,7 +1185,11 @@ export function SessionDetail() {
             </span>
             <span
               className="detail-event-count"
-              title={s.cwd ? `${s.cwd}\n${partitioned.main.length} 个事件` : `${partitioned.main.length} 个事件`}
+              title={
+                s.cwd
+                  ? `${s.cwd}\n${t('detail.eventCount', { count: partitioned.main.length })}`
+                  : t('detail.eventCount', { count: partitioned.main.length })
+              }
             >
               {partitioned.main.length}
             </span>
@@ -1184,18 +1205,20 @@ export function SessionDetail() {
               }}
               title={
                 autoRefresh
-                  ? (live ? '自动刷新 · 实时(点击暂停)' : '自动刷新(点击暂停)')
-                  : '自动刷新 · 已暂停(点击恢复)'
+                  ? live
+                  ? t('detail.autoRefreshLive')
+                  : t('detail.autoRefreshOn')
+                  : t('detail.autoRefreshPaused')
               }
-              aria-label="切换自动刷新"
+              aria-label={t('detail.toggleAutoRefresh')}
             >
               <span className={`refresh-indicator-dot ${autoRefresh && live ? 'live' : ''}`} />
             </button>
             <button
               className="head-icon-btn"
               onClick={() => handleReveal('native')}
-              title={groupMode ? '在 Finder 中打开群聊 transcript' : '在 Finder 中打开原始会话文件'}
-              aria-label={groupMode ? '在 Finder 中打开群聊 transcript' : '在 Finder 中打开原始会话文件'}
+              title={groupMode ? t('detail.revealGroup') : t('detail.revealSession')}
+              aria-label={groupMode ? t('detail.revealGroup') : t('detail.revealSession')}
             >
               <Icon name="folder" size={13} />
             </button>
@@ -1232,7 +1255,7 @@ export function SessionDetail() {
                     const next = await extractReviewIssues(id, { force: true })
                     if (next) setReviewRoom(next)
                   } catch (e) {
-                    setSendError(`抽取 findings 失败:${String(e)}`)
+                    setSendError(t('detail.extractFailed', { error: String(e) }))
                   } finally {
                     setExtractingIssues(false)
                   }
@@ -1242,10 +1265,10 @@ export function SessionDetail() {
                   setFreshReviewBusy(true)
                   try {
                     const created = await startFreshReview(id, { reason: 'user-requested' })
-                    if (created.startError) setSendError(`Fresh review 已创建,但自动启动失败:${created.startError}`)
+                    if (created.startError) setSendError(t('detail.freshReviewStartFailed', { error: created.startError }))
                     navigate(`/cockpit/${encodeURIComponent(created.groupThreadId)}`)
                   } catch (e) {
-                    setSendError(`Fresh review 失败:${String(e)}`)
+                    setSendError(t('detail.freshReviewFailed', { error: String(e) }))
                   } finally {
                     setFreshReviewBusy(false)
                   }
@@ -1281,7 +1304,7 @@ export function SessionDetail() {
           {pendingApprovals.length > 0 && (
             <div className="approval-stack conversation-banner">
               {pendingApprovals.map((approval) => {
-                const { verb, target, tone, label } = approvalIntent(approval)
+                const { verbKey, target, tone, labelKey } = approvalIntent(approval)
                 const expanded = expandedApprovals.has(approval.approvalId)
                 return (
                   <div key={approval.approvalId} className={`approval-card approval-tone-${tone} ${expanded ? 'is-expanded' : ''}`}>
@@ -1291,8 +1314,8 @@ export function SessionDetail() {
                     <div className="approval-main">
                       <div className="approval-head">
                         <span className="approval-agent">{approval.agent}</span>
-                        <span className="approval-kind">{label}</span>
-                        <span className="approval-verb">请求{verb}</span>
+                        <span className="approval-kind">{t(labelKey)}</span>
+                        <span className="approval-verb">{t('approval.requests', { verb: t(verbKey) })}</span>
                       </div>
                       <div className="approval-summary-row">
                         <code className="approval-summary" title={target}>{approvalPreview(target)}</code>
@@ -1309,7 +1332,7 @@ export function SessionDetail() {
                             }
                             aria-expanded={expanded}
                           >
-                            {expanded ? '收起' : '详情'}
+                            {expanded ? t('approval.collapse') : t('approval.detail')}
                           </button>
                         )}
                       </div>
@@ -1323,18 +1346,18 @@ export function SessionDetail() {
                     <div className="approval-actions">
                       <button onClick={() => decideApproval(approval.approvalId, 'reject')}>
                         <Icon name="close" size={14} />
-                        拒绝
+                        {t('approval.reject')}
                       </button>
                       <button
-                        title="本轮运行内同类操作不再询问"
+                        title={t('approval.alwaysTitle')}
                         onClick={() => decideApproval(approval.approvalId, 'approve-always')}
                       >
                         <Icon name="check" size={14} />
-                        总是允许
+                        {t('approval.always')}
                       </button>
                       <button className="primary" onClick={() => decideApproval(approval.approvalId, 'approve')}>
                         <Icon name="check" size={14} />
-                        允许一次
+                        {t('approval.once')}
                       </button>
                     </div>
                   </div>
@@ -1342,7 +1365,9 @@ export function SessionDetail() {
               })}
             </div>
           )}
-          {sendError && <div className="banner warn conversation-banner">发送失败:{sendError}</div>}
+          {sendError && (
+          <div className="banner warn conversation-banner">{t('detail.sendFailed', { error: sendError })}</div>
+        )}
           <div className="conversation-bottom">
             <StreamingStatus
               streams={groupMode ? streams : streams.filter((s) => s.agent === sessionAgentOf(source))}
@@ -1438,6 +1463,7 @@ function ReviewRoomPanel({
   busy: boolean
   onStart: (opts?: { kind?: 'review' | 'fix' | 'verify'; mode?: 'parallel' | 'serial'; participants?: import('../lib/types').AgentName[] }) => void
 }) {
+  const { t } = useI18n()
   const rounds = room?.rounds ?? []
   const started = rounds.length > 0
   const anyRunning = rounds.some((r) => r.status === 'running')
@@ -1460,21 +1486,23 @@ function ReviewRoomPanel({
         <div className="review-room-main">
           <span className="review-room-kicker">Review Room</span>
           <span className="review-room-title">
-            {(room?.participants ?? ['claude', 'codex']).map(labelForAgent).join(' × ')} 方案协作
+            {t('reviewRoom.collab', {
+              agents: (room?.participants ?? ['claude', 'codex']).map(labelForAgent).join(' × '),
+            })}
           </span>
           <span className="review-room-meta">
             {sourceKind ? `${sourceKind} · ` : ''}
             {phase}
-            {rounds.length ? ` · ${rounds.length} 轮` : ''}
+            {rounds.length ? t('reviewRoom.roundCount', { count: rounds.length }) : ''}
             {parentReviewRoomId && (
               <>
                 {' · '}
                 <a
                   href={`/cockpit/${encodeURIComponent(parentReviewRoomId)}`}
                   className="review-parent-link"
-                  title="回到父 Review Room"
+                  title={t('reviewRoom.backToParent')}
                 >
-                  ↑ 父 room
+                  {t('reviewRoom.parentRoom')}
                 </a>
               </>
             )}
@@ -1493,22 +1521,31 @@ function ReviewRoomPanel({
             disabled={busy || anyRunning}
             title={
               anyRunning
-                ? '有轮次在进行中'
+                ? t('reviewRoom.roundRunning')
                 : nextKind === 'fix'
-                  ? `启动 Fix(单写者:${fixer === 'auto' ? '自动选择' : labelForAgent(fixer)})`
-                  : `启动 ${ROUND_KIND_LABEL[nextKind]}(${nextMode === 'serial' ? '接力' : '并行'})`
+                  ? t('reviewRoom.startFixTitle', {
+                      fixer: fixer === 'auto' ? t('reviewRoom.autoFixer') : labelForAgent(fixer),
+                    })
+                  : t('reviewRoom.startRoundTitle', {
+                      kind: ROUND_KIND_LABEL[nextKind],
+                      mode: nextMode === 'serial' ? t('newChat.serial') : t('newChat.parallel'),
+                    })
             }
           >
             <Icon name="sparkle" size={14} />
-            {anyRunning ? '进行中…' : started ? `启动 ${ROUND_KIND_LABEL[nextKind]}` : 'Start Review'}
+            {anyRunning
+              ? t('reviewRoom.inProgress')
+              : started
+              ? t('reviewRoom.startKind', { kind: ROUND_KIND_LABEL[nextKind] })
+              : 'Start Review'}
           </button>
         </div>
       </div>
       <div className="review-rounds">
         <div className="review-rounds-head">
-          <span className="review-rounds-title">轮次</span>
+          <span className="review-rounds-title">{t('reviewRoom.rounds')}</span>
           <span>·</span>
-          <span>下一轮</span>
+          <span>{t('reviewRoom.nextRound')}</span>
           <div className="review-kind-row">
             {(['review', 'fix', 'verify'] as const).map((k) => (
               <button
@@ -1524,9 +1561,9 @@ function ReviewRoomPanel({
           </div>
           {nextKind === 'fix' ? (
             // fix 只允许一个 writer,所以这里换成 fixer 选择,而不是并行/接力开关。
-            <div className="review-kind-row" role="group" aria-label="修复者(单写者)">
-              <span className="review-rounds-title" title="Fix 阶段只允许一个 agent 写文件">
-                单写者
+            <div className="review-kind-row" role="group" aria-label={t('reviewRoom.singleWriter')}>
+              <span className="review-rounds-title" title={t('reviewRoom.singleWriterLabel')}>
+                {t('reviewRoom.singleWriter')}
               </span>
               {(['auto', ...participants] as const).map((f) => (
                 <button
@@ -1535,9 +1572,13 @@ function ReviewRoomPanel({
                   className={`review-kind-item ${fixer === f ? 'active' : ''}`}
                   onClick={() => setFixer(f as AgentName | 'auto')}
                   aria-pressed={fixer === f}
-                  title={f === 'auto' ? '由 cockpit 选择提出问题较少的一方修复' : `由 ${labelForAgent(f as AgentName)} 修复`}
+                  title={
+                    f === 'auto'
+                      ? t('reviewRoom.autoFixerHint')
+                      : t('reviewRoom.fixerHint', { agent: labelForAgent(f as AgentName) })
+                  }
                 >
-                  {f === 'auto' ? '自动' : labelForAgent(f as AgentName)}
+                  {f === 'auto' ? t('reviewRoom.autoFixer') : labelForAgent(f as AgentName)}
                 </button>
               ))}
             </div>
@@ -1551,7 +1592,7 @@ function ReviewRoomPanel({
                   onClick={() => setNextMode(m)}
                   aria-pressed={nextMode === m}
                 >
-                  {m === 'parallel' ? '并行' : '接力'}
+                  {m === 'parallel' ? t('newChat.parallel') : t('newChat.serial')}
                 </button>
               ))}
             </div>
@@ -1559,7 +1600,11 @@ function ReviewRoomPanel({
         </div>
         {rounds.length === 0 ? (
           <div className="review-round-row" style={{ gridTemplateColumns: '1fr' }}>
-            <span className="review-round-agents">还没有轮次。默认将启动 review,由 {(room?.participants ?? ['claude', 'codex']).map(labelForAgent).join(' 和 ')} 独立分析。</span>
+            <span className="review-round-agents">
+              {t('reviewRoom.noRounds', {
+                agents: (room?.participants ?? ['claude', 'codex']).map(labelForAgent).join(', '),
+              })}
+            </span>
           </div>
         ) : (
           rounds.map((r, idx) => (
