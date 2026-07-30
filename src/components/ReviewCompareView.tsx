@@ -2,13 +2,15 @@ import { useMemo, useState } from 'react'
 import type { ReviewIssueDTO, ReviewIssueOutcome, ReviewIssueSetDTO, ReviewRoomState } from '../lib/api'
 import type { AgentName } from '../lib/types'
 import { labelForAgent } from '../lib/agents'
+import { useI18n, type MessageKey } from '../lib/i18n'
 import { AgentIcon } from './AgentIcon'
 import { Icon } from './Icon'
 
-const OUTCOME_LABEL: Record<ReviewIssueOutcome, string> = {
-  verified: '已修复',
-  'still-broken': '仍失败',
-  'needs-discussion': '需讨论',
+// 只存 message key,显示时经 t() 取。
+const OUTCOME_LABEL: Record<ReviewIssueOutcome, MessageKey> = {
+  verified: 'compare.outcomeVerified',
+  'still-broken': 'compare.outcomeStillBroken',
+  'needs-discussion': 'compare.outcomeNeedsDiscussion',
 }
 
 function FollowupResults({
@@ -18,9 +20,10 @@ function FollowupResults({
   followupSets: { round: { id: string; kind: string; mode: string }; set: ReviewIssueSetDTO }[]
   issueTitleById: Map<string, string>
 }) {
+  const { t } = useI18n()
   return (
     <div className="review-followup">
-      <div className="review-followup-title">修复 / 复核结果</div>
+      <div className="review-followup-title">{t('compare.followupTitle')}</div>
       {followupSets.map(({ round, set }) => (
         <div key={round.id} className="review-followup-round">
           <div className="review-followup-round-head">
@@ -28,13 +31,13 @@ function FollowupResults({
             <span className="review-followup-mode">{round.mode}</span>
           </div>
           {set.issues.length === 0 ? (
-            <div className="review-compare-empty">本轮没有结构化结果。</div>
+            <div className="review-compare-empty">{t('compare.noStructured')}</div>
           ) : (
             <div className="review-followup-list">
               {set.issues.map((it) => (
                 <div key={`${it.agent}:${it.id}`} className={`review-followup-item ${it.outcome ?? ''}`}>
                   {it.outcome && (
-                    <span className={`review-outcome sev-${it.outcome}`}>{OUTCOME_LABEL[it.outcome]}</span>
+                    <span className={`review-outcome sev-${it.outcome}`}>{t(OUTCOME_LABEL[it.outcome])}</span>
                   )}
                   <div className="review-followup-item-main">
                     <div className="review-followup-item-head">
@@ -136,6 +139,7 @@ export function ReviewCompareView({
   busy?: boolean
   freshBusy?: boolean
 }) {
+  const { t } = useI18n()
   const reviewRounds = room.rounds.filter((r) => r.kind === 'review' && r.status === 'completed')
   const followupRounds = room.rounds.filter(
     (r) => (r.kind === 'fix' || r.kind === 'verify') && r.status === 'completed',
@@ -181,33 +185,37 @@ export function ReviewCompareView({
           <div className="review-compare-head">
             <div className="review-compare-title">
               <Icon name="wrench" size={13} />
-              <span>Review 进行中</span>
+              <span>{t('compare.reviewRunning')}</span>
             </div>
             {minutes !== null && (
               <span className="review-compare-empty">
-                已启动 {minutes < 1 ? '刚刚' : `${minutes} 分钟前`} · {runningReview.mode} · {runningReview.agents.map(labelForAgent).join(', ')}
+                {t('compare.startedAgo', {
+                  when: minutes < 1 ? t('compare.justNow') : t('compare.minutesAgo', { count: minutes }),
+                  mode: runningReview.mode,
+                  agents: runningReview.agents.map(labelForAgent).join(', '),
+                })}
               </span>
             )}
           </div>
           <div className="review-compare-empty">
-            agents 正在生成响应。完成后会自动抽取 findings 并在这里对齐分歧。
+            {t('compare.runningHint')}
           </div>
         </div>
       )
     }
     return (
       <div className="review-compare-empty">
-        还没有已完成的 review 轮次。启动一轮 review 后,agents 会在响应末尾输出结构化 findings,cockpit 会在这里对齐分歧。
+        {t('compare.noRounds')}
       </div>
     )
   }
   if (!set) {
     return (
       <div className="review-compare-empty">
-        本轮 review 尚未抽取到 findings。可能 agent 忘了输出 FINDINGS 块。
+        {t('compare.noFindings')}
         <div style={{ marginTop: 8 }}>
           <button className="modal-btn" onClick={onExtract} disabled={busy}>
-            {busy ? '抽取中…' : '重新抽取'}
+            {busy ? t('compare.extracting') : t('compare.reExtract')}
           </button>
         </div>
       </div>
@@ -243,16 +251,16 @@ export function ReviewCompareView({
           </select>
         )}
         <button className="modal-btn" onClick={onExtract} disabled={busy}>
-          {busy ? '抽取中…' : '重新抽取'}
+          {busy ? t('compare.extracting') : t('compare.reExtract')}
         </button>
         {onFreshReview && (
           <button
             className="modal-btn primary"
             onClick={onFreshReview}
             disabled={freshBusy}
-            title="生一个不带偏见的新 Review Room,交给另一个 agent 复核"
+            title={t('compare.freshReviewHint')}
           >
-            {freshBusy ? '生成中…' : 'Fresh review →'}
+            {freshBusy ? t('compare.generating') : t('compare.freshReview')}
           </button>
         )}
       </div>
@@ -266,19 +274,19 @@ export function ReviewCompareView({
           </div>
         ))}
         <div className="review-compare-stat">
-          <span>共识</span>
+          <span>{t('compare.consensusStat')}</span>
           <span className="review-compare-stat-count">{clusters.filter((c) => c.agents.size > 1).length}</span>
         </div>
       </div>
 
       {set.recommendedNextStep && (
         <div className="review-compare-next">
-          <strong>建议下一步:</strong>&nbsp;{set.recommendedNextStep}
+          <strong>{t('compare.nextStep')}</strong>&nbsp;{set.recommendedNextStep}
         </div>
       )}
 
       {clusters.length === 0 ? (
-        <div className="review-compare-empty">本轮 findings 已抽取,但两位 reviewer 都返回空列表 —— 没有值得跟进的问题。</div>
+        <div className="review-compare-empty">{t('compare.allEmpty')}</div>
       ) : (
         <div className="review-compare-list">
           {clusters.map((c) => {
@@ -312,7 +320,7 @@ export function ReviewCompareView({
                         className={`review-outcome sev-${latestOutcome.outcome} inline`}
                         title={`${latestOutcome.round} ${latestOutcome.kind} · ${labelForAgent(latestOutcome.agent as AgentName)}`}
                       >
-                        {OUTCOME_LABEL[latestOutcome.outcome]}
+                        {t(OUTCOME_LABEL[latestOutcome.outcome])}
                       </span>
                     )}
                   </span>
@@ -332,7 +340,7 @@ export function ReviewCompareView({
                         {clusterOutcomes.map((o, i) => (
                           <span key={i} className="review-cluster-trail-item">
                             {o.round} {o.kind} · {labelForAgent(o.agent as AgentName)}{' '}
-                            <span className={`review-outcome sev-${o.outcome}`}>{OUTCOME_LABEL[o.outcome]}</span>
+                            <span className={`review-outcome sev-${o.outcome}`}>{t(OUTCOME_LABEL[o.outcome])}</span>
                           </span>
                         ))}
                       </div>

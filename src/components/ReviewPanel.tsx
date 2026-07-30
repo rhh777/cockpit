@@ -4,16 +4,20 @@ import { buildTimeline, clusterRows, foldGroupsIntoAssistant, summarizeToolNames
 import { EventItem } from './EventItem'
 import { Icon } from './Icon'
 import { AgentIcon, agentLabel } from './AgentIcon'
+import { useI18n, type MessageKey } from '../lib/i18n'
 
-function latestThreadActivity(events: EventEnvelope[]): { icon: string; text: string } | null {
+function latestThreadActivity(
+  events: EventEnvelope[],
+  t: (key: MessageKey, values?: Record<string, string | number>) => string,
+): { icon: string; text: string } | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i].event
-    if (ev.type === 'thinking') return { icon: '💭', text: '正在思考…' }
-    if (ev.type === 'tool_use') return { icon: '🔧', text: `调用工具 ${ev.name}…` }
-    if (ev.type === 'tool_result') return { icon: '✓', text: '工具返回,继续处理…' }
+    if (ev.type === 'thinking') return { icon: '💭', text: t('activity.thinking') }
+    if (ev.type === 'tool_use') return { icon: '🔧', text: t('activity.toolUse', { name: ev.name }) }
+    if (ev.type === 'tool_result') return { icon: '✓', text: t('activity.toolResult') }
     if (ev.type === 'assistant_text') {
       const tail = ev.text.slice(-40).replace(/\s+/g, ' ').trim()
-      return { icon: '✍️', text: tail ? `生成中:…${tail}` : '正在生成回复…' }
+      return { icon: '✍️', text: tail ? t('sidecar.generatingTail', { tail }) : t('activity.generating') }
     }
     if (ev.type === 'user_text') break
   }
@@ -52,6 +56,7 @@ export function ReviewPanel({
   onViewTrace?: (group: TraceGroup) => void
   onReveal?: () => void
 }) {
+  const { t } = useI18n()
   // 已有 rootTurnId 的 pending 不再单独显示:其 spinner / 事件归到对应 thread 卡。
   const orphans = pending.filter(
     (p) => !threads.some((t) => t.turnId === (p.rootTurnId ?? p.turnId)),
@@ -84,22 +89,24 @@ export function ReviewPanel({
             <AgentIcon agent={headAgent} size={18} />
           </span>
         )}
-        <span className="review-head-title"><Icon name="arrow-up-right" size={12} /> 旁路 {agentLabel(headAgent)}</span>
+        <span className="review-head-title">
+          <Icon name="arrow-up-right" size={12} /> {t('sidecar.title', { agent: agentLabel(headAgent) })}
+        </span>
         <span className="review-count">{threads.length + orphans.length}</span>
         <span className="review-head-spacer" />
         {activeThread ? (
           <span className="review-head-meta">
-            {activeThread.events.length} 事件
+            {t('sidecar.eventCount', { count: activeThread.events.length })}
           </span>
         ) : (
-          <span className="subhead-muted">尚无 review</span>
+          <span className="subhead-muted">{t('sidecar.noReview')}</span>
         )}
         {onReveal && (
           <button
             className="head-icon-btn"
             onClick={onReveal}
-            title="在 Finder 中打开旁路记录"
-            aria-label="在 Finder 中打开旁路记录"
+            title={t('sidecar.revealFinder')}
+            aria-label={t('sidecar.revealFinder')}
           >
             <Icon name="folder" size={13} />
           </button>
@@ -135,22 +142,22 @@ export function ReviewPanel({
               <span className="spinner" style={{ marginLeft: 'auto' }} />
               {onCancel && (
                 <button className="filter-btn" onClick={() => onCancel(p.clientId)}>
-                  取消
+                  {t('sidecar.cancel')}
                 </button>
               )}
               {onReveal && (
                 <button
                   className="head-icon-btn"
                   onClick={(e) => { e.stopPropagation(); onReveal() }}
-                  title="在 Finder 中打开旁路记录"
-                  aria-label="在 Finder 中打开旁路记录"
+                  title={t('sidecar.revealFinder')}
+                  aria-label={t('sidecar.revealFinder')}
                 >
                   <Icon name="folder" size={13} />
                 </button>
               )}
             </div>
             <div className="review-thread-body">
-              <div className="empty-mini">正在连接 {agentLabel(p.agent)}…</div>
+              <div className="empty-mini">{t('sidecar.connecting', { agent: agentLabel(p.agent) })}</div>
             </div>
           </div>
         ))}
@@ -189,6 +196,7 @@ function ReviewThreadView({
   onViewTrace?: (group: TraceGroup) => void
   onReveal?: () => void
 }) {
+  const { t } = useI18n()
   const rows = useMemo<
     Array<{ envelope: EventEnvelope; pair?: ToolPair; group?: TraceGroup; precedingGroup?: TraceGroup }>
   >(() => foldGroupsIntoAssistant(clusterRows(buildTimeline(thread.events).rows)), [thread.events])
@@ -198,7 +206,7 @@ function ReviewThreadView({
     }
     return -1
   }, [rows])
-  const activity = streaming ? latestThreadActivity(thread.events) : null
+  const activity = streaming ? latestThreadActivity(thread.events, t) : null
 
   // streaming 时把 body 滚到底,让新事件贴在 composer 上方,不必手动追。
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -221,15 +229,15 @@ function ReviewThreadView({
         {streaming && <span className="spinner" style={{ marginLeft: 'auto' }} />}
         {streaming && onCancel && (
           <button className="filter-btn" onClick={(e) => { e.stopPropagation(); onCancel() }}>
-            取消
+            {t('sidecar.cancel')}
           </button>
         )}
         {onReveal && (
           <button
             className="head-icon-btn"
             onClick={(e) => { e.stopPropagation(); onReveal() }}
-            title="在 Finder 中打开旁路记录"
-            aria-label="在 Finder 中打开旁路记录"
+            title={t('sidecar.revealFinder')}
+            aria-label={t('sidecar.revealFinder')}
           >
             <Icon name="folder" size={13} />
           </button>
@@ -256,7 +264,7 @@ function ReviewThreadView({
               <span className="spinner" />
               <span className="review-streaming-icon">{activity?.icon ?? '⏳'}</span>
               <span className="review-streaming-text">
-                {activity?.text ?? `等待 ${thread.agent} 开始…`}
+                {activity?.text ?? t('sidecar.waitingStart', { agent: agentLabel(thread.agent) })}
               </span>
             </div>
           )}
@@ -273,6 +281,7 @@ function ReviewTracePill({
   group: TraceGroup
   onViewTrace?: (group: TraceGroup) => void
 }) {
+  const { t } = useI18n()
   return (
     <button
       className="grouped-trace-pill review-trace-pill"
@@ -280,11 +289,11 @@ function ReviewTracePill({
         e.stopPropagation()
         onViewTrace?.(group)
       }}
-      title="点击查看运行细节"
+      title={t('trace.viewRunDetail')}
     >
       <div className="trace-summary-info">
         {group.thinkingCount > 0 && (
-          <span className="trace-stat" title={`${group.thinkingCount} 次思考`}>
+          <span className="trace-stat" title={t('trace.thinkingCount', { count: group.thinkingCount })}>
             <Icon name="bulb" size={11} />
             {group.thinkingCount > 1 && group.thinkingCount}
           </span>
@@ -295,12 +304,12 @@ function ReviewTracePill({
           </span>
         ))}
         {group.errorCount > 0 && (
-          <span className="trace-stat danger" title={`${group.errorCount} 个错误`}>
+          <span className="trace-stat danger" title={t('trace.errorCount', { count: group.errorCount })}>
             <Icon name="close" size={11} /> {group.errorCount}
           </span>
         )}
       </div>
-      <span className="view-trace-hint">查看 →</span>
+      <span className="view-trace-hint">{t('trace.view')}</span>
     </button>
   )
 }
@@ -318,6 +327,7 @@ function ReviewReplyComposer({
   onCancel?: () => void
   onSend: (text: string) => void
 }) {
+  const { t } = useI18n()
   const [text, setText] = useState('')
   const label = agentLabel(agent)
   const send = () => {
@@ -330,16 +340,16 @@ function ReviewReplyComposer({
     <div className="review-reply">
       <div className="composer-controls">
         <span className={`native-agent-pill agent-${agent}`}><AgentIcon agent={agent} size={16} /> {label}</span>
-        <span className="send-mode-item static" title={`只发给 ${label},不影响主 timeline`}>
+        <span className="send-mode-item static" title={t('sidecar.readOnlyHint', { agent: label })}>
           <Icon name="arrow-up-right" size={12} />
-          <span>只读旁路</span>
+          <span>{t('sidecar.readOnlyBypass')}</span>
         </span>
       </div>
       <div className="composer-input-wrap group-composer-shell">
         <textarea
           className="review-reply-input composer-input"
           placeholder={
-            disabled ? `等待 ${label} 回复…` : `继续追问 ${label} 的 review 结论…(Cmd+Enter)`
+            disabled ? t('sidecar.waitingReply', { agent: label }) : t('sidecar.askMore', { agent: label })
           }
           value={text}
           rows={2}
@@ -361,10 +371,10 @@ function ReviewReplyComposer({
             disabled={streaming ? !onCancel : disabled || !text.trim()}
             title={
               streaming
-                ? `取消 ${label} 当前回复`
-                : `只发给 ${label},不写回主 timeline; Enter 发送, Alt+Enter 换行`
+                ? t('sidecar.cancelReplyOf', { agent: label })
+                : t('sidecar.sendHint', { agent: label })
             }
-            aria-label={streaming ? '取消回复' : '发送回复'}
+            aria-label={streaming ? t('sidecar.cancelReply') : t('sidecar.sendReply')}
           >
             {streaming ? (
               <>

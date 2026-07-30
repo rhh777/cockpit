@@ -8,6 +8,9 @@ import { splitFindings } from '../lib/findings'
 import { ToolCallCard } from './ToolCallCard'
 import { Icon } from './Icon'
 import { AgentIcon, agentLabel } from './AgentIcon'
+import { useI18n, type MessageKey } from '../lib/i18n'
+
+type Translate = (key: MessageKey, values?: Record<string, string | number>) => string
 
 // 噪音 meta 键:这类事件对用户阅读 timeline 毫无价值,默认不渲染。
 // turn_status 走单独分支(成功/失败/中断状态条),仍保留。
@@ -107,6 +110,7 @@ export function EventItem({
   onViewTrace?: (group: TraceGroup) => void
   actionVisibility?: 'visible' | 'hover'
 }) {
+  const { t } = useI18n()
   const ev = envelope.event
 
   switch (ev.type) {
@@ -116,7 +120,7 @@ export function EventItem({
       const name = ev.targetAgent ? `You → ${agentLabel(ev.targetAgent)}` : 'You'
       return (
         <div className="event user">
-          <div className="avatar user">你</div>
+          <div className="avatar user">{t('event.you')}</div>
           <div className="bubble">
             <div className="event-name">{name}</div>
             <div className="bubble-body">
@@ -166,7 +170,7 @@ export function EventItem({
               {serial.status && serial.status !== 'consensus' && (
                 <div className={`serial-protocol-chip ${serial.status}`}>
                   <Icon name={serial.status === 'consensus' ? 'check' : serial.status === 'blocked' ? 'alert-triangle' : 'chevron-right'} size={13} />
-                  <span>{serialProtocolLabel(serial.status, serial.next)}</span>
+                  <span>{serialProtocolLabel(serial.status, serial.next, t)}</span>
                 </div>
               )}
             </div>
@@ -204,7 +208,7 @@ export function EventItem({
             ) : (
               <div className="tool-pending">
                 <span className="tool-name" title={ev.name}>{prettyToolName(ev.name)}</span>
-                <span className="tool-pending-hint">等待结果…</span>
+                <span className="tool-pending-hint">{t('event.awaitingResult')}</span>
               </div>
             )}
           </div>
@@ -215,7 +219,7 @@ export function EventItem({
       if (!ev.inputTokens && !ev.outputTokens) return null
       return (
         <div className="event event-compact">
-          <div className="meta-pill" title="本步 token 消耗">
+          <div className="meta-pill" title={t('event.stepTokens')}>
             <span className="meta-pill-label">tokens</span>
             <span>↑ {ev.inputTokens}</span>
             <span>↓ {ev.outputTokens}</span>
@@ -230,7 +234,12 @@ export function EventItem({
         const status = v.status ?? 'completed'
         if (status === 'completed') return null
         const icon = status === 'completed' ? '✓' : status === 'failed' ? '!' : '⊘'
-        const title = status === 'completed' ? '本轮已完成' : status === 'failed' ? v.error ?? v.message ?? '本轮失败' : '本轮已中断'
+        const title =
+          status === 'completed'
+            ? t('event.turnCompleted')
+            : status === 'failed'
+            ? v.error ?? v.message ?? t('event.turnFailed')
+            : t('event.turnAborted')
         return (
           <div className={`turn-status ${status}`} title={title} aria-label={title}>
             <span>{icon}</span>
@@ -239,7 +248,7 @@ export function EventItem({
       }
       if (ev.key === 'serial_turn_status') {
         const v = (ev.value ?? {}) as { status?: string; reason?: string; steps?: number; message?: string }
-        const title = serialTurnStatusText(v)
+        const title = serialTurnStatusText(v, t)
         if (!title) return null
         return (
           <div className={`serial-turn-status ${v.status ?? 'completed'}`} title={v.message}>
@@ -253,9 +262,9 @@ export function EventItem({
       if (ev.key === 'serial_protocol_repair') {
         const v = (ev.value ?? {}) as { agent?: string; reason?: string }
         return (
-          <div className="serial-turn-status failed" title={`原因:${v.reason ?? 'protocol-missing'}`}>
+          <div className="serial-turn-status failed" title={t('event.repairReason', { reason: v.reason ?? 'protocol-missing' })}>
             <Icon name="alert-triangle" size={13} />
-            <span>缺少接力协议块,已请 {v.agent ? agentLabel(v.agent) : 'agent'} 补一次</span>
+            <span>{t('event.protocolRepair', { agent: v.agent ? agentLabel(v.agent) : 'agent' })}</span>
           </div>
         )
       }
@@ -306,21 +315,27 @@ function parseSerialProtocol(text: string): { body: string; next?: string; statu
   return { body: lines.slice(0, cut).join('\n').trim(), next, status }
 }
 
-function serialProtocolLabel(status: string, next?: string): string {
-  if (status === 'consensus') return '接力讨论已达成一致'
-  if (status === 'blocked') return '接力讨论需要你处理'
+function serialProtocolLabel(status: string, next: string | undefined, t: Translate): string {
+  if (status === 'consensus') return t('serial.consensus')
+  if (status === 'blocked') return t('serial.blocked')
   const nextLabel = next?.match(/@(claude|codex|opencode|cursor|user)\b/i)?.[1]
-  if (nextLabel && nextLabel.toLowerCase() !== 'user') return `建议交给 ${agentLabel(nextLabel.toLowerCase())}`
-  if (status === 'needs-changes') return '接力讨论发现需要修改'
-  return '接力讨论等待下一步'
+  if (nextLabel && nextLabel.toLowerCase() !== 'user') {
+    return t('serial.handOffTo', { agent: agentLabel(nextLabel.toLowerCase()) })
+  }
+  if (status === 'needs-changes') return t('serial.needsChanges')
+  return t('serial.awaitingNext')
 }
 
-function serialTurnStatusText(v: { status?: string; reason?: string; steps?: number }): string | null {
+function serialTurnStatusText(
+  v: { status?: string; reason?: string; steps?: number },
+  t: Translate,
+): string | null {
   if (v.reason === 'protocol-missing') return null
-  if (v.status === 'completed' && v.reason === 'consensus') return `接力讨论已完成 · 达成一致${v.steps ? ` · ${v.steps} 步` : ''}`
-  if (v.status === 'completed') return `接力讨论已完成${v.steps ? ` · ${v.steps} 步` : ''}`
-  if (v.status === 'aborted') return '接力讨论已取消'
-  if (v.status === 'failed') return `接力讨论已停止 · ${v.reason ?? '失败'}`
+  const steps = v.steps ? t('serial.stepsSuffix', { count: v.steps }) : ''
+  if (v.status === 'completed' && v.reason === 'consensus') return t('serial.doneConsensus', { steps })
+  if (v.status === 'completed') return t('serial.done', { steps })
+  if (v.status === 'aborted') return t('serial.aborted')
+  if (v.status === 'failed') return t('serial.stopped', { reason: v.reason ?? t('serial.failedReason') })
   return null
 }
 
@@ -366,6 +381,7 @@ function BubbleFooter({
   onViewTrace?: (group: TraceGroup) => void
   actions: ReactNode
 }) {
+  const { t } = useI18n()
   if (!precedingGroup) return <>{actions}</>
   const toolNames = summarizeToolNames(precedingGroup)
   return (
@@ -373,10 +389,10 @@ function BubbleFooter({
       <button
         className="bubble-trace-chip"
         onClick={() => onViewTrace?.(precedingGroup)}
-        title="查看本轮的思考与工具执行细节"
+        title={t('event.viewTurnDetail')}
       >
         {precedingGroup.thinkingCount > 0 && (
-          <span className="bubble-trace-stat" title={`${precedingGroup.thinkingCount} 次思考`}>
+          <span className="bubble-trace-stat" title={t('trace.thinkingCount', { count: precedingGroup.thinkingCount })}>
             <Icon name="bulb" size={11} />
             {precedingGroup.thinkingCount > 1 && precedingGroup.thinkingCount}
           </span>
@@ -406,6 +422,7 @@ function AgentMessageActions({
   text: string
   visibility: 'visible' | 'hover'
 }) {
+  const { t } = useI18n()
   const [copied, setCopied] = useState<'plain' | 'review' | null>(null)
 
   const write = async (value: string, kind: 'plain' | 'review') => {
@@ -416,10 +433,11 @@ function AgentMessageActions({
     }, 1100)
   }
 
+  // 这段是用户主动"高级复制"出去、准备粘给另一个 agent 的内容,跟随界面语言。
   const advanced = [
-    `# ${agent} agent review 信息`,
+    t('review.copyHeading', { agent }),
     '',
-    `这是 ${agent} agent 在 Cockpit 里的 review 信息。请把它当作待核验的代码审查上下文,结合当前仓库继续分析;如果结论成立,请协助给出修复方案或直接修改。`,
+    t('review.copyIntro', { agent }),
     '',
     '---',
     '',
@@ -431,24 +449,25 @@ function AgentMessageActions({
       <button
         className={`event-action-btn ${copied === 'plain' ? 'copied' : ''}`}
         onClick={() => write(text, 'plain')}
-        title="复制原文"
+        title={t('event.copyRaw')}
       >
         <Icon name={copied === 'plain' ? 'check' : 'copy'} size={12} />
-        <span>{copied === 'plain' ? '已复制' : '复制'}</span>
+        <span>{copied === 'plain' ? t('event.copied') : t('event.copy')}</span>
       </button>
       <button
         className={`event-action-btn advanced ${copied === 'review' ? 'copied' : ''}`}
         onClick={() => write(advanced, 'review')}
-        title="复制成 Claude Code 可直接接收的 review 上下文"
+        title={t('event.copyReviewTitle')}
       >
         <Icon name={copied === 'review' ? 'check' : 'file-text'} size={12} />
-        <span>{copied === 'review' ? '已复制' : '高级复制'}</span>
+        <span>{copied === 'review' ? t('event.copied') : t('event.copyReview')}</span>
       </button>
     </div>
   )
 }
 
 function Thinking({ text }: { text: string }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const empty = !text.trim()
   return (
@@ -457,7 +476,7 @@ function Thinking({ text }: { text: string }) {
         <span>{empty ? '·' : open ? '▾' : '▸'}</span>
         <span>thinking</span>
         <span className="arg">
-          {empty ? '加密 reasoning,无明文(Claude 仅返回 signature)' : text.replace(/\s+/g, ' ').slice(0, 96)}
+          {empty ? t('event.encryptedShort') : text.replace(/\s+/g, ' ').slice(0, 96)}
         </span>
       </div>
       {open && !empty && (
@@ -470,6 +489,7 @@ function Thinking({ text }: { text: string }) {
 }
 
 function SlashCommand({ name, args }: { name: string; args: string }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   return (
     <div className="slash-cmd">
@@ -477,7 +497,7 @@ function SlashCommand({ name, args }: { name: string; args: string }) {
         <span className="slash-chip">/{name}</span>
         {args && (
           <button className="slash-toggle" onClick={() => setOpen((v) => !v)}>
-            {open ? '收起参数' : '展开参数'}
+            {open ? t('event.collapseArgs') : t('event.expandArgs')}
           </button>
         )}
       </div>
@@ -490,8 +510,9 @@ function SlashCommand({ name, args }: { name: string; args: string }) {
 
 // 本地命令输出:把 <local-command-stdout> / <local-command-stderr> 渲染成终端风格小块。
 function LocalCommandOutput({ stream, text }: { stream: 'stdout' | 'stderr'; text: string }) {
+  const { t } = useI18n()
   if (!text) {
-    return <div className="local-cmd-out empty">{stream === 'stderr' ? 'stderr' : 'stdout'}：(空)</div>
+    return <div className="local-cmd-out empty">{t('event.emptyStream', { stream })}</div>
   }
   const short = text.length <= 200 && !text.includes('\n')
   return (
@@ -505,6 +526,7 @@ function LocalCommandOutput({ stream, text }: { stream: 'stdout' | 'stderr'; tex
 // Cockpit 跨 agent 转发的 prompt:默认只显示 Current Request 这一段,
 // 上文(Original Session / User Goal / Final Response …)折叠起来。
 function CockpitPrompt({ text }: { text: string }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const idx = text.search(/^#\s*Current Request\b/m)
   const head = idx > 0 ? text.slice(0, idx).trim() : ''
@@ -526,7 +548,7 @@ function CockpitPrompt({ text }: { text: string }) {
       {head && (
         <div className="cockpit-prompt-head">
           <button className="cockpit-prompt-toggle" onClick={() => setOpen((v) => !v)}>
-            {open ? '▾' : '▸'} 转发上下文 ({head.length} 字符)
+            {open ? '▾' : '▸'} {t('event.forwardedContext', { count: head.length })}
           </button>
           {open && <pre className="cockpit-prompt-context">{head}</pre>}
         </div>
