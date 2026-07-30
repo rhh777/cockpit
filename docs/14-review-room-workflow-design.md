@@ -628,6 +628,40 @@ Fresh Review 推荐复用 `docs/07-native-continuation-and-handoff.md` 的 conte
 2. Review Room 创建时允许选择 parallel / serial。
 3. 对 serial step 状态做 workflow 展示。
 
+## 实现进度
+
+审计日期 2026-07-30(main @ 7f76a99)。本节是 Review Room 的进度事实源:改动落地后更新对应行。
+状态取值:`已完成` / `部分完成` / `未开始`。
+
+| Phase | 项 | 状态 | 说明 |
+|---|---|---|---|
+| 1 | `review-state.json` 类型与读写 store | 已完成 | `server/store/review-room-store.ts` |
+| 1 | `POST /api/review-rooms` 内部创建 group thread | 已完成 | `server/routes/review-rooms.ts`;`reviewRoomId === groupThreadId` |
+| 1 | 「新对话」chooser | 部分完成 | repository / directory / files / document / freeform 已有;**缺 `Existing session` 入口**(从 session 详情页的 `Start Review Room` 反向可达);路径为手输,未接 native file picker |
+| 1 | session detail 增加 `Start Review Room` | 已完成 | `src/components/SessionActionsMenu.tsx` |
+| 1 | 创建后自动进入 review,复用 `/api/group-threads/:id/runs` | 已完成 | `startReview: true` |
+| 1 | group timeline + phase header | 已完成 | `ReviewRoomPanel`(`src/pages/SessionDetail.tsx`) |
+| 2 | compare 生成 issue set | 已完成(实现方式与设计不同) | 未用 orchestrator LLM 轮次;改为**确定性解析** agent 回复末尾的 `FINDINGS` JSON 块(`server/review/extract-issues.ts`),GET 时对已完成轮次自动补抽。可见、可追溯、无额外 token 成本 |
+| 2 | UI 展示 issue list / 共同问题 / 分歧 / 推荐下一步 | 已完成 | `ReviewCompareView` 按 Jaccard + path 聚类,标出双方共识项 |
+| 2 | **issue status 手动修改** | **未开始** | `ReviewIssue` 连 `status` 字段都没有(只有 fix/verify 回填的 `outcome`),store 无 update 方法,compare 视图纯只读 |
+| 2 | summary.md 记录 goal / decisions / tasks | 部分完成 | 沿用群聊 summary 机制,未按 Review Room 语义定制 |
+| 3 | `Fix with Claude/Codex` | 已完成 | 见上文 §Fix 实现记录(2026-07-30 收口单 writer) |
+| 3 | agent fix 只允许一个 writer | 已完成 | `server/review/round-plan.ts` |
+| 3 | **`I'll fix manually` / `I fixed it, verify now`** | **未开始** | 用户可手动把下一轮 kind 选成 verify,但没有「手动修复」这个显式状态 |
+| 3 | Verify 默认让另一个 agent 复核 | 部分完成 | verify 轮唤醒全部 participants,没有实现「Codex 修则 Claude verify」的默认反选 |
+| 4 | 生成 handoff snapshot | 已完成 | `tryBuildHandoffForFresh`;path/freeform source 建不出 handoff 时回落 inline snapshot |
+| 4 | 创建 child Review Room | 已完成 | `POST /api/review-rooms/:id/fresh-review`,`extensions.reviewRoom.parentReviewRoomId` 双向可跳转 |
+| 4 | fresh reviewer 只读 goal / 决策 / 已修 issue,不读完整 transcript | 已完成 | `buildFreshReviewSnapshot` |
+| 4 | **Fresh Review 结果回链 parent issue set** | **未开始** | 只有 `linkFreshReview` 记链接;child 新发现的 issue 不会以 `open` 追加到 parent,parent 也不会标 `verified` |
+| 5 | 接入 docs/13 serial mode | 已完成 | 创建时和每轮都可选 parallel / serial |
+| 5 | serial step 状态的 workflow 展示 | 部分完成 | timeline 有 `serial_step_start` / `serial_turn_status` 卡片;`StreamingStatus` 没有「第 N/M 步」进度(见 docs/13) |
+| — | **`done` 收口阶段** | **未开始** | `ReviewPhase` 有 `'done'`,但 store 从不写它,UI 也没有结束入口;§Done 描述的最终决策/已接受未修问题/后续任务面板不存在 |
+| — | **source snapshot stale 检测** | **未开始** | `sourceSnapshot`(gitHead / fileMtimeMs / eventCount)已落盘,但从不与当前状态比对,§上下文来源要求的「标 stale 或显示 source changed」没有实现 |
+
+测试覆盖现状:`server/review/extract-issues.test.ts`(8 例)+ `server/review/round-plan.test.ts`(13 例)。
+下方「测试计划」里的**路由级**用例(路径校验 400、非 allowed root、不写原生 CLI 文件、
+review-state 损坏可降级为普通 timeline、fresh review 建 child + handoff)**尚未落地**。
+
 ## 测试计划
 
 后端:

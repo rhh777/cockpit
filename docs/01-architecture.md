@@ -500,15 +500,15 @@ Timeline 不只渲染流水账,还应服务“看清 agent 干了什么”:
 
 | 扩展点 | 当前状态 | 留法 |
 |---|---|---|
-| **新增 session 来源** | 只有 claude / codex | 新增 `SessionSourceLoader` |
-| **新增 reviewer agent**(本地 LM / DeepSeek / Gemini) | 只有 claude / codex CLI Adapter | `adapters/types.ts` 定义 `ReviewAgent` interface;不在 UI/server 任何地方硬编码这两个 |
+| **新增 session 来源** | claude / codex / opencode / cockpit | 新增 `SessionSourceLoader` |
+| **新增 reviewer agent**(本地 LM / DeepSeek / Gemini) | claude / codex / opencode / cursor 四个 CLI Adapter | `adapters/types.ts` 定义 `ReviewAgent` interface;不在 UI/server 任何地方硬编码 agent 名(docs/12 D1 已收口到 registry) |
 | **Review/Follow-up 持久化** | 已支持(`~/.cockpit/threads/`) | — |
 | **回到原会话续写** | 已支持 | 独立 `/api/native`,不复用 `/api/threads` |
 | **会话笔记 / 标签** | 不支持 | `SessionSummary` 留一个 `extensions?: Record<string, unknown>` 字段;后续在 `~/.cockpit/annotations/<source>/<id>.json` 旁挂 |
-| **自建 cockpit 会话** | 不支持 | `Source` 已预留 `'cockpit'`;后续可复用 ThreadStore + cockpit loader |
-| **链式 review**(A → B 再 review A 的 review) | 不支持 | Review 输出本身保持结构化(verdict + reasons + suggestions),便于被下一轮 reviewer 消费(结构化 `task-result-report` 思路) |
+| **自建 cockpit 会话** | 已支持(group thread) | `Source` 的 `'cockpit'` + `GroupThreadStore` + cockpit loader |
+| **链式 review**(A → B 再 review A 的 review) | 已支持 | Review Room 的 review → compare → fix → verify → fresh review(docs/14);findings 以 `FINDINGS` JSON 块结构化输出,由 `server/review/extract-issues.ts` 解析后供下一轮消费 |
 | **实时模式**(`fs.watch` 看 Claude 正在跑) | 已支持 | 当前在 server watcher 层实现;若未来来源需要自定义监听,可给 Loader interface 加 `watchSession?(id): AsyncIterable<NormalizedEvent>` |
-| **Reviewer 调工具**(允许 Codex 读代码确认 Claude 说的对不对) | 默认开启 read-only 工具(看代码经常需要);写工具默认禁 | 用户开"允许写"时引入审批层 |
+| **Reviewer 调工具**(允许 Codex 读代码确认 Claude 说的对不对) | 已支持:默认 read-only 工具,写权限由 run 级三档权限 + 逐操作审批控制(docs/09) | 待做:cockpit 侧 policy engine(路径/命令分类)与 sandbox diff-then-merge |
 | **产物管理**(review 输出的补丁单独管) | 不支持 | review 输出目前是纯 markdown;若 reviewer 产 patch,从输出里抽取后单独存 `~/.cockpit/patches/`,不污染会话来源 |
 | **桌面化**(Electron) | 已支持 | Electron 主进程服务 API 与静态资源 |
 

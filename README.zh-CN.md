@@ -6,19 +6,29 @@
 
 `cockpit` 是本地 AI CLI 会话查看器与协作控制台。
 
-- 查看 Claude Code / Codex CLI 的完整会话 timeline。
+- 查看 Claude Code / Codex CLI / OpenCode 的完整会话 timeline。
 - 基于原会话发起跨 agent follow-up、review 或群聊。
+- 用 **Review Room** 让 Claude 和 Codex 围绕一个仓库、文件夹、文件、文档或已有会话互相 review 方案,再修复、复核。
 - 将 cockpit 产生的数据保存到 `~/.cockpit/`,不直接改写原生 CLI 文件。
 
 Follow-up agent 默认只读。「回到原会话」模式只通过官方 CLI 子进程写入原生历史。
 
 ## 范围
 
-**当前能力:** timeline · follow-up · 群聊 · 原生 resume · 实时刷新 · patch diff · 会话筛选 · 附件 · 模型设置 · Electron · i18n。
+**当前能力:**
 
-**未做:** follow-up 写盘审批 · 产物/补丁管理 · 自动编排 · 后台运行 · 全文搜索。
+- **查看** — Claude Code / Codex JSONL 与 OpenCode SQLite 会话、统一 timeline、工具活动摘要、patch diff、筛选、长会话虚拟化、SSE 实时刷新。
+- **Follow-up** — 在任一原生会话后继续问 Claude / Codex / OpenCode / Cursor;历史落 `~/.cockpit/threads/`,不写原生 CLI 文件。
+- **群聊** — cockpit 自建 thread,`@mention` 并行调度,以及 agent 按 `Next:` 协议接棒的**接力讨论**。
+- **Review Room** — 工作流化的群聊:source 快照 → 并行/接力 review → 结构化 findings 对比 → fix(单写者)→ verify → fresh review。
+- **审批与写权限** — run 级三档权限(`ask` / `auto-safe` / `full-access`),Codex app-server 与 Claude SDK 发起真实逐操作审批卡(允许一次 / 总是允许 / 拒绝)。
+- **后台运行** — run 由 `RunRegistry` 托管,切页不中断,可按 `runId` 重新 attach。
+- **原生延续与 handoff** — handoff bundle、Codex deep link、Codex app-server linked thread、Codex thread 一次性镜像。
+- 附件、模型/effort 设置、Electron 桌面壳、i18n 框架。
 
-详见 `docs/01-architecture.md §十四`。
+**未做:** 跨会话全文搜索 · 导出 Markdown/HTML · 产物/补丁管理 · 会话笔记与标签 · 分支可视化 · cockpit 侧 policy engine(`auto-safe` 的路径/命令分类)· 高风险写入的 sandbox diff-then-merge。
+
+**已知粗糙处(依赖它之前请知悉):** 大量 UI 文案仍是硬编码简体中文、绕过了 i18n 层,英文 locale 不完整;Review Room 还没有 done 收口和 issue 状态手改。能力事实源见 `docs/03-roadmap.md`,分阶段实现状态见 `docs/13` / `docs/14`。
 
 ## 文档
 
@@ -27,16 +37,22 @@ Follow-up agent 默认只读。「回到原会话」模式只通过官方 CLI �
 - `docs/03-roadmap.md` — 当前能力、边界与后续方向
 - `docs/04-ui-design.md` — UI 视觉与交互规范
 - `docs/05-group-chat-design.md` — 群聊模式(@mention 并行调度、shared summary)
-- `docs/06-background-runs-design.md` — 后台运行设计(未实现)
+- `docs/06-background-runs-design.md` — 后台运行(`RunRegistry` / attach / cancel)
 - `docs/07-native-continuation-and-handoff.md` — 原生会话延续、deep link 与 handoff bundle
 - `docs/08-agent-adapters-design.md` — CLI agent adapter 设计(OpenCode / Cursor 等)
+- `docs/09-approval-and-write-access.md` — 权限档位与审批层
+- `docs/10-agent-integration.md` — agent adapter 端到端接入
+- `docs/11-agent-runtime-latency-plan.md` — 运行时预热与上下文投影
+- `docs/12-design-review-findings.md` — 2026-07 设计评审,17 项已全部关闭
+- `docs/13-serial-agent-discussion-design.md` — 群聊接力讨论模式
+- `docs/14-review-room-workflow-design.md` — Review Room 工作流与 fresh review
 
 ## 快速开始
 
 ### 系统要求
 
 - **Node.js >= 20**, **pnpm >= 9**
-- 本机已安装并登录的 **Claude Code CLI**(`claude`)和/或 **Codex CLI**(`codex`)—— 它们是 follow-up 功能的运行时依赖(作为子进程调用),不是 npm 包。只读 viewer 模式不需要它们。
+- 本机已安装并登录的 **Claude Code CLI**(`claude`)和/或 **Codex CLI**(`codex`);**OpenCode** 与 **Cursor** CLI 可选。它们是 follow-up 功能的运行时依赖(作为子进程调用),不是 npm 包,cockpit 不接管其凭证。只读 viewer 模式不需要它们。
 
 ### 运行
 
@@ -71,7 +87,7 @@ Vite + React 19 + TypeScript, Node 后端以 Vite middleware 同进程运行。�
 
 ## 设计原则
 
-1. **直接读原生路径** — session 来源是 `~/.claude/projects/` 和 `~/.codex/sessions/`; `~/.cockpit/cache` 只做可删索引。
+1. **直接读原生路径** — session 来源是 `~/.claude/projects/`、`~/.codex/sessions/` 和 OpenCode 的会话库; `~/.cockpit/cache` 只做可删索引。
 2. **格式 best-effort** — Claude / Codex 的 JSONL schema 非官方 spec, 会迭代。loader 忽略未知字段、新 type 加 fallback, 不阻塞渲染。
 3. **零侵入** — 不修改原生 CLI 的任何文件, 只读(「回到原会话」由官方 CLI 子进程自己写, cockpit 不改写字节)。
 4. **默认只读 + 可追溯** — follow-up agent 默认 read-only; cockpit 自己产生的事件带 `turnId`/`runId`/`origin`, 完成、取消、失败都有 terminal status。

@@ -497,6 +497,32 @@ Status: needs-review | needs-changes | consensus | blocked
 3. 可选:手动插队,用户在接力运行中指定下一位 agent。
 4. 可选:在最大发言数到达时生成分歧摘要。
 
+## 实现进度
+
+审计日期 2026-07-30(main @ 7f76a99)。本节是接力讨论的进度事实源:改动落地后更新对应行。
+
+| Phase | 项 | 状态 | 说明 |
+|---|---|---|---|
+| 1 | `mode: 'serial'` + `serial` options 贯通 body / `GroupTurnStartInput` | 已完成 | `server/routes/group-threads.ts`、`server/runs/run-registry.ts` |
+| 1 | serial 模式由 body 指定首位 agent,校验 participants | 已完成 | 目标限制在 `state.agents` 交集内 |
+| 1 | serial orchestrator 复用 `executeGroupMember` | 已完成 | `startSerialGroupTurn` / `executeSerialGroupTurn`;abort 判定在步间与步内两条路径一致,`try/finally` 释放 mutex |
+| 1 | `serial_step_start` / `serial_turn_status` / `user_notification` meta | 已完成 | `finishSerialTurn` |
+| 1 | group turn 级 stream(step 1..N 都发 `serial_step`) | 已完成 | `GET /api/group-threads/:id/turns/:groupTurnId/stream`,前端只有一个 runId 来源 |
+| 1 | `parseSerialDirective` / `selectNextAgentFromDirective` 单测 | 已完成 | `server/util/serial-directive.test.ts`(4 例) |
+| 1 | **协议修复请求(`requestProtocolRepairOnce`)** | **未开始** | §调度算法要求缺 `Next`/`Status` 时先向同一 agent 补问一次、仍缺失才 `protocol-missing`。当前 `run-registry.ts` 解析失败即终止整场讨论 —— agent 忘写结尾协议块等于讨论直接死掉,是接力模式最常见的失败模式 |
+| 2 | composer 并行 / 接力 segmented control | 已完成 | `FollowupComposer` |
+| 2 | 最大发言数输入 | 已完成 | `serialMaxSteps`,默认 6 |
+| 2 | **首位 agent 与 participants 子集选择** | **未开始** | 首位取 targets 首个,participants 不能临时取消某些成员 |
+| 2 | **讨论策略 preset 选择** | **未开始** | 类型支持 `architecture-first` / `implementation-first` / `peer-review`,但 composer 永远写死 `'architecture-first'`(`FollowupComposer.tsx`),Review Room 侧按 round kind 硬选;§讨论策略 preset 的三个 preset 用户选不到 |
+| 2 | **`StreamingStatus` serial step 进度** | **未开始** | §UI 展示要求「接力讨论 2/6: Codex 回复中」;`StreamingStatus.tsx` 没有 serial 分支 |
+| 2 | timeline 对 serial meta 轻量展示 | 已完成 | `EventItem` 渲染协议 chip + `serial_turn_status` 卡片 |
+| 3 | 更好的 `@user` 收口文本 | 部分完成 | 当前是固定模板「接力讨论已结束: {reason}」,未按分歧/共识分别生成 |
+| 3 | 从文档附件创建接力模板 / 手动插队 / 分歧摘要 | 未开始 | 设计里已标为可选项 |
+
+测试覆盖现状:只有 `serial-directive.test.ts` 覆盖纯解析函数。下方「测试计划」里依赖
+orchestrator 的用例(`Next: @codex` 真的启动 Codex、`consensus` 后不再启动、步间取消不启动下一步、
+`max-steps` 终止、正文散文里的 `@codex` 不误触发)**尚未落地**。
+
 ## 测试计划
 
 后端:
