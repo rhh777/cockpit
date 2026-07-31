@@ -255,6 +255,105 @@ function DoneSummary({ room }: { room: ReviewRoomState }) {
   )
 }
 
+
+const STALE_REASON_LABEL: Record<string, MessageKey> = {
+  'git-head-changed': 'source.staleGit',
+  'file-modified': 'source.staleFile',
+  'session-grew': 'source.staleSession',
+  'session-modified': 'source.staleSession',
+  'transcript-grew': 'source.staleThread',
+  'summary-updated': 'source.staleThread',
+}
+
+// docs/14 §上下文来源:source 变化只提示,不静默改写快照。unknown 不展示,避免噪音。
+export function SourceFreshnessBanner({ room }: { room: ReviewRoomState }) {
+  const { t } = useI18n()
+  const f = room.sourceFreshness
+  if (!f || (f.status !== 'stale' && f.status !== 'missing')) return null
+  const headline =
+    f.status === 'missing'
+      ? t('source.missing')
+      : f.reason && STALE_REASON_LABEL[f.reason]
+        ? t(STALE_REASON_LABEL[f.reason])
+        : t('source.stale')
+  return (
+    <div className={`review-source-banner ${f.status}`} title={f.detail}>
+      <Icon name="alert-triangle" size={13} />
+      <div className="review-source-banner-body">
+        <div className="review-source-banner-title">{headline}</div>
+        <div className="review-source-banner-hint">{t('source.staleHint')}</div>
+      </div>
+      {f.detail && <code className="review-cluster-issue-path">{f.detail}</code>}
+    </div>
+  )
+}
+
+// Fresh review 回链(docs/14 §Fresh Review):child 提的新问题在 parent 里只读展示,
+// 状态仍归 child 房间维护 —— 一条问题只有一个属主。
+function FreshReviewSection({ room }: { room: ReviewRoomState }) {
+  const { t } = useI18n()
+  const links = room.freshReviews ?? []
+  if (links.length === 0) return null
+  const rollup = room.freshReviewRollup
+  const resultOf = (childId: string) => rollup?.results.find((r) => r.childReviewRoomId === childId)
+  return (
+    <div className="review-fresh-list">
+      <div className="review-followup-title">
+        {t('fresh.title')}
+        {rollup?.verified && <span className="issue-status-badge status-fixed">{t('fresh.rollupVerified')}</span>}
+        {rollup?.hasNewIssues && (
+          <span className="issue-status-badge status-needs-check">
+            {t('fresh.rollupNewIssues', { count: rollup.newIssueCount })}
+          </span>
+        )}
+      </div>
+      {links.map((f) => {
+        const r = resultOf(f.childReviewRoomId)
+        return (
+          <div className="review-fresh-entry" key={f.childReviewRoomId}>
+            <a
+              className="review-fresh-item"
+              href={`/cockpit/${encodeURIComponent(f.childReviewRoomId)}`}
+              title={t('fresh.openChild')}
+            >
+              <span>→ {f.reviewerAgents.map(labelForAgent).join(', ')}</span>
+              <span className="review-cluster-issue-path">{f.reason}</span>
+              <span className="review-fresh-state">
+                {!r || !r.completed
+                  ? t('fresh.pending')
+                  : r.verified
+                    ? t('fresh.verified')
+                    : t('fresh.newIssues', { count: r.newIssues.length })}
+              </span>
+            </a>
+            {r && r.newIssues.length > 0 && (
+              <>
+                <ul className="review-done-list review-fresh-issues">
+                  {r.newIssues.map((it) => (
+                    <li key={`${f.childReviewRoomId}:${it.id}`}>
+                      <span className={`review-sev sev-${it.severity}`}>
+                        {SEVERITY_LABEL[it.severity] ?? it.severity}
+                      </span>
+                      <span>{it.title}</span>
+                      {it.path && (
+                        <code className="review-cluster-issue-path">
+                          {it.path}
+                          {it.line ? `:${it.line}` : ''}
+                        </code>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                <div className="review-fresh-note">{t('fresh.readOnlyNote')}</div>
+              </>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export function ReviewCompareView({
   room,
   onExtract,
@@ -539,17 +638,7 @@ export function ReviewCompareView({
         />
       )}
 
-      {room.freshReviews && room.freshReviews.length > 0 && (
-        <div className="review-fresh-list">
-          <div className="review-followup-title">Fresh reviews</div>
-          {room.freshReviews.map((f) => (
-            <a key={f.childReviewRoomId} className="review-fresh-item" href={`/cockpit/${encodeURIComponent(f.childReviewRoomId)}`}>
-              <span>→ {f.reviewerAgents.map(labelForAgent).join(', ')}</span>
-              <span className="review-cluster-issue-path">{f.reason}</span>
-            </a>
-          ))}
-        </div>
-      )}
+      <FreshReviewSection room={room} />
 
       {(set.agreements.length > 0 || set.disagreements.length > 0) && (
         <div className="review-compare-meta">

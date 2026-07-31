@@ -6254,6 +6254,58 @@ body.resizing * {
   gap: 6px;
   flex-wrap: wrap;
 }
+/* source stale 提示 + fresh review 回链(docs/14) */
+.review-source-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  margin: 0 0 10px;
+  border-radius: 8px;
+  border: 0.5px solid color-mix(in srgb, var(--color-warning, #f08c00) 45%, transparent);
+  background: color-mix(in srgb, var(--color-warning, #f08c00) 8%, var(--color-background-primary));
+  color: var(--color-warning, #f08c00);
+  font-size: 12px;
+}
+.review-source-banner.missing {
+  border-color: color-mix(in srgb, var(--color-danger, #e03131) 45%, transparent);
+  background: color-mix(in srgb, var(--color-danger, #e03131) 8%, var(--color-background-primary));
+  color: var(--color-danger, #e03131);
+}
+.review-source-banner-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.review-source-banner-title {
+  font-weight: 700;
+}
+.review-source-banner-hint {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+.review-fresh-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0;
+}
+.review-fresh-state {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+.review-fresh-issues {
+  margin: 0;
+  padding-left: 22px;
+}
+.review-fresh-note {
+  font-size: 11px;
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+  padding-left: 22px;
+}
+
 .review-done-source {
   display: flex;
   align-items: center;

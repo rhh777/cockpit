@@ -39,6 +39,8 @@ export interface ReviewRoomSource {
     summaryRevision?: number
     fileMtimeMs?: number
     gitHead?: string
+    /** files / document 来源的逐文件 mtime 基线,用于 stale 检测(docs/14 §上下文来源)。 */
+    pathMtimes?: { path: string; mtimeMs: number }[]
   }
 }
 

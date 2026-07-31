@@ -13,6 +13,8 @@ import {
   resolveIssueStatus,
   summarizeIssueStatuses,
 } from '../review/issue-status'
+import { computeSourceFreshness, makeFreshnessProbe } from '../review/source-freshness'
+import { deriveFreshReviewResult, rollupFreshReviews } from '../review/fresh-review-link'
 import type { ReviewIssueStatus, ReviewRoomDiskState } from '../store/review-room-store'
 import { randomUUID } from 'node:crypto'
 import { handoffDir, handoffStore } from '../store/handoff-store'
@@ -27,6 +29,16 @@ import { cleanTitle } from '../util/title'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_REVIEW_AGENTS = ['claude', 'codex'] as AgentName[]
+
+const freshnessProbe = makeFreshnessProbe({
+  resolveNativeSession: (source, sessionId) => sessionRegistry.resolve(source as Source, sessionId),
+  readGroupThread: async (id) => {
+    const state = await groupThreadStore.readState(id)
+    if (!state) return null
+    const transcript = await groupThreadStore.readTranscript(id)
+    return { eventCount: transcript.length, summaryRevision: state.summaryRevision }
+  },
+})
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status
@@ -83,6 +95,8 @@ async function pathSource(input: unknown): Promise<BuiltSource> {
   }
 
   const refs: ReviewRoomPathSource[] = []
+  // files / document 记逐文件 mtime 作为 stale 检测基线(docs/14 §上下文来源)。
+  const pathMtimes: { path: string; mtimeMs: number }[] = []
   for (const p of paths.slice(0, 20)) {
     const st = await fsp.stat(p).catch(() => null)
     if (!st) throw new Error(`path does not exist: ${p}`)
@@ -90,6 +104,8 @@ async function pathSource(input: unknown): Promise<BuiltSource> {
       if (!st.isDirectory()) throw new Error(`directory required: ${p}`)
     } else if (!st.isFile()) {
       throw new Error(`file required: ${p}`)
+    } else {
+      pathMtimes.push({ path: p, mtimeMs: st.mtimeMs })
     }
     refs.push({
       kind: kind === 'files' ? 'file' : kind,
@@ -116,7 +132,10 @@ async function pathSource(input: unknown): Promise<BuiltSource> {
       cwd,
       paths: refs,
       snapshotCreatedAt: new Date().toISOString(),
-      sourceSnapshot: gitHead ? { gitHead } : undefined,
+      sourceSnapshot:
+        gitHead || pathMtimes.length
+          ? { ...(gitHead ? { gitHead } : {}), ...(pathMtimes.length ? { pathMtimes } : {}) }
+          : undefined,
     },
   }
 }
@@ -486,9 +505,29 @@ function reviewPrompt(
 
 // 下发给前端的 review DTO:每条 issue 附上解析后的 status / statusSource,
 // 并带一份最近一轮 review 的状态汇总。优先级规则只在服务端实现一次(docs/14)。
-function decorateReview(review: ReviewRoomDiskState) {
+async function decorateReview(review: ReviewRoomDiskState) {
   const outcomeTrail = collectOutcomeTrail(review.rounds, review.issueSets)
+  // source 新鲜度:只读判断,永不回写 snapshot(docs/14 §上下文来源)。失败降级为 unknown。
+  const sourceFreshness = await computeSourceFreshness(review.source, freshnessProbe).catch(
+    () => ({ status: 'unknown' as const, reason: 'not-resolvable' as const }),
+  )
+  // Fresh review 回链:从各 child 的 review-state 派生只读视图,不写进 parent 的 issueSets。
+  // 先对 child 做一次 reconcile —— child 的 findings 是在它自己被 GET 时才抽取的,
+  // 但用户可能只看 parent 从没打开过 child,那样回链会永远停在「进行中」。
+  // reconcile 幂等,没变化时不写盘。
+  const freshResults = await Promise.all(
+    (review.freshReviews ?? []).map(async (link) => {
+      const raw = await reviewRoomStore.read(link.childReviewRoomId).catch(() => null)
+      const child = raw
+        ? await reconcileRoundsAndIssues(link.childReviewRoomId, raw).catch(() => raw)
+        : null
+      return deriveFreshReviewResult(link, child ?? raw)
+    }),
+  )
+  const freshReviewRollup = rollupFreshReviews(freshResults)
   return {
+    sourceFreshness,
+    freshReviewRollup,
     ...review,
     issueSets: review.issueSets.map((set) => ({
       ...set,
@@ -545,7 +584,7 @@ async function handleSetIssueStatus(req: IncomingMessage, res: ServerResponse, i
     sendJson(res, 404, { error: 'review room not found' })
     return
   }
-  sendJson(res, 200, { reviewRoomId: id, review: decorateReview(next) })
+  sendJson(res, 200, { reviewRoomId: id, review: await decorateReview(next) })
 }
 
 async function handleDone(req: IncomingMessage, res: ServerResponse, id: string) {
@@ -574,7 +613,7 @@ async function handleDone(req: IncomingMessage, res: ServerResponse, id: string)
     return
   }
   sessionRegistry.invalidate()
-  sendJson(res, 200, { reviewRoomId: id, review: decorateReview(next) })
+  sendJson(res, 200, { reviewRoomId: id, review: await decorateReview(next) })
 }
 
 async function handleGet(res: ServerResponse, id: string) {
@@ -589,7 +628,7 @@ async function handleGet(res: ServerResponse, id: string) {
     return
   }
   review = (await reconcileRoundsAndIssues(id, review)) ?? review
-  sendJson(res, 200, { reviewRoomId: id, groupThreadId: id, state, review: decorateReview(review) })
+  sendJson(res, 200, { reviewRoomId: id, groupThreadId: id, state, review: await decorateReview(review) })
 }
 
 async function handleFreshReview(req: IncomingMessage, res: ServerResponse, id: string) {
@@ -680,7 +719,7 @@ async function handleFreshReview(req: IncomingMessage, res: ServerResponse, id: 
     parentReviewRoomId: id,
     childReviewRoomId: child.id,
     groupThreadId: child.id,
-    review: decorateReview(childReview),
+    review: await decorateReview(childReview),
     started,
     ...(startError ? { startError } : {}),
   })
@@ -786,7 +825,7 @@ async function handleExtract(req: IncomingMessage, res: ServerResponse, id: stri
     const saved = await reviewRoomStore.saveIssueSet(id, rId, parsed)
     if (saved) next = saved
   }
-  sendJson(res, 200, { reviewRoomId: id, review: decorateReview(next) })
+  sendJson(res, 200, { reviewRoomId: id, review: await decorateReview(next) })
 }
 
 // GET 时按 transcript 的 turn_status 补写轮次状态,并对已完成、还没 issueSet 的轮次做一次抽取。

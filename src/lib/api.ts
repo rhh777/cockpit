@@ -125,6 +125,25 @@ export interface ReviewRoomState {
     groupTurnId?: string
   }[]
   issueSets: ReviewIssueSetDTO[]
+  /** source snapshot 与当前状态的比对结果;只提示,不自动刷新快照。 */
+  sourceFreshness?: {
+    status: 'fresh' | 'stale' | 'unknown' | 'missing'
+    reason?: string
+    detail?: string
+  }
+  /** fresh review 回链结果:从各 child 房间派生的只读视图。 */
+  freshReviewRollup?: {
+    results: {
+      childReviewRoomId: string
+      completed: boolean
+      verified: boolean
+      childPhase?: string
+      newIssues: ReviewIssueDTO[]
+    }[]
+    hasNewIssues: boolean
+    verified: boolean
+    newIssueCount: number
+  }
   conclusion?: string
   doneAt?: string
   statusSummary?: {

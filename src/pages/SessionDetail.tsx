@@ -13,7 +13,7 @@ import {
   type ReviewRoomState,
   type SessionDetailDTO,
 } from '../lib/api'
-import { ReviewCompareView } from '../components/ReviewCompareView'
+import { ReviewCompareView, SourceFreshnessBanner } from '../components/ReviewCompareView'
 import {
   attachGroupTurnStream,
   attachRunStream,
@@ -1278,6 +1278,7 @@ export function SessionDetail() {
               onStart={handleReviewRoomStart}
               onFinish={handleReviewRoomFinish}
             />
+            {reviewRoom && <SourceFreshnessBanner room={reviewRoom} />}
             {reviewRoom && (
               <ReviewCompareView
                 room={reviewRoom}

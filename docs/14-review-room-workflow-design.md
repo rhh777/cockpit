@@ -652,11 +652,11 @@ Fresh Review 推荐复用 `docs/07-native-continuation-and-handoff.md` 的 conte
 | 4 | 生成 handoff snapshot | 已完成 | `tryBuildHandoffForFresh`;path/freeform source 建不出 handoff 时回落 inline snapshot |
 | 4 | 创建 child Review Room | 已完成 | `POST /api/review-rooms/:id/fresh-review`,`extensions.reviewRoom.parentReviewRoomId` 双向可跳转 |
 | 4 | fresh reviewer 只读 goal / 决策 / 已修 issue,不读完整 transcript | 已完成 | `buildFreshReviewSnapshot` |
-| 4 | **Fresh Review 结果回链 parent issue set** | **未开始** | 只有 `linkFreshReview` 记链接;child 新发现的 issue 不会以 `open` 追加到 parent,parent 也不会标 `verified` |
+| 4 | Fresh Review 结果回链 parent issue set | 已完成 | 见下方「回链与 stale 检测实现记录」 |
 | 5 | 接入 docs/13 serial mode | 已完成 | 创建时和每轮都可选 parallel / serial |
 | 5 | serial step 状态的 workflow 展示 | 部分完成 | timeline 有 `serial_step_start` / `serial_turn_status` 卡片;`StreamingStatus` 没有「第 N/M 步」进度(见 docs/13) |
 | — | `done` 收口阶段 | 已完成 | 见下方「issue 状态与 Done 收口实现记录」 |
-| — | **source snapshot stale 检测** | **未开始** | `sourceSnapshot`(gitHead / fileMtimeMs / eventCount)已落盘,但从不与当前状态比对,§上下文来源要求的「标 stale 或显示 source changed」没有实现 |
+| — | source snapshot stale 检测 | 已完成 | 见下方「回链与 stale 检测实现记录」 |
 
 测试覆盖现状:`server/review/extract-issues.test.ts`(8 例)+ `server/review/round-plan.test.ts`(13 例)。
 下方「测试计划」里的**路由级**用例(路径校验 400、非 allowed root、不写原生 CLI 文件、
@@ -695,6 +695,43 @@ review-state 损坏可降级为普通 timeline、fresh review 建 child + handof
 覆盖:`server/review/issue-status.test.ts`(11 例:优先级、多轮 outcome 取最新、roundId 隔离、
 allResolved 边界)。端到端在 dev server 上实测:GET 附状态、手改持久化、force 重抽后人工状态存活、
 收口 / 重新打开、done 期间重抽不掉档、非法输入 400 / 404。
+
+### 回链与 stale 检测实现记录(2026-07-31)
+
+**Fresh Review 回链**(§Fresh Review):
+
+- 实现为**派生只读视图**,不把 child 的 issue 写进 parent 的 `issueSets`。理由和 issue 状态那次一样:
+  parent 的 issueSet 会被 `saveIssueSet` 整体替换,写进去会被重新抽取冲掉;而且同一条问题会出现
+  两个属主,状态该听谁的变得含糊。改为在 `decorateReview()` 里从各 child 的 review-state 现算,
+  没有新增持久化字段,也就不存在「回链数据过期」。
+- child 永远是这些问题的事实源,状态也在 child 房间里改;parent 侧只读展示,并在 UI 上写明这一点。
+- **parent 会先对 child 跑一次 `reconcileRoundsAndIssues`**:child 的 findings 原本只在它自己被 GET
+  时才抽取,而用户完全可能只看 parent、从没打开过 child —— 不补这一步回链会永远停在「进行中」。
+  reconcile 幂等,无变化时不写盘。
+- 汇总语义:`verified` = 至少有一个 child 跑完且所有跑完的 child 都没提新问题
+  (「还没查」和「查过没问题」必须区分,所以未完成的 child 不算 verified);
+  `hasNewIssues` = 任一 child 提出了新问题。
+- 纯函数在 `server/review/fresh-review-link.ts`,覆盖 `fresh-review-link.test.ts`(11 例)。
+
+**source stale 检测**(§上下文来源):
+
+- 只判断并展示,**永不回写 snapshot** —— 对应设计里「不要静默改写历史」。
+- 判定按 source kind 分派(`server/review/source-freshness.ts`,probe 依赖注入便于单测):
+  repository/directory 比 `gitHead`;files/document 比逐文件 mtime;native-session 比
+  session 文件 mtime 与 eventCount;group-thread 比 transcript 长度与 summaryRevision;
+  freeform 恒 fresh(没有外部来源)。
+- **保守原则**:快照缺少可比字段时返回 `unknown` 而不是 `stale`,避免老房间(创建时还没记这些字段)
+  被全部误报成已变更;计数变少(用户删了历史)也不算 stale,只关心「有没有新内容」。
+- 来源被删返回 `missing`,与 `stale` 分开展示。
+- 新增基线字段:`sourceSnapshot.pathMtimes`,创建 files/document 房间时逐文件记录 mtime。
+- native session 只 `stat` 不解析,避免 GET 时全量重解析大 session。
+- UI:Review Room 面板下方一条告警条(stale 橙 / missing 红),给出原因与具体路径,
+  并提示「findings 针对的是建室时的快照,想看当前状态请发起 fresh review」。只在 stale/missing 时出现,
+  unknown 不展示以免噪音。
+- 覆盖 `source-freshness.test.ts`(14 例)。
+
+端到端实测:真实文档房间 fresh → 改文件后 stale(带路径)→ 删文件后 missing;
+从没被打开过的 child 房间,parent 单独 GET 也能拉到它的新发现。
 
 ## 测试计划
 
