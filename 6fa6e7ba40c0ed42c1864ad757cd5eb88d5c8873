@@ -1,0 +1,68 @@
+src/lib/i18n.ts
+  62592df39221d739 471-485,947-961
+server/review/source-freshness.ts
+  62592df39221d739 1-157
+server/routes/review-rooms.ts
+  62592df39221d739 16-17,33-42,98-99,107-108,135-138,508,510-527,529-530,587,616,631,722,828
+src/styles.css
+  62592df39221d739 6257-6308
+server/review/fresh-review-link.ts
+  62592df39221d739 1-79
+src/lib/api.ts
+  62592df39221d739 128-146
+docs/14-review-room-workflow-design.md
+  62592df39221d739 655,659,699-734
+server/review/fresh-review-link.test.ts
+  62592df39221d739 1-152
+server/store/review-room-store.ts
+  62592df39221d739 42-43
+server/review/source-freshness.test.ts
+  62592df39221d739 1-184
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "6fa6e7ba40c0ed42c1864ad757cd5eb88d5c8873",
+  "prompts": {
+    "4cc1d80d56e42ef0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a29188b-da97-4d9a-84b6-06d740f428be",
+        "model": "claude-opus-5"
+      },
+      "human_author": "haorenhui",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2701,
+      "overriden_lines": 0,
+      "messages_url": "http://172.20.103.50:8002/cas/1b0f57a0c78ccbff11cbb172744f7c3951a61c96067b6f94a682aa94d0010485",
+      "token_usage": {
+        "input_tokens": 1160,
+        "output_tokens": 192088,
+        "cache_creation_input_tokens": 903043,
+        "cache_read_input_tokens": 84565797
+      }
+    },
+    "62592df39221d739": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "71f05761-69e5-46da-b810-40fc723b1a52",
+        "model": "claude-opus-5"
+      },
+      "human_author": "haorenhui",
+      "messages": [],
+      "total_additions": 867,
+      "total_deletions": 26,
+      "accepted_lines": 1567,
+      "overriden_lines": 0,
+      "messages_url": "http://172.20.103.50:8002/cas/2836d9f4bf305afef306449bc00429c459047f24e359f7c65d75c97c467786a6",
+      "token_usage": {
+        "input_tokens": 1346,
+        "output_tokens": 267981,
+        "cache_creation_input_tokens": 2449507,
+        "cache_read_input_tokens": 136683415
+      }
+    }
+  }
+}
