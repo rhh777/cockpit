@@ -43,6 +43,7 @@ const initialLines = [
 await fsp.writeFile(sessionFile, initialLines.join('\n') + '\n', 'utf8')
 
 const { cockpitApi } = await import('../index')
+const { runRegistry } = await import('../runs/run-registry')
 
 const server = http.createServer(async (req, res) => {
   await new Promise<void>((resolve) => {
@@ -194,6 +195,74 @@ test('E2E: group-from-session 建群 + 导入事件', async () => {
   assert.ok(hasImported, 'imported_from meta missing')
   const hasUser = lines.some((l) => l.type === 'user_text' && /refactor login/.test(l.text ?? ''))
   assert.ok(hasUser, 'user_text not imported')
+})
+
+test('E2E: Codex 深集成等首轮完成后才返回 Desktop deeplink', async () => {
+  const created = await jpost<{ handoffId: string }>('/api/handoffs', {
+    source: { kind: 'native-session', source: 'claude-code', sessionId: SESSION_ID },
+    target: 'codex',
+  })
+  assert.equal(created.status, 201)
+
+  const original = runRegistry.startCodexContinuation
+  let markReady!: (record: {
+    runId: string
+    kind: 'native-continuation'
+    status: 'completed'
+    turnId: string
+    agent: 'codex'
+    startedAt: string
+    endedAt: string
+  }) => void
+  const readyForNativeOpen = new Promise<Parameters<typeof markReady>[0]>((resolve) => {
+    markReady = resolve
+  })
+  ;(runRegistry as unknown as { startCodexContinuation: typeof runRegistry.startCodexContinuation })
+    .startCodexContinuation = async () => ({
+      threadId: 'thread-ready-after-turn',
+      record: {
+        runId: 'native-run-test',
+        kind: 'native-continuation',
+        status: 'running',
+        turnId: 'native-turn-test',
+        agent: 'codex',
+        startedAt: '2026-07-31T00:00:00.000Z',
+      },
+      readyForNativeOpen,
+    })
+
+  try {
+    let responseSettled = false
+    const responsePromise = jpost<{
+      nativeLink: { url?: string; nativeThreadId?: string }
+    }>(`/api/handoffs/${created.json.handoffId}/open-native`, {
+      provider: 'codex',
+      method: 'app-server',
+    }).then((response) => {
+      responseSettled = true
+      return response
+    })
+
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(responseSettled, false, 'empty thread deeplink returned before the first turn completed')
+
+    markReady({
+      runId: 'native-run-test',
+      kind: 'native-continuation',
+      status: 'completed',
+      turnId: 'native-turn-test',
+      agent: 'codex',
+      startedAt: '2026-07-31T00:00:00.000Z',
+      endedAt: '2026-07-31T00:00:01.000Z',
+    })
+    const response = await responsePromise
+    assert.equal(response.status, 200)
+    assert.equal(response.json.nativeLink.nativeThreadId, 'thread-ready-after-turn')
+    assert.equal(response.json.nativeLink.url, 'codex://threads/thread-ready-after-turn')
+  } finally {
+    ;(runRegistry as unknown as { startCodexContinuation: typeof runRegistry.startCodexContinuation })
+      .startCodexContinuation = original
+  }
 })
 
 test('E2E: 400 on invalid source', async () => {

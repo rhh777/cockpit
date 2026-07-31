@@ -10,6 +10,7 @@
 |---|---|---|
 | **Codex 桌面端** | 侧栏按**项目分组** + 相对时间(2周/3周);composer 底部 **chip 行**;居中空状态 | 极简到无 timeline 结构 |
 | **Claude Code 桌面端** | 底部**上下文条**(cwd / branch);**可折叠工具/动作块**;右下**模型/agent 选择器** | Chat/Cowork/Code 三态切换、Create PR 等写操作 |
+| **GitHub Primer** | 语义化 color/type/spacing token;紧凑 ActionList;统一 hover/active/focus-visible;用 `rem` 保留浏览器缩放能力 | 不直接引入整套组件依赖,不照搬 GitHub 品牌色与网页信息架构 |
 | **多 agent transcript 类工具** | **多 agent 头像化 transcript**(圆头像 + 名 + 时间);失败态直接在气泡里显示 | 产物库 / Agents / 分析 / orchestrator 等重模块 |
 
 ## 二、布局:三栏 + 底部 composer
@@ -51,10 +52,11 @@
 
 ### 字号 / 字重 / 间距
 
-- 正文 13px(桌面密集型,比 claude.ai 的 16px 紧);标题/session 名 weight 500,其余 400;**只用 400/500 两档**。
+- 正文 `0.8125rem`(默认 13px,同时保留浏览器缩放能力);紧凑标签 `0.75rem`;辅助文字 `0.6875rem`。标题/session 名 weight 500,其余 400;**只用 400/500 两档**。
 - 一律 sentence case,不用 Title Case / 全大写。
 - 圆角 `--border-radius-md`(卡片用 `-lg`);边框统一 `0.5px`。
 - 代码/工具名/路径用 `--font-mono`。
+- 键盘焦点统一使用 `--focus-ring`;不得依赖浏览器默认描边,也不得只提供 hover 而没有 focus-visible。
 
 ## 四、组件规范
 

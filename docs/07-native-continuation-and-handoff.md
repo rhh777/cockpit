@@ -93,6 +93,10 @@ source session
 2. Cockpit 要驱动和展示运行过程: `app-server`。
 3. 非交互脚本或 app-server 不可用: `cli`。
 
+Codex Desktop 不会可靠地热刷新由另一个 `codex app-server` 进程写入的 thread。
+深集成因此只能在首轮 handoff turn 完成后才返回 `codex://threads/<id>` 打开入口;
+不能在 `thread/start` 刚返回空 thread 时就打开 Desktop。
+
 ### 和 Claude 继续
 
 创建一个 Claude continuation。

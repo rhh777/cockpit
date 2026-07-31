@@ -168,6 +168,13 @@ async function handleOpenNative(req: IncomingMessage, res: ServerResponse, id: s
           cwd: manifest.cwd,
           prompt: prompt || `Continue from Cockpit handoff ${id}.`,
         })
+        // thread/start 只代表空 thread 已创建。Codex Desktop 若此时打开,不会可靠地
+        // 热刷新另一个 app-server 进程随后写入的 turn,会一直显示空白直到重启。
+        // 等首轮完整落盘后再返回 deeplink,确保 Desktop 首次读取就是完整 handoff。
+        const completed = await started.readyForNativeOpen
+        if (completed.status !== 'completed') {
+          throw new Error(completed.error || `codex handoff turn ${completed.status}`)
+        }
         const link: NativeLink = {
           id: `nl_${randomUUID()}`,
           provider: 'codex',

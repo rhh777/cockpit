@@ -974,11 +974,13 @@ class RunRegistry {
 
   // Codex app-server continuation:
   // 1) spawn `codex app-server --stdio` + initialize + thread/start(等待 threadId)
-  // 2) 拿到 threadId 后立即返回,调用方(handoffs 路由)可持久化 NativeLink
-  // 3) 后台内继续跑 turn/start,把 ServerNotification 翻译成 NormalizedEvent 灌到 run.stream
+  // 2) 拿到 threadId 后返回 readyForNativeOpen promise,后台继续跑 turn/start
+  // 3) 调用方等 readyForNativeOpen 后再持久化 NativeLink / 暴露 Desktop deeplink
+  // 4) ServerNotification 翻译成 NormalizedEvent 灌到 run.stream
   async startCodexContinuation(input: NativeContinuationInput): Promise<{
     record: RunRecord
     threadId: string
+    readyForNativeOpen: Promise<RunRecord>
   }> {
     await this.init()
     const turnId = `native_cont_turn_${randomUUID()}`
@@ -1037,8 +1039,11 @@ class RunRegistry {
       throw err
     }
 
-    void this.executeCodexContinuation(handle, lease, threadId, input)
-    return { record, threadId }
+    // Codex Desktop 不会可靠地热刷新由另一个 app-server 进程继续写入的 thread。
+    // 因此调用方必须等首轮 turn 完成后再暴露 deeplink,否则 Desktop 会缓存空会话,
+    // 直到重启才从 rollout JSONL 重新读到 handoff 内容。
+    const readyForNativeOpen = this.executeCodexContinuation(handle, lease, threadId, input)
+    return { record, threadId, readyForNativeOpen }
   }
 
   attach(runId: string, res: ServerResponse): (() => void) | null {
@@ -1392,7 +1397,7 @@ class RunRegistry {
     lease: CodexRuntimeLease,
     threadId: string,
     input: NativeContinuationInput,
-  ) {
+  ): Promise<RunRecord> {
     const { runId, turnId } = handle.record
     const server = lease.server
     let turnDone = false
@@ -1507,6 +1512,7 @@ class RunRegistry {
         if (this.runs.get(runId) === handle) this.runs.delete(runId)
       }, 5 * 60 * 1000).unref?.()
     }
+    return handle.record
   }
 
   private async executeNativeResume(handle: RunHandle, input: NativeStartInput, cwd: string | null) {

@@ -179,7 +179,7 @@ interface ReviewAgent {
 | provider | method | 做法 |
 |---|---|---|
 | `codex` | `deeplink` | `buildCodexDeeplink` 拼 `codex://` URL,前端 `open` 打开。prompt 超预算时返回 `fallbackPrompt` 让用户手贴。 |
-| `codex` | `app-server` | `runRegistry.startCodexContinuation` 起一个 `codex app-server --stdio` 常驻子进程,`initialize` → `thread/start` 拿 `threadId`,后续 `turn/start` 用户请求。回来的 `ServerNotification` 走 `translateNotification` → `NormalizedEvent`。native-continuation 目前不接审批 UI,server-initiated request 直接 -32601 拒绝。 |
+| `codex` | `app-server` | `runRegistry.startCodexContinuation` 起一个 `codex app-server --stdio` 常驻子进程,`initialize` → `thread/start` 拿 `threadId`,再用 `turn/start` 发送 handoff。首轮完成后才返回 Desktop deeplink,避免 Codex Desktop 缓存外部 app-server 刚创建的空 thread。回来的 `ServerNotification` 走 `translateNotification` → `NormalizedEvent`。native-continuation 目前不接审批 UI,server-initiated request 直接 -32601 拒绝。 |
 | `claude` | `manual` | Phase 1 只返回渲染好的 prompt,让用户自己粘到 `claude`。 |
 
 Handoff 产物本身在 `~/.cockpit/`;`nativeLink.linkLevel === 'linked'`(Codex app-server)后 `runRegistry` 持有 threadId,可以后续 mirror 回 Codex thread 到 handoff 目录。

@@ -576,10 +576,24 @@ export function FollowupComposer({
     return parts.every((p) => p === 'Default') ? 'Default' : parts.join(' · ')
   }
 
+  const triggerParts = (targetAgent: AgentName) => {
+    const groups = cliGroupsForAgent(targetAgent)
+    const selected = cliByAgent[targetAgent] ?? {}
+    const labelFor = (key: CliField) => {
+      const group = groups.find((item) => item.key === key)
+      if (!group) return null
+      const value = selected[key] ?? ''
+      const option = group.options.find((item) => item.value === value)
+      return option ? optionLabel(option, t) : 'Default'
+    }
+    return { model: labelFor('model') ?? 'Default', effort: labelFor('effort') }
+  }
+
   const renderModelPicker = (targetAgent: AgentName, withAgent = false, enabled = true) => {
     const targetGroups = cliGroupsForAgent(targetAgent)
     const targetSel = cliByAgent[targetAgent] ?? {}
     const label = triggerLabel(targetAgent)
+    const parts = triggerParts(targetAgent)
     const hasCustomSelection = label !== 'Default'
     const isTargeted = groupMode && targets.includes(targetAgent)
     const popoverLeft =
@@ -638,15 +652,22 @@ export function FollowupComposer({
           aria-haspopup="menu"
           aria-expanded={modelMenuOpen === targetAgent}
           aria-pressed={withAgent ? enabled : undefined}
+          aria-label={withAgent ? `${labelForAgent(targetAgent)}${enabled ? `: ${label}` : ''}` : undefined}
         >
           {!withAgent && <Icon name="settings" size={12} />}
-          {withAgent && <AgentIcon agent={targetAgent} size={20} />}
-          {withAgent && <span className="model-picker-agent">{labelForAgent(targetAgent)}</span>}
-          {enabled && (!withAgent || hasCustomSelection || withAgent) && (
-            <span className={withAgent ? 'model-picker-selection' : undefined}>
-              {label}
+          {withAgent && <AgentIcon agent={targetAgent} size={18} />}
+          {withAgent && enabled && (
+            <span className="model-picker-selection">
+              <span className="model-picker-model">{parts.model}</span>
+              {parts.effort && (
+                <span className="model-picker-effort" title={t('cli.reasoning')}>
+                  <span className="model-picker-effort-label">{t('cli.reasoning')}</span>
+                  <span>{parts.effort}</span>
+                </span>
+              )}
             </span>
           )}
+          {!withAgent && enabled && <span>{label}</span>}
           {enabled && <span className="model-picker-caret">▾</span>}
         </button>
         {withAgent && enabled && (
