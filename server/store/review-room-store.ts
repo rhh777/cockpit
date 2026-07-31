@@ -47,12 +47,14 @@ export interface ReviewRoomSource {
 export interface ReviewRound {
   id: string
   kind: 'review' | 'fix' | 'verify' | 'fresh-review'
-  mode: 'parallel' | 'serial' | 'single'
+  /** 'manual' = 用户自己动手修(docs/14 §Fix「I'll fix manually」),没有 agent run。 */
+  mode: 'parallel' | 'serial' | 'single' | 'manual'
   startedAt: string
   completedAt?: string
   agents: AgentName[]
   groupTurnId?: string
-  status: 'running' | 'completed' | 'failed' | 'aborted'
+  /** 'awaiting-user' 只用于手动修复轮:不是 agent 在跑,而是在等用户动手。 */
+  status: 'running' | 'completed' | 'failed' | 'aborted' | 'awaiting-user'
 }
 
 export type IssueSeverity = 'blocker' | 'major' | 'minor' | 'nit'
@@ -318,6 +320,47 @@ export const reviewRoomStore = {
         phase: done ? 'done' : current.rounds.length ? 'compare' : 'draft',
         ...(conclusion !== undefined ? { conclusion } : {}),
         ...(done ? { doneAt: now } : { doneAt: undefined }),
+        updatedAt: now,
+      }
+      await writeState(next)
+      return next
+    })
+  },
+
+  /** docs/14 §Fix:标记为手动修复中(phase=fix),不启动任何 agent run。 */
+  async startManualFix(groupThreadId: string): Promise<ReviewRoomDiskState | null> {
+    return enqueue(groupThreadId, async () => {
+      const current = await this.read(groupThreadId)
+      if (!current) return null
+      // 已经在等用户时不重复插入轮次。
+      if (current.rounds.some((r) => r.status === 'awaiting-user')) return current
+      const now = new Date().toISOString()
+      const next: ReviewRoomDiskState = {
+        ...current,
+        phase: 'fix',
+        rounds: [
+          ...current.rounds,
+          { id: randomUUID(), kind: 'fix', mode: 'manual', agents: [], startedAt: now, status: 'awaiting-user' },
+        ],
+        updatedAt: now,
+      }
+      await writeState(next)
+      return next
+    })
+  },
+
+  /** 关闭挂起的手动修复轮(用户点「我修好了,去复核」时调用)。 */
+  async closeManualFix(groupThreadId: string): Promise<ReviewRoomDiskState | null> {
+    return enqueue(groupThreadId, async () => {
+      const current = await this.read(groupThreadId)
+      if (!current) return null
+      if (!current.rounds.some((r) => r.status === 'awaiting-user')) return current
+      const now = new Date().toISOString()
+      const next: ReviewRoomDiskState = {
+        ...current,
+        rounds: current.rounds.map((r) =>
+          r.status === 'awaiting-user' ? { ...r, status: 'completed' as const, completedAt: now } : r,
+        ),
         updatedAt: now,
       }
       await writeState(next)

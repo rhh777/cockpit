@@ -117,11 +117,11 @@ export interface ReviewRoomState {
   rounds: {
     id: string
     kind: 'review' | 'fix' | 'verify' | 'fresh-review'
-    mode: 'parallel' | 'serial' | 'single'
+    mode: 'parallel' | 'serial' | 'single' | 'manual'
     agents: string[]
     startedAt: string
     completedAt?: string
-    status: 'running' | 'completed' | 'failed' | 'aborted'
+    status: 'running' | 'completed' | 'failed' | 'aborted' | 'awaiting-user'
     groupTurnId?: string
   }[]
   issueSets: ReviewIssueSetDTO[]
@@ -222,6 +222,17 @@ export async function setReviewIssueStatus(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`${res.status}`)
+  const json = (await res.json()) as { review?: ReviewRoomState }
+  return (json.review ?? null) as ReviewRoomState | null
+}
+
+export async function setManualFix(id: string, active: boolean): Promise<ReviewRoomState | null> {
+  const res = await fetch(`/api/review-rooms/${encodeURIComponent(id)}/manual-fix`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ active }),
   })
   if (!res.ok) throw new Error(`${res.status}`)
   const json = (await res.json()) as { review?: ReviewRoomState }

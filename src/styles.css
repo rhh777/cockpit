@@ -6254,6 +6254,72 @@ body.resizing * {
   gap: 6px;
   flex-wrap: wrap;
 }
+/* 接力讨论控制(docs/13 Phase 2)+ 手动修复轮 */
+/* 群聊 composer:控制行 + (接力模式下)独立的接力设置行,纵向堆叠。
+   父级 .composer-main-controls 是 nowrap 的横向 flex,直接放兄弟元素会并排重叠。 */
+.group-composer-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.serial-controls {
+  /* 独立成一行:塞进 group-composer-controls(横向滚动、nowrap)会把模型选择器挤出可视区。 */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 2px 0 0;
+}
+.serial-control-label {
+  font-size: 10px;
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.serial-control-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.serial-chip {
+  height: 22px;
+  padding: 0 7px;
+  border: 0.5px solid var(--color-border-primary);
+  border-radius: 6px;
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.serial-chip.active {
+  border-color: color-mix(in srgb, var(--color-followup) 55%, transparent);
+  background: color-mix(in srgb, var(--color-followup) 10%, var(--color-background-primary));
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+.serial-chip:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.streaming-serial-step {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-followup) 14%, transparent);
+  color: var(--color-followup);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.review-round-status.awaiting-user {
+  color: var(--color-warning, #f08c00);
+}
+
 /* source stale 提示 + fresh review 回链(docs/14) */
 .review-source-banner {
   display: flex;

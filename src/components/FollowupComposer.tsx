@@ -12,6 +12,7 @@ import { useI18n, type MessageKey } from '../lib/i18n'
 
 export type SendMode = 'followup' | 'native'
 type GroupDiscussionMode = 'parallel' | 'serial'
+type SerialPreset = 'architecture-first' | 'implementation-first' | 'peer-review'
 
 function mentionDraft(text: string, caret: number): { start: number; query: string } | null {
   const before = text.slice(0, caret)
@@ -145,6 +146,12 @@ function optionLabel(o: CliOption, t: (k: MessageKey) => string): string {
   return o.labelKey ? t(o.labelKey) : o.label ?? o.value
 }
 
+const SERIAL_PRESETS: { value: SerialPreset; labelKey: MessageKey; hintKey: MessageKey }[] = [
+  { value: 'architecture-first', labelKey: 'serial.presetArchitecture', hintKey: 'serial.presetArchitectureHint' },
+  { value: 'implementation-first', labelKey: 'serial.presetImplementation', hintKey: 'serial.presetImplementationHint' },
+  { value: 'peer-review', labelKey: 'serial.presetPeer', hintKey: 'serial.presetPeerHint' },
+]
+
 const DEFAULT_GROUP_AGENTS: AgentName[] = ['claude', 'codex']
 const MODEL_POPOVER_WIDTH = 360
 const MODEL_POPOVER_MARGIN = 12
@@ -232,6 +239,12 @@ export function FollowupComposer({
   const [mode, setMode] = useState<SendMode>('followup')
   const [groupDiscussionMode, setGroupDiscussionMode] = useState<GroupDiscussionMode>('parallel')
   const [serialMaxSteps, setSerialMaxSteps] = useState(6)
+  // docs/13 Phase 2:preset / 首位 agent / 参与成员都由用户选,不再写死。
+  const [serialPreset, setSerialPreset] = useState<SerialPreset>('architecture-first')
+  const [serialFirstAgent, setSerialFirstAgent] = useState<AgentName | 'auto'>('auto')
+  // 临时排除的成员(docs/13:「允许临时取消某些 agent」)。存排除集而不是包含集,
+  // 这样 group 成员变化时新成员默认参与,不会因为旧快照被漏掉。
+  const [serialExcluded, setSerialExcluded] = useState<Set<AgentName>>(new Set())
   const [groupAgents, setGroupAgents] = useState<AgentName[]>(DEFAULT_GROUP_AGENTS)
   // 按当前 composer 临时记录 model / reasoning 选择。空串 = Default。
   // 不跨 session 持久化,避免新开的会话继承上一次临时挑的模型。
@@ -303,7 +316,19 @@ export function FollowupComposer({
     () => mentions.filter((a) => activeGroupSet.has(a)),
     [mentions, activeGroupSet],
   )
-  const firstGroupAgent = groupMentions[0] ?? (activeGroupSet.has(agent) ? agent : activeGroupAgents[0])
+  const serialParticipants = useMemo(
+    () => activeGroupAgents.filter((a) => !serialExcluded.has(a)),
+    [activeGroupAgents, serialExcluded],
+  )
+  const autoFirstAgent = groupMentions[0] ?? (activeGroupSet.has(agent) ? agent : activeGroupAgents[0])
+  // 首位必须在参与成员里;用户排除了自己选的首位时回落到第一个参与成员。
+  const serialFirst =
+    serialFirstAgent !== 'auto' && serialParticipants.includes(serialFirstAgent)
+      ? serialFirstAgent
+      : serialParticipants.includes(autoFirstAgent)
+        ? autoFirstAgent
+        : serialParticipants[0]
+  const firstGroupAgent = groupDiscussionMode === 'serial' ? serialFirst : autoFirstAgent
   const usingNative = !groupMode && mode === 'native' && nativeAvailable
   const targets = groupMode
     ? groupDiscussionMode === 'serial'
@@ -396,11 +421,11 @@ export function FollowupComposer({
               serial:
                 groupDiscussionMode === 'serial'
                   ? {
-                      participants: activeGroupAgents,
+                      participants: serialParticipants,
                       firstAgent: targets[0],
                       maxSteps: serialMaxSteps,
                       stopOnConsensus: true,
-                      preset: 'architecture-first',
+                      preset: serialPreset,
                     }
                   : undefined,
             }
@@ -751,6 +776,7 @@ export function FollowupComposer({
           )}
 
           {groupMode ? (
+            <div className="group-composer-stack">
             <div className="group-composer-controls">
               <div className="send-mode-control" aria-label={t('composer.groupModeLabel')}>
                 <button
@@ -771,23 +797,96 @@ export function FollowupComposer({
                 </button>
               </div>
               {groupDiscussionMode === 'serial' && (
-                <label className="serial-step-control" title={t('composer.serialStepsTitle')}>
-                  <span>{t('composer.atMost')}</span>
-                  <input
-                    type="number"
-                    min={2}
-                    max={20}
-                    value={serialMaxSteps}
-                    onChange={(e) => setSerialMaxSteps(Math.max(2, Math.min(Number(e.target.value) || 6, 20)))}
-                  />
-                  <span>{t('composer.turnsUnit')}</span>
-                </label>
+                <>
+                  <label className="serial-step-control" title={t('composer.serialStepsTitle')}>
+                    <span>{t('composer.atMost')}</span>
+                    <input
+                      type="number"
+                      min={2}
+                      max={20}
+                      value={serialMaxSteps}
+                      onChange={(e) => setSerialMaxSteps(Math.max(2, Math.min(Number(e.target.value) || 6, 20)))}
+                    />
+                    <span>{t('composer.turnsUnit')}</span>
+                  </label>
+                </>
               )}
               <div className="group-model-settings" ref={modelMenuRef}>
                 {AGENT_OPTIONS.map((a) => (
                   <div key={a.value}>{renderModelPicker(a.value, true, activeGroupSet.has(a.value))}</div>
                 ))}
               </div>
+            </div>
+            {groupDiscussionMode === 'serial' && (
+                <div className="serial-controls">
+                  <span className="serial-control-label">{t('serial.preset')}</span>
+                  <div className="serial-control-row" role="group" aria-label={t('serial.preset')}>
+                    {SERIAL_PRESETS.map((p) => (
+                      <button
+                        key={p.value}
+                        type="button"
+                        className={`serial-chip ${serialPreset === p.value ? 'active' : ''}`}
+                        onClick={() => setSerialPreset(p.value)}
+                        aria-pressed={serialPreset === p.value}
+                        title={t(p.hintKey)}
+                      >
+                        {t(p.labelKey)}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="serial-control-label">{t('serial.firstAgent')}</span>
+                  <div className="serial-control-row" role="group" aria-label={t('serial.firstAgent')}>
+                    <button
+                      type="button"
+                      className={`serial-chip ${serialFirstAgent === 'auto' ? 'active' : ''}`}
+                      onClick={() => setSerialFirstAgent('auto')}
+                      aria-pressed={serialFirstAgent === 'auto'}
+                      title={t('serial.firstAgentAutoHint')}
+                    >
+                      {t('serial.firstAgentAuto')}
+                    </button>
+                    {serialParticipants.map((a) => (
+                      <button
+                        key={a}
+                        type="button"
+                        className={`serial-chip ${serialFirstAgent === a ? 'active' : ''}`}
+                        onClick={() => setSerialFirstAgent(a)}
+                        aria-pressed={serialFirstAgent === a}
+                      >
+                        <AgentIcon agent={a} size={12} /> {labelForAgent(a)}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="serial-control-label">{t('serial.participants')}</span>
+                  <div className="serial-control-row" role="group" aria-label={t('serial.participants')}>
+                    {activeGroupAgents.map((a) => {
+                      const on = !serialExcluded.has(a)
+                      // 至少留一个成员,否则没人能发言。
+                      const canToggleOff = on && serialParticipants.length > 1
+                      return (
+                        <button
+                          key={a}
+                          type="button"
+                          className={`serial-chip ${on ? 'active' : ''}`}
+                          disabled={on && !canToggleOff}
+                          aria-pressed={on}
+                          title={t('serial.participantHint', { agent: labelForAgent(a) })}
+                          onClick={() =>
+                            setSerialExcluded((prev) => {
+                              const next = new Set(prev)
+                              if (next.has(a)) next.delete(a)
+                              else next.add(a)
+                              return next
+                            })
+                          }
+                        >
+                          <AgentIcon agent={a} size={12} /> {labelForAgent(a)}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+            )}
             </div>
           ) : usingNative ? (
             <span className={`native-agent-pill agent-${sessionAgent}`}>

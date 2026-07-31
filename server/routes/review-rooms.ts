@@ -395,6 +395,9 @@ async function startReviewRound(
     agents: participants,
     groupTurnId: started.groupTurnId,
   })
+  // 「我修好了,去复核」:verify 轮**成功起来之后**才收掉挂起的手动修复轮。
+  // 放在启动前的话,一旦 plan 校验失败或 run 起不来,用户就白丢了「手动修复中」标记。
+  if (kind === 'verify') await reviewRoomStore.closeManualFix(id)
   sessionRegistry.invalidate()
   return started
 }
@@ -587,6 +590,31 @@ async function handleSetIssueStatus(req: IncomingMessage, res: ServerResponse, i
   sendJson(res, 200, { reviewRoomId: id, review: await decorateReview(next) })
 }
 
+// docs/14 §Fix「I'll fix manually」:只标记状态,不启动任何 agent run。
+async function handleManualFix(req: IncomingMessage, res: ServerResponse, id: string) {
+  if (!isValidSessionId(id)) {
+    sendJson(res, 400, { error: 'invalid reviewRoomId' })
+    return
+  }
+  const body = (await readBody(req)) as { active?: boolean }
+  const review = await reviewRoomStore.read(id)
+  if (!review) {
+    sendJson(res, 404, { error: 'review room not found' })
+    return
+  }
+  // active:false = 放弃手动修复(不进 verify),把挂起的轮次收掉。
+  const next =
+    body.active === false
+      ? await reviewRoomStore.closeManualFix(id)
+      : await reviewRoomStore.startManualFix(id)
+  if (!next) {
+    sendJson(res, 404, { error: 'review room not found' })
+    return
+  }
+  sessionRegistry.invalidate()
+  sendJson(res, 200, { reviewRoomId: id, review: await decorateReview(next) })
+}
+
 async function handleDone(req: IncomingMessage, res: ServerResponse, id: string) {
   if (!isValidSessionId(id)) {
     sendJson(res, 400, { error: 'invalid reviewRoomId' })
@@ -599,6 +627,7 @@ async function handleDone(req: IncomingMessage, res: ServerResponse, id: string)
     sendJson(res, 404, { error: 'review room not found' })
     return
   }
+  // awaiting-user 是「在等用户动手」,不是 agent 正在跑,不该挡住收口。
   if (done && review.rounds.some((r) => r.status === 'running')) {
     sendJson(res, 409, { error: 'cannot finish while a round is still running' })
     return
@@ -929,6 +958,11 @@ export async function handleReviewRoomsRoute(
 
   if (req.method === 'POST' && parts.length === 4 && parts[3] === 'issue-status') {
     await handleSetIssueStatus(req, res, decodeURIComponent(parts[2]))
+    return true
+  }
+
+  if (req.method === 'POST' && parts.length === 4 && parts[3] === 'manual-fix') {
+    await handleManualFix(req, res, decodeURIComponent(parts[2]))
     return true
   }
 

@@ -14,6 +14,8 @@ export interface ActiveStream {
   rootTurnId?: string
   startedAt: number
   phase?: RunPhase
+  /** 接力讨论进度(docs/13 §UI 展示);非 serial 轮为空。 */
+  serial?: { step: number; maxSteps: number }
 }
 
 // icon 固定,文案走 i18n:只存 message key,渲染时用 t() 取。
@@ -79,6 +81,11 @@ export function StreamingStatus({
           <div key={s.clientId} className="streaming-status" data-agent={s.agent}>
             <span className="spinner" aria-hidden />
             <span className="streaming-icon">{icon}</span>
+            {s.serial && (
+              <span className="streaming-serial-step">
+                {t('serial.stepProgress', { step: s.serial.step, max: s.serial.maxSteps })}
+              </span>
+            )}
             <span className={`streaming-agent agent-${s.agent}`}>{agentLabel}</span>
             <span className="streaming-text">{headline}</span>
             <span className="streaming-elapsed">{elapsed}s</span>

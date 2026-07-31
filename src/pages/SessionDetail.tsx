@@ -8,6 +8,7 @@ import {
   fetchSessionDetail,
   finishReviewRoom,
   revealSession,
+  setManualFix,
   setReviewIssueStatus,
   startFreshReview,
   type ReviewRoomState,
@@ -611,9 +612,11 @@ export function SessionDetail() {
         (msg: RunStreamMessage) => {
           if (msg.kind === 'serial_step') {
             const agent = msg.agent as AgentName
+            const serial = { step: msg.step, maxSteps: msg.maxSteps }
             setStreams((prev) =>
               prev.some((s) => s.clientId === msg.runId)
-                ? prev
+                ? // 同一个 run 上重复收到 serial_step(协议修复复用同一步号)时更新进度即可。
+                  prev.map((s) => (s.clientId === msg.runId ? { ...s, serial } : s))
                 : [
                     ...prev,
                     {
@@ -622,6 +625,7 @@ export function SessionDetail() {
                       turnId: groupTurnId,
                       rootTurnId: groupTurnId,
                       startedAt: Date.now(),
+                      serial,
                     },
                   ],
             )
@@ -1046,6 +1050,17 @@ export function SessionDetail() {
     [id, t],
   )
 
+  const handleManualFix = useCallback(
+    (active: boolean) => {
+      if (!id) return
+      setSendError(null)
+      setManualFix(id, active)
+        .then((r) => r && setReviewRoom(r))
+        .catch((e) => setSendError(t('detail.finishFailed', { error: String(e) })))
+    },
+    [id, t],
+  )
+
   const handleSetIssueStatus = useCallback(
     (roundId: string, issueId: string, status: import('../lib/api').ReviewIssueStatus | null) => {
       if (!id) return
@@ -1277,6 +1292,7 @@ export function SessionDetail() {
               busy={streams.length > 0}
               onStart={handleReviewRoomStart}
               onFinish={handleReviewRoomFinish}
+              onManualFix={handleManualFix}
             />
             {reviewRoom && <SourceFreshnessBanner room={reviewRoom} />}
             {reviewRoom && (
@@ -1493,6 +1509,7 @@ function ReviewRoomPanel({
   busy,
   onStart,
   onFinish,
+  onManualFix,
 }: {
   phase: string
   sourceKind?: string
@@ -1501,11 +1518,14 @@ function ReviewRoomPanel({
   busy: boolean
   onStart: (opts?: { kind?: 'review' | 'fix' | 'verify'; mode?: 'parallel' | 'serial'; participants?: import('../lib/types').AgentName[] }) => void
   onFinish: (done: boolean, conclusion?: string) => void
+  onManualFix: (active: boolean) => void
 }) {
   const { t } = useI18n()
   const rounds = room?.rounds ?? []
   const started = rounds.length > 0
   const anyRunning = rounds.some((r) => r.status === 'running')
+  // 手动修复只是「在等用户」,不是 agent 在跑,所以不参与 anyRunning。
+  const manualFixPending = rounds.some((r) => r.status === 'awaiting-user')
   const [nextKind, setNextKind] = useState<'review' | 'fix' | 'verify'>('review')
   const [nextMode, setNextMode] = useState<'parallel' | 'serial'>('parallel')
   // fix 轮只能有一个 writer(docs/14 §Fix)。'auto' = 交给后端按「非发现者」规则挑,
@@ -1537,6 +1557,7 @@ function ReviewRoomPanel({
             {sourceKind ? `${sourceKind} · ` : ''}
             {phase}
             {rounds.length ? t('reviewRoom.roundCount', { count: rounds.length }) : ''}
+            {manualFixPending && <> · <strong>{t('manualFix.inProgress')}</strong></>}
             {parentReviewRoomId && (
               <>
                 {' · '}
@@ -1582,6 +1603,27 @@ function ReviewRoomPanel({
               ? t('reviewRoom.startKind', { kind: ROUND_KIND_LABEL[nextKind] })
               : 'Start Review'}
           </button>
+          {manualFixPending && (
+            <button
+              className="review-room-secondary is-ready"
+              onClick={() => onStart({ kind: 'verify', mode: 'parallel' })}
+              disabled={busy || anyRunning}
+              title={t('manualFix.verifyTitle')}
+            >
+              <Icon name="check" size={14} />
+              {t('manualFix.verifyNow')}
+            </button>
+          )}
+          {!manualFixPending && !isDone && nextKind === 'fix' && started && (
+            <button
+              className="review-room-secondary"
+              onClick={() => onManualFix(true)}
+              disabled={busy || anyRunning}
+              title={t('manualFix.startTitle')}
+            >
+              {t('manualFix.start')}
+            </button>
+          )}
           {isDone ? (
             <button
               className="review-room-secondary"
@@ -1678,9 +1720,14 @@ function ReviewRoomPanel({
         ) : (
           rounds.map((r, idx) => (
             <div className="review-round-row" key={r.id}>
-              <span className={`review-round-status ${r.status}`}>{r.status}</span>
+              <span className={`review-round-status ${r.status}`}>
+                {r.status === 'awaiting-user' ? t('manualFix.awaiting') : r.status}
+              </span>
               <span className="review-round-agents">
-                #{idx + 1} · {ROUND_KIND_LABEL[r.kind] ?? r.kind} · {r.mode} · {r.agents.map(labelForAgent).join(', ')}
+                #{idx + 1} ·{' '}
+                {r.mode === 'manual'
+                  ? t('manualFix.round')
+                  : `${ROUND_KIND_LABEL[r.kind] ?? r.kind} · ${r.mode} · ${r.agents.map(labelForAgent).join(', ')}`}
               </span>
               <span className="review-round-agents">{relativeTs(r.startedAt)}</span>
             </div>

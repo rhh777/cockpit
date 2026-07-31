@@ -512,9 +512,9 @@ Status: needs-review | needs-changes | consensus | blocked
 | 1 | 协议修复请求(`requestProtocolRepairOnce`) | 已完成 | 见下方「协议修复实现记录」 |
 | 2 | composer 并行 / 接力 segmented control | 已完成 | `FollowupComposer` |
 | 2 | 最大发言数输入 | 已完成 | `serialMaxSteps`,默认 6 |
-| 2 | **首位 agent 与 participants 子集选择** | **未开始** | 首位取 targets 首个,participants 不能临时取消某些成员 |
-| 2 | **讨论策略 preset 选择** | **未开始** | 类型支持 `architecture-first` / `implementation-first` / `peer-review`,但 composer 永远写死 `'architecture-first'`(`FollowupComposer.tsx`),Review Room 侧按 round kind 硬选;§讨论策略 preset 的三个 preset 用户选不到 |
-| 2 | **`StreamingStatus` serial step 进度** | **未开始** | §UI 展示要求「接力讨论 2/6: Codex 回复中」;`StreamingStatus.tsx` 没有 serial 分支 |
+| 2 | 首位 agent 与 participants 子集选择 | 已完成 | 见下方「Phase 2 前端控制实现记录」 |
+| 2 | 讨论策略 preset 选择 | 已完成 | 见下方「Phase 2 前端控制实现记录」 |
+| 2 | `StreamingStatus` serial step 进度 | 已完成 | 见下方「Phase 2 前端控制实现记录」 |
 | 2 | timeline 对 serial meta 轻量展示 | 已完成 | `EventItem` 渲染协议 chip + `serial_turn_status` 卡片 |
 | 3 | 更好的 `@user` 收口文本 | 部分完成 | 当前是固定模板「接力讨论已结束: {reason}」,未按分歧/共识分别生成 |
 | 3 | 从文档附件创建接力模板 / 手动插队 / 分歧摘要 | 未开始 | 设计里已标为可选项 |
@@ -546,6 +546,23 @@ Status: needs-review | needs-changes | consensus | blocked
 正文散文里的 `@codex` 不误触发、firstAgent 校验 400)**仍未落地**,但
 `serial-protocol-repair.test.ts` 已经把 orchestrator 的测试脚手架(脚本化 agent + 等
 `serial_turn_status` + 清理 group thread)搭好,后续补这些用例可以直接复用。
+
+### Phase 2 前端控制实现记录(2026-07-31)
+
+- **讨论策略 preset**:三个 preset(架构先行 / 实现先行 / 双向审稿)在 composer 里可选,
+  不再写死 `architecture-first`。选择直接进 `serial.preset`,由 `buildGroupContextEvents`
+  翻成 system prompt 段落(该映射早就实现了,此前只是选不到)。
+- **首位 agent**:「自动」= 原行为(文本里第一个 @mention,否则当前选中 agent);也可显式指定。
+  显式指定的首位若被移出参与成员,自动回落到第一个参与成员,不会发出一个不在 participants
+  里的 firstAgent(那会被后端 400)。
+- **参与成员**:存的是**排除集**而不是包含集,这样 group 成员变化时新成员默认参与,
+  不会因为旧快照被漏掉。至少保留一名成员(最后一个的取消按钮 disabled),否则没人能发言。
+- **StreamingStatus 进度**:`ActiveStream` 增加可选 `serial: {step, maxSteps}`,
+  由 turn stream 的 `serial_step` 消息填充,渲染成「接力 2/6」的 chip。
+  同一 run 重复收到 `serial_step`(协议修复复用同一步号)时更新而不是重复插入。
+- **布局**:接力设置单独占一行(`.group-composer-stack` 纵向堆叠)。塞进原来的
+  `.group-composer-controls` 会把模型选择器挤出可视区 —— 那一行是 `nowrap + overflow-x:auto`
+  的横向滚动区。并行模式下这一行不渲染,单聊 / 原生续写的 composer 不受影响。
 
 ## 测试计划
 

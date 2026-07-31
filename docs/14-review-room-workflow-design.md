@@ -647,7 +647,7 @@ Fresh Review 推荐复用 `docs/07-native-continuation-and-handoff.md` 的 conte
 | 2 | summary.md 记录 goal / decisions / tasks | 部分完成 | 沿用群聊 summary 机制,未按 Review Room 语义定制 |
 | 3 | `Fix with Claude/Codex` | 已完成 | 见上文 §Fix 实现记录(2026-07-30 收口单 writer) |
 | 3 | agent fix 只允许一个 writer | 已完成 | `server/review/round-plan.ts` |
-| 3 | **`I'll fix manually` / `I fixed it, verify now`** | **未开始** | 用户可手动把下一轮 kind 选成 verify,但没有「手动修复」这个显式状态 |
+| 3 | `I'll fix manually` / `I fixed it, verify now` | 已完成 | 见下方「手动修复实现记录」 |
 | 3 | Verify 默认让另一个 agent 复核 | 部分完成 | verify 轮唤醒全部 participants,没有实现「Codex 修则 Claude verify」的默认反选 |
 | 4 | 生成 handoff snapshot | 已完成 | `tryBuildHandoffForFresh`;path/freeform source 建不出 handoff 时回落 inline snapshot |
 | 4 | 创建 child Review Room | 已完成 | `POST /api/review-rooms/:id/fresh-review`,`extensions.reviewRoom.parentReviewRoomId` 双向可跳转 |
@@ -732,6 +732,23 @@ allResolved 边界)。端到端在 dev server 上实测:GET 附状态、手改�
 
 端到端实测:真实文档房间 fresh → 改文件后 stale(带路径)→ 删文件后 missing;
 从没被打开过的 child 房间,parent 单独 GET 也能拉到它的新发现。
+
+### 手动修复实现记录(2026-07-31)
+
+- 手动修复落成一条**真实轮次**:`{kind:'fix', mode:'manual', agents:[], status:'awaiting-user'}`,
+  这样它自然出现在轮次列表里,不需要另建一套并行状态。
+- 新增 `status: 'awaiting-user'`(联合类型追加,向后兼容):语义是「在等用户动手」,
+  **不是 agent 在跑**。因此它不计入 `anyRunning`,也不触发 Done 的 409 —— 手动修到一半
+  想直接收口是合理的。
+- `POST /api/review-rooms/:id/manual-fix` `{active}`:`true` 进入手动修复(phase=fix,幂等,
+  重复点不会插入第二条挂起轮),`false` 放弃(挂起轮收成 completed,不进 verify)。
+- 「我修好了,去复核」= 启动一轮 verify。**收掉挂起轮的动作放在 verify 轮成功启动之后**:
+  放在启动前的话,一旦 plan 校验失败(例如 400)或 run 起不来,用户就白丢了「手动修复中」标记。
+  实测:故意让启动失败,挂起标记仍在。
+- UI:面板顶部显示「手动修复中」,主按钮旁出现「我修好了,去复核」;轮次列表把手动轮渲染成
+  「手动修复 · 等待你」。
+- 覆盖:`server/store/review-room-store.test.ts`(6 例:进入/幂等/收口/no-op/不影响既有轮次/
+  不挡 Done)。
 
 ## 测试计划
 
