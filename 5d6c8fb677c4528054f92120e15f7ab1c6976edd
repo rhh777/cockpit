@@ -1,0 +1,64 @@
+src/styles.css
+  62592df39221d739 6124-6262
+server/store/review-room-store.ts
+  62592df39221d739 58-69,116-125,265-269,278-325
+server/review/issue-status.ts
+  62592df39221d739 1-116
+server/review/issue-status.test.ts
+  62592df39221d739 1-156
+src/lib/api.ts
+  62592df39221d739 83-85,96-98,128-137,198-230
+docs/14-review-room-workflow-design.md
+  62592df39221d739 646,658,665-697
+src/lib/i18n.ts
+  62592df39221d739 424-425,443-470,885-886,904-931
+server/routes/review-rooms.ts
+  62592df39221d739 11-16,487-579,592,683,789,891-897
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "5d6c8fb677c4528054f92120e15f7ab1c6976edd",
+  "prompts": {
+    "4cc1d80d56e42ef0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a29188b-da97-4d9a-84b6-06d740f428be",
+        "model": "claude-opus-5"
+      },
+      "human_author": "haorenhui",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2702,
+      "overriden_lines": 0,
+      "messages_url": "http://172.20.103.50:8002/cas/1b0f57a0c78ccbff11cbb172744f7c3951a61c96067b6f94a682aa94d0010485",
+      "token_usage": {
+        "input_tokens": 1160,
+        "output_tokens": 192088,
+        "cache_creation_input_tokens": 903043,
+        "cache_read_input_tokens": 84565797
+      }
+    },
+    "62592df39221d739": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "71f05761-69e5-46da-b810-40fc723b1a52",
+        "model": "claude-opus-5"
+      },
+      "human_author": "haorenhui",
+      "messages": [],
+      "total_additions": 1463,
+      "total_deletions": 8,
+      "accepted_lines": 1462,
+      "overriden_lines": 0,
+      "messages_url": "http://172.20.103.50:8002/cas/1a98c0777d4e6fa15fba69fa8b98cdc995b305c0d8f10ea12f2a3be603f2a83f",
+      "token_usage": {
+        "input_tokens": 1268,
+        "output_tokens": 234550,
+        "cache_creation_input_tokens": 1885332,
+        "cache_read_input_tokens": 113287407
+      }
+    }
+  }
+}
