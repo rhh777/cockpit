@@ -212,6 +212,22 @@ export const groupThreadStore = {
     }
   },
 
+  async writeSummary(id: string, markdown: string): Promise<void> {
+    await enqueue(id, async () => {
+      await fsp.mkdir(groupThreadDir(id), { recursive: true })
+      await fsp.writeFile(groupSummaryFile(id), markdown.endsWith('\n') ? markdown : `${markdown}\n`, 'utf8')
+      const state = await this.readState(id)
+      if (!state) return
+      const now = new Date().toISOString()
+      await writeState({
+        ...state,
+        summaryUpdatedAt: now,
+        summaryRevision: state.summaryRevision + 1,
+        updatedAt: now,
+      })
+    })
+  },
+
   async readTranscript(id: string): Promise<EventEnvelope[]> {
     const file = groupTranscriptFile(id)
     if (!fs.existsSync(file)) return []

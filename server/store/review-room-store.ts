@@ -2,7 +2,8 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { AgentName, Source } from '../loaders/types'
-import { groupThreadDir } from './group-thread-store'
+import { groupThreadDir, groupThreadStore } from './group-thread-store'
+import { renderReviewRoomSummary } from '../review/review-summary'
 
 export type ReviewSourceKind =
   | 'native-session'
@@ -161,6 +162,7 @@ function enqueue<T>(id: string, task: () => Promise<T>): Promise<T> {
 
 async function writeState(state: ReviewRoomDiskState): Promise<void> {
   await fsp.writeFile(reviewStateFile(state.groupThreadId), JSON.stringify(state, null, 2) + '\n', 'utf8')
+  await groupThreadStore.writeSummary(state.groupThreadId, renderReviewRoomSummary(state))
 }
 
 export const reviewRoomStore = {

@@ -14,6 +14,8 @@
 - **`:id` 路径参数在解析 filePath 前强制校验**:id 形态 + 最终路径必须 `startsWith` 白名单根目录,否则 404,防路径穿越。
 - **Follow-up agent 默认只读**:Codex `read-only` sandbox(禁网/禁搜),Claude 禁用写/exec 工具。敏感路径(`.env*`、`*.pem`、`id_rsa`、`.ssh/`、`.aws/`、`.kube/`、`.git/` 等)过滤同时作用于序列化输入和 tool_result 落盘/回显前。
 - **API key 永不进前端 bundle**:仅 server 侧读 `process.env`,禁 `VITE_` 前缀、禁前端 import。
+- **本地 API 拒绝跨站浏览器请求**:`Host` 必须是 loopback;浏览器 mutation 的 `Origin` 必须与目标 origin 完全一致,`Sec-Fetch-Site: cross-site` 一律拒绝。命令行客户端不带浏览器 origin header 时仍可本地调用。
+- **Electron 导航边界**:静态资源必须严格落在打包 `dist/` 内;主窗口不能导航到其他 origin;系统外链只允许 `http:`、`https:` 和 Cockpit 明确支持的 `codex:` scheme。
 
 ## 支持版本
 

@@ -67,6 +67,7 @@
 - **按项目(cwd)分组**,不按来源分组——同项目下 Claude/Codex 混列,来源用角标区分。
 - 每条:标题 + 相对时间;第二行显示来源、消息数、follow-up 角标。
 - 选中态:白底 + `0.5px` 实线边框;未选中无边框。
+- 「新对话」chooser 的 Review Room 来源包含 repository / folder / files / document / existing session / freeform。路径来源同时提供系统 file picker 与手动输入;existing session 可选原生 session、带 follow-up 的 session 或 Cockpit group thread。
 
 ### 4.2 详情头 + 双 banner
 

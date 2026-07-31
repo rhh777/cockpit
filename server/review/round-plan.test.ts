@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { AgentName } from '../loaders/types'
 import type { ReviewIssue, ReviewRoomDiskState, ReviewRound } from '../store/review-room-store'
-import { defaultFixer, planReviewRound, RoundPlanError } from './round-plan'
+import { defaultFixer, defaultVerifiers, planReviewRound, RoundPlanError } from './round-plan'
 
 function issue(agent: AgentName, title: string): ReviewIssue {
   return { id: `${agent}-${title}`, agent, title, severity: 'major', body: '' }
@@ -104,10 +104,47 @@ test('planReviewRound: fix 轮尊重用户显式指定的单个 fixer', () => {
   assert.deepEqual(plan.participants, ['codex'])
 })
 
-test('planReviewRound: verify 轮允许多 agent 复核', () => {
+test('planReviewRound: 没有单 agent fix 时 verify 轮允许多 agent 复核', () => {
   const plan = planReviewRound({ kind: 'verify', mode: 'parallel', review: room(), groupAgents: [] })
   assert.equal(plan.participants.length, 2)
   assert.equal(plan.roundMode, 'parallel')
+})
+
+test('defaultVerifiers: Codex 修复后默认由 Claude 复核', () => {
+  const state = room({
+    rounds: [{
+      id: 'fix-1', kind: 'fix', mode: 'single', agents: ['codex'] as AgentName[],
+      startedAt: '2026-07-30T00:00:00.000Z', status: 'completed',
+    }],
+  })
+  assert.deepEqual(defaultVerifiers(state, ['claude', 'codex'] as AgentName[]), ['claude'])
+  const plan = planReviewRound({ kind: 'verify', mode: 'serial', review: state, groupAgents: [] })
+  assert.deepEqual(plan.participants, ['claude'])
+  assert.equal(plan.runMode, 'parallel')
+  assert.equal(plan.roundMode, 'single')
+})
+
+test('defaultVerifiers: 手动修复默认让全部参与者复核', () => {
+  const state = room({
+    rounds: [{
+      id: 'fix-manual', kind: 'fix', mode: 'manual', agents: [],
+      startedAt: '2026-07-30T00:00:00.000Z', status: 'awaiting-user',
+    }],
+  })
+  assert.deepEqual(defaultVerifiers(state, ['claude', 'codex'] as AgentName[]), ['claude', 'codex'])
+})
+
+test('planReviewRound: verify 显式选择覆盖默认反选', () => {
+  const state = room({
+    rounds: [{
+      id: 'fix-1', kind: 'fix', mode: 'single', agents: ['codex'] as AgentName[],
+      startedAt: '2026-07-30T00:00:00.000Z', status: 'completed',
+    }],
+  })
+  const plan = planReviewRound({
+    kind: 'verify', mode: 'parallel', participantsOverride: ['codex'], review: state, groupAgents: [],
+  })
+  assert.deepEqual(plan.participants, ['codex'])
 })
 
 test('planReviewRound: participants 为空时回落 group.agents', () => {

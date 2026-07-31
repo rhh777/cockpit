@@ -318,6 +318,7 @@ cockpit/
 │   ├── handoffs/                    ← Handoff 生成 / 消费
 │   ├── approvals/                   ← Adapter 侧审批状态机
 │   ├── permissions/                 ← adapter-policy(mode → CLI 参数映射)
+│   ├── security/                    ← loopback Host / same-origin API 请求守卫
 │   ├── watcher/                     ← 共享 fs.watch 引用计数
 │   └── util/
 └── src/                             ← React 前端
@@ -419,6 +420,7 @@ interface SerializeOptions {
 
 ## 十、安全 / 隐私
 
+- **本地 API 不等于天然安全**:所有 `/api/*` 请求统一经过 `cockpitApi()` 的 local-request guard。`Host` 必须是 `localhost` / `127.0.0.1` / `::1`;浏览器 state-changing 请求的 `Origin` 必须与目标 origin 完全一致,`Sec-Fetch-Site: cross-site` 一律拒绝。无浏览器 header 的本地 CLI 请求保持可用。
 - **cockpit 进程对原生 CLI 文件零直接写入**,绝不修改 / 删除 / 移动。详见下面「Native Resume 与不变量 1 的边界」。
 - cockpit 自己的数据全部在 `~/.cockpit/`,删掉该目录可完全清空状态而不影响原生 CLI
 - **本机优先**:当前只调用用户本机已登录的官方 CLI;模型请求由官方 CLI 自己处理,cockpit 不接管账号凭证
@@ -488,6 +490,7 @@ Timeline 不只渲染流水账,还应服务“看清 agent 干了什么”:
 12. cockpit 事件带 `origin`;follow-up/group 带 `turnId`;adapter stream 带 `runId`。
 13. SSE/watcher 重叠时按 `sourceEventId` 去重。
 14. 新 source/agent 只能通过 Loader/Adapter interface 扩展;破坏 interface 前先改设计。
+15. 本地 HTTP API 必须经过 loopback / same-origin guard;新增 route 不得绕过 `cockpitApi()`。
 
 ## 十三、与外部工具的关系
 

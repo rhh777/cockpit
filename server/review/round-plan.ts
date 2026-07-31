@@ -41,6 +41,17 @@ export function defaultFixer(review: ReviewRoomDiskState, pool: AgentName[]): Ag
   return best
 }
 
+/**
+ * docs/14 §Verify:agent 修复后默认由另一位参与者复核;手动修复则保留全部参与者。
+ * 只看最近一轮 fix,避免旧 fixer 影响新一轮。显式 participantsOverride 始终优先。
+ */
+export function defaultVerifiers(review: ReviewRoomDiskState, pool: AgentName[]): AgentName[] {
+  const lastFix = [...review.rounds].reverse().find((r) => r.kind === 'fix')
+  if (!lastFix || lastFix.mode === 'manual' || lastFix.agents.length !== 1) return pool
+  const alternatives = pool.filter((agent) => agent !== lastFix.agents[0])
+  return alternatives.length ? alternatives : pool
+}
+
 export function planReviewRound(input: {
   kind: RoundKind
   mode: 'parallel' | 'serial'
@@ -69,6 +80,15 @@ export function planReviewRound(input: {
       // serial orchestrator 对单 agent 没有意义(第一步就 no-next-agent),降为单发。
       runMode: 'parallel',
       roundMode: 'single',
+    }
+  }
+
+  if (input.kind === 'verify' && !override) {
+    const verifiers = defaultVerifiers(input.review, pool)
+    return {
+      participants: verifiers,
+      runMode: verifiers.length === 1 ? 'parallel' : input.mode,
+      roundMode: verifiers.length === 1 ? 'single' : input.mode,
     }
   }
 

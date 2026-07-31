@@ -247,7 +247,7 @@ export function EventItem({
         )
       }
       if (ev.key === 'serial_turn_status') {
-        const v = (ev.value ?? {}) as { status?: string; reason?: string; steps?: number; message?: string }
+        const v = (ev.value ?? {}) as { status?: string; reason?: string; steps?: number; message?: string; detailStatus?: string }
         const title = serialTurnStatusText(v, t)
         if (!title) return null
         return (
@@ -327,12 +327,15 @@ function serialProtocolLabel(status: string, next: string | undefined, t: Transl
 }
 
 function serialTurnStatusText(
-  v: { status?: string; reason?: string; steps?: number },
+  v: { status?: string; reason?: string; steps?: number; detailStatus?: string },
   t: Translate,
 ): string | null {
   if (v.reason === 'protocol-missing') return null
   const steps = v.steps ? t('serial.stepsSuffix', { count: v.steps }) : ''
   if (v.status === 'completed' && v.reason === 'consensus') return t('serial.doneConsensus', { steps })
+  if (v.status === 'completed' && v.reason === 'max-steps') return t('serial.doneMaxSteps', { steps })
+  if (v.status === 'completed' && v.reason === 'no-next-agent' && v.detailStatus === 'blocked') return t('serial.doneBlocked', { steps })
+  if (v.status === 'completed' && v.reason === 'no-next-agent') return t('serial.doneReturned', { steps })
   if (v.status === 'completed') return t('serial.done', { steps })
   if (v.status === 'aborted') return t('serial.aborted')
   if (v.status === 'failed') return t('serial.stopped', { reason: v.reason ?? t('serial.failedReason') })

@@ -651,7 +651,26 @@ async function handleGet(res: ServerResponse, id: string) {
     return
   }
   const state = await groupThreadStore.readState(id)
-  let review = await reviewRoomStore.read(id)
+  let review: ReviewRoomDiskState | null
+  try {
+    review = await reviewRoomStore.read(id)
+  } catch (err) {
+    if (!state) {
+      sendJson(res, 404, { error: 'review room not found' })
+      return
+    }
+    sendJson(res, 200, {
+      reviewRoomId: id,
+      groupThreadId: id,
+      state,
+      review: null,
+      warning: {
+        code: 'corrupt_review_state',
+        message: String((err as Error)?.message ?? err),
+      },
+    })
+    return
+  }
   if (!state || !review) {
     sendJson(res, 404, { error: 'review room not found' })
     return

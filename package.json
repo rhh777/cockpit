@@ -32,7 +32,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "tsx --test server/**/*.test.ts",
+    "test": "tsx --test server/**/*.test.ts electron/**/*.test.ts",
     "typecheck": "tsc -b --noEmit",
     "electron:build-main": "esbuild electron/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist-electron/main.cjs --external:electron && esbuild electron/preload.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist-electron/preload.cjs --external:electron && cp electron/tray-icon.png electron/tray-icon@2x.png dist-electron/",
     "electron:dev": "concurrently -k -n vite,electron -c blue,magenta \"vite\" \"wait-on http://localhost:5173 && pnpm electron:build-main && electron .\"",

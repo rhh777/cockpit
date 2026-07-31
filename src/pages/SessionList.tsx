@@ -17,6 +17,7 @@ import { AGENT_OPTIONS, labelForAgent } from '../lib/agents'
 import { Icon } from '../components/Icon'
 import { useI18n, type MessageKey, type ResolvedLocale } from '../lib/i18n'
 import type { AgentName } from '../lib/types'
+import { pickLocalPaths } from '../lib/native-dialog'
 
 type ViewMode = 'all' | 'cockpit' | AgentName
 type GroupMode = 'project' | 'time'
@@ -718,6 +719,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
       {newChooserOpen && (
         <NewConversationDialog
           busy={creatingGroup}
+          sessions={sessions}
           onCancel={() => setNewChooserOpen(false)}
           onCreateGroup={handleCreateGroup}
           onCreateReviewRoom={handleCreateReviewRoom}
@@ -727,87 +729,103 @@ export function SessionList({ style }: { style?: CSSProperties }) {
   )
 }
 
-type ReviewSourceKind = 'repository' | 'directory' | 'files' | 'document' | 'freeform'
+type ReviewSourceKind = 'folder' | 'files' | 'existing-session' | 'freeform'
 const DEFAULT_REVIEW_AGENTS: AgentName[] = ['claude', 'codex']
-// label / hint 只存 message key,显示时经 t() 渲染;placeholder 是路径示例,不翻译。
+// 仓库本质上也是文件夹,文档本质上也是文件：新建入口只保留用户能明确区分的四类来源。
 const REVIEW_KIND_OPTIONS: {
   value: ReviewSourceKind
   labelKey: MessageKey
   hintKey: MessageKey
-  placeholder?: string
+  icon: 'folder' | 'file-text' | 'clock' | 'edit'
 }[] = [
-  { value: 'repository', labelKey: 'newChat.kindRepository', hintKey: 'newChat.kindRepositoryHint', placeholder: '/Users/me/project' },
-  { value: 'directory', labelKey: 'newChat.kindDirectory', hintKey: 'newChat.kindDirectoryHint', placeholder: '/Users/me/some/folder' },
-  { value: 'files', labelKey: 'newChat.kindFiles', hintKey: 'newChat.kindFilesHint', placeholder: '/Users/me/a.ts,/Users/me/b.ts' },
-  { value: 'document', labelKey: 'newChat.kindDocument', hintKey: 'newChat.kindDocumentHint', placeholder: '/Users/me/docs/design.md' },
-  { value: 'freeform', labelKey: 'newChat.kindFreeform', hintKey: 'newChat.kindFreeformHint' },
+  { value: 'folder', labelKey: 'newChat.kindDirectory', hintKey: 'newChat.kindDirectoryHint', icon: 'folder' },
+  { value: 'files', labelKey: 'newChat.kindFiles', hintKey: 'newChat.kindFilesHint', icon: 'file-text' },
+  { value: 'existing-session', labelKey: 'newChat.kindExistingSession', hintKey: 'newChat.kindExistingSessionHint', icon: 'clock' },
+  { value: 'freeform', labelKey: 'newChat.kindFreeform', hintKey: 'newChat.kindFreeformHint', icon: 'edit' },
 ]
-
-function parsePaths(raw: string): string[] {
-  return raw
-    .split(/[\s,\n]+/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-}
 
 function NewConversationDialog({
   busy,
+  sessions,
   onCancel,
   onCreateGroup,
   onCreateReviewRoom,
 }: {
   busy: boolean
+  sessions: SessionSummaryDTO[]
   onCancel: () => void
   onCreateGroup: () => void
   onCreateReviewRoom: (body: CreateReviewRoomBody) => void
 }) {
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
   const [mode, setMode] = useState<'review' | 'group'>('review')
-  const [kind, setKind] = useState<ReviewSourceKind>('repository')
-  const [rawPath, setRawPath] = useState(() => {
-    try {
-      return window.localStorage.getItem('cockpit.lastReviewRoomPath') || ''
-    } catch {
-      return ''
-    }
-  })
+  const [kind, setKind] = useState<ReviewSourceKind>('folder')
+  const [selectedFolder, setSelectedFolder] = useState('')
+  const [selectedFiles, setSelectedFiles] = useState<string[]>([])
   const [freeformText, setFreeformText] = useState('')
+  const [selectedSessionKey, setSelectedSessionKey] = useState('')
+  const [sessionQuery, setSessionQuery] = useState('')
+  const [pickerError, setPickerError] = useState<string | null>(null)
   const [goal, setGoal] = useState('')
   const [participants, setParticipants] = useState<AgentName[]>(DEFAULT_REVIEW_AGENTS)
   const [discussion, setDiscussion] = useState<'parallel' | 'serial'>('parallel')
 
   const activeKind = REVIEW_KIND_OPTIONS.find((k) => k.value === kind)!
-  const paths = parsePaths(rawPath)
+  const paths = kind === 'folder' ? (selectedFolder ? [selectedFolder] : []) : selectedFiles
+  const selectedSession = sessions.find((session) => sessionKey(session) === selectedSessionKey)
+  const visibleSessions = useMemo(() => {
+    const query = sessionQuery.trim().toLocaleLowerCase()
+    return [...sessions]
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+      .filter((session) => {
+        if (!query) return true
+        return [session.title, session.cwd ?? '', sourceMeta(session, t)]
+          .some((value) => value.toLocaleLowerCase().includes(query))
+      })
+      .slice(0, 50)
+  }, [sessionQuery, sessions, t])
   const canSubmit = mode === 'group'
     ? true
     : kind === 'freeform'
       ? freeformText.trim().length > 0
-      : paths.length > 0 && participants.length >= 1
+      : kind === 'existing-session'
+        ? Boolean(selectedSession) && participants.length >= 1
+        : paths.length > 0 && participants.length >= 1
 
   const toggleAgent = (agent: AgentName) => {
-    setParticipants((prev) => (prev.includes(agent) ? prev.filter((a) => a !== agent) : [...prev, agent]))
+    setParticipants((prev) => {
+      if (!prev.includes(agent)) return [...prev, agent]
+      return prev.length === 1 ? prev : prev.filter((a) => a !== agent)
+    })
   }
+
+  useEffect(() => {
+    if (participants.length < 2 && discussion === 'serial') setDiscussion('parallel')
+  }, [discussion, participants.length])
 
   const submit = () => {
     if (mode === 'group') {
       onCreateGroup()
       return
     }
-    try {
-      if (kind !== 'freeform' && paths.length) {
-        window.localStorage.setItem('cockpit.lastReviewRoomPath', paths[0])
-      }
-    } catch {
-      /* ignore */
-    }
     const goalText = goal.trim() || 'Review this source with the selected reviewers. Identify risks, disagreements, and next steps.'
     let source: CreateReviewRoomBody['source']
     if (kind === 'freeform') {
       source = { kind: 'freeform', freeformText: freeformText.trim() }
+    } else if (kind === 'existing-session') {
+      if (!selectedSession) return
+      source = selectedSession.source === 'cockpit'
+        ? { kind: 'group-thread', groupThreadId: selectedSession.id, title: selectedSession.title }
+        : {
+            kind: selectedSession.hasFollowups ? 'cockpit-followup' : 'native-session',
+            source: selectedSession.source,
+            sessionId: selectedSession.id,
+            title: selectedSession.title,
+          }
     } else if (kind === 'files') {
       source = { kind: 'files', paths }
     } else {
-      source = { kind, path: paths[0] }
+      source = { kind: 'directory', path: paths[0] }
     }
     onCreateReviewRoom({
       source,
@@ -818,6 +836,26 @@ function NewConversationDialog({
     })
   }
 
+  const browse = async (sourceKind: ReviewSourceKind = kind) => {
+    setPickerError(null)
+    try {
+      const pickerKind = sourceKind === 'folder' ? 'directory' : 'file'
+      const picked = await pickLocalPaths(pickerKind)
+      if (!picked.length) return
+      if (sourceKind === 'folder') {
+        setSelectedFolder(picked[0])
+      } else {
+        setSelectedFiles((current) => [...new Set([...current, ...picked])])
+      }
+    } catch (err) {
+      setPickerError(
+        (err as Error)?.message === 'native-picker-unavailable'
+          ? t('newChat.pickerUnavailable')
+          : String((err as Error)?.message ?? err),
+      )
+    }
+  }
+
   return (
     <div className="modal-backdrop" onClick={onCancel}>
       <div className="modal new-conversation-modal" onClick={(e) => e.stopPropagation()}>
@@ -826,14 +864,15 @@ function NewConversationDialog({
           <button className="modal-close" onClick={onCancel} aria-label={t('common.close')}>×</button>
         </div>
         <div className="modal-body">
-          <div className="new-conversation-grid">
+          <div className="new-conversation-grid" role="group" aria-label={t('newChat.title')}>
             <button
               type="button"
               className={`new-conversation-option ${mode === 'review' ? 'active' : ''}`}
               onClick={() => setMode('review')}
             >
               <Icon name="folder" size={18} />
-              <span>Review Room</span>
+              <span>{t('newChat.reviewRoom')}</span>
+              <small>{t('newChat.reviewRoomHint')}</small>
             </button>
             <button
               type="button"
@@ -842,27 +881,32 @@ function NewConversationDialog({
             >
               <Icon name="users" size={18} />
               <span>{t('newChat.blankGroup')}</span>
+              <small>{t('newChat.blankGroupHint')}</small>
             </button>
           </div>
           {mode === 'review' && (
             <>
               <div className="modal-section">
                 <span className="modal-label">{t('newChat.sourceKind')}</span>
-                <div className="review-kind-row" role="group" aria-label={t('newChat.sourceKind')}>
+                <div className="review-source-grid" role="group" aria-label={t('newChat.sourceKind')}>
                   {REVIEW_KIND_OPTIONS.map((opt) => (
                     <button
                       key={opt.value}
                       type="button"
-                      className={`review-kind-item ${kind === opt.value ? 'active' : ''}`}
-                      onClick={() => setKind(opt.value)}
+                      className={`review-source-option ${kind === opt.value ? 'active' : ''}`}
+                      onClick={() => {
+                        setKind(opt.value)
+                        setPickerError(null)
+                      }}
                       title={t(opt.hintKey)}
                       aria-pressed={kind === opt.value}
                     >
-                      {t(opt.labelKey)}
+                      <Icon name={opt.icon} size={16} />
+                      <span>{t(opt.labelKey)}</span>
                     </button>
                   ))}
                 </div>
-                <span className="modal-hint">{t(activeKind.hintKey)}</span>
+                <span className="modal-hint source-hint">{t(activeKind.hintKey)}</span>
               </div>
               {kind === 'freeform' ? (
                 <label className="modal-section">
@@ -876,28 +920,139 @@ function NewConversationDialog({
                     autoFocus
                   />
                 </label>
-              ) : (
-                <label className="modal-section">
-                  <span className="modal-label">{kind === 'files' ? t('newChat.pathsMulti') : t('newChat.paths')}</span>
-                  {kind === 'files' ? (
-                    <textarea
-                      className="modal-textarea"
-                      value={rawPath}
-                      onChange={(e) => setRawPath(e.target.value)}
-                      placeholder={activeKind.placeholder}
-                      rows={3}
-                      autoFocus
-                    />
-                  ) : (
-                    <input
-                      className="modal-input"
-                      value={rawPath}
-                      onChange={(e) => setRawPath(e.target.value)}
-                      placeholder={activeKind.placeholder}
-                      autoFocus
-                    />
+              ) : kind === 'existing-session' ? (
+                <div className="modal-section session-source-section">
+                  <div className="source-section-head">
+                    <span className="modal-label">{t('newChat.existingSession')}</span>
+                    {selectedSession && (
+                      <span className="source-selection-count">{t('newChat.oneSessionSelected')}</span>
+                    )}
+                  </div>
+                  <div className="session-source-picker">
+                    <div className="session-source-search">
+                      <Icon name="search" size={14} />
+                      <input
+                        value={sessionQuery}
+                        onChange={(e) => setSessionQuery(e.target.value)}
+                        placeholder={t('newChat.searchSessions')}
+                        aria-label={t('newChat.searchSessions')}
+                        autoFocus
+                      />
+                      {sessionQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setSessionQuery('')}
+                          aria-label={t('common.clear')}
+                        >
+                          <Icon name="close" size={12} />
+                        </button>
+                      )}
+                    </div>
+                    <div className="session-source-results" role="listbox" aria-label={t('newChat.existingSession')}>
+                      {visibleSessions.length === 0 ? (
+                        <div className="session-source-empty">{t('newChat.noSessionsFound')}</div>
+                      ) : (
+                        visibleSessions.map((session) => {
+                          const key = sessionKey(session)
+                          const selected = key === selectedSessionKey
+                          const project = session.cwd?.split('/').filter(Boolean).pop()
+                          return (
+                            <button
+                              key={key}
+                              type="button"
+                              className={`session-source-result ${selected ? 'selected' : ''}`}
+                              role="option"
+                              aria-selected={selected}
+                              onClick={() => setSelectedSessionKey(key)}
+                            >
+                              <AgentIcon source={session.source} size={24} />
+                              <span className="session-source-result-copy">
+                                <strong>{displayTitle(session.title, 72, locale)}</strong>
+                                <small>
+                                  {sourceMeta(session, t)}
+                                  {project ? ` · ${project}` : ''}
+                                  {` · ${relativeTime(session.updatedAt, locale)}`}
+                                </small>
+                              </span>
+                              <span className="session-source-check" aria-hidden>
+                                {selected && <Icon name="check" size={14} />}
+                              </span>
+                            </button>
+                          )
+                        })
+                      )}
+                    </div>
+                  </div>
+                  {visibleSessions.length === 50 && (
+                    <span className="modal-hint">{t('newChat.refineSessionSearch')}</span>
                   )}
-                </label>
+                </div>
+              ) : (
+                <div className="modal-section source-picker-section">
+                  <div className="source-section-head">
+                    <span className="modal-label">
+                      {kind === 'files'
+                        ? paths.length ? t('newChat.selectedFilesLabel') : t('newChat.kindFiles')
+                        : paths.length ? t('newChat.selectedFolderLabel') : t('newChat.kindDirectory')}
+                    </span>
+                    {kind === 'files' && paths.length > 0 && (
+                      <button type="button" className="source-clear-button" onClick={() => setSelectedFiles([])}>
+                        {t('newChat.clearFiles')}
+                      </button>
+                    )}
+                  </div>
+                  <button type="button" className="native-source-picker" onClick={() => void browse()}>
+                    <span className="native-source-picker-icon">
+                      <Icon name={kind === 'files' ? 'file-text' : 'folder'} size={20} />
+                    </span>
+                    <span className="native-source-picker-copy">
+                      <strong>
+                        {kind === 'files'
+                          ? paths.length ? t('newChat.addFiles') : t('newChat.selectFiles')
+                          : paths.length ? t('newChat.changeFolder') : t('newChat.selectFolder')}
+                      </strong>
+                      <small>
+                        {kind === 'files'
+                          ? paths.length
+                            ? t('newChat.selectedFiles', { count: paths.length })
+                            : t('newChat.multiFilePickerHint')
+                          : paths.length
+                            ? paths[0]
+                          : t('newChat.systemPickerHint')}
+                      </small>
+                    </span>
+                    <span className="native-source-picker-action">
+                      {kind === 'files' && paths.length
+                        ? t('newChat.add')
+                        : paths.length ? t('newChat.changeSelection') : t('newChat.browse')}
+                    </span>
+                  </button>
+                  {kind === 'files' && selectedFiles.length > 0 && (
+                    <div className="selected-file-list" aria-label={t('newChat.selectedFilesLabel')}>
+                      {selectedFiles.map((path) => {
+                        const name = path.split('/').filter(Boolean).pop() ?? path
+                        return (
+                          <div className="selected-file-row" key={path}>
+                            <span className="selected-file-icon"><Icon name="file-text" size={14} /></span>
+                            <span className="selected-file-copy">
+                              <strong>{name}</strong>
+                              <small>{path}</small>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedFiles((current) => current.filter((item) => item !== path))}
+                              title={t('newChat.removeFile', { name })}
+                              aria-label={t('newChat.removeFile', { name })}
+                            >
+                              <Icon name="close" size={12} />
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {pickerError && <span className="modal-hint danger">{pickerError}</span>}
+                </div>
               )}
               <div className="modal-section">
                 <span className="modal-label">{t('newChat.participants')}</span>
@@ -909,6 +1064,8 @@ function NewConversationDialog({
                       className={`review-agent-chip ${participants.includes(agent.value) ? 'active' : ''}`}
                       onClick={() => toggleAgent(agent.value)}
                       aria-pressed={participants.includes(agent.value)}
+                      disabled={participants.includes(agent.value) && participants.length === 1}
+                      title={participants.includes(agent.value) && participants.length === 1 ? t('newChat.keepOneParticipant') : undefined}
                     >
                       <AgentIcon source={agent.value} size={16} />
                       <span>{agent.label}</span>
@@ -933,7 +1090,8 @@ function NewConversationDialog({
                     className={`review-kind-item ${discussion === 'serial' ? 'active' : ''}`}
                     onClick={() => setDiscussion('serial')}
                     aria-pressed={discussion === 'serial'}
-                    title={t('newChat.serialHint')}
+                    title={participants.length < 2 ? t('newChat.serialNeedsTwo') : t('newChat.serialHint')}
+                    disabled={participants.length < 2}
                   >
                     {t('newChat.serial')}
                   </button>

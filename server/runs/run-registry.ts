@@ -28,6 +28,20 @@ const CODEX_CONTINUATION_INTERRUPT_TIMEOUT_MS = 5_000
 const INCREMENTAL_EVENT_THRESHOLD = 50
 const INCREMENTAL_TEXT_THRESHOLD = 12000
 
+export function serialCompletionNotification(
+  reason: string,
+  steps: number,
+  detailStatus?: SerialDirective['status'],
+): string {
+  if (reason === 'consensus') return `@user 接力讨论已在 ${steps} 次发言后达成一致。`
+  if (reason === 'max-steps') return `@user 接力讨论已达到 ${steps} 次发言上限;请检查仍未收敛的分歧。`
+  if (reason === 'no-next-agent' && detailStatus === 'blocked') return '@user 接力讨论需要你的决定后才能继续。'
+  if (reason === 'no-next-agent') return '@user agent 已把讨论交回给你。'
+  if (reason === 'aborted') return '@user 接力讨论已取消。'
+  if (reason === 'protocol-missing') return '@user 接力协议修复失败,讨论已停止。'
+  return '@user 接力讨论因 agent 失败而停止。'
+}
+
 function shouldUseIncrementalForRegistry(events: EventEnvelope[]): boolean {
   if (events.length > INCREMENTAL_EVENT_THRESHOLD) return true
   let chars = 0
@@ -745,6 +759,7 @@ class RunRegistry {
     let completedSteps = 0
     let stopReason: 'no-next-agent' | 'consensus' | 'max-steps' | 'protocol-missing' | 'agent-failed' | 'aborted' = 'max-steps'
     let stopMessage: string | undefined
+    let stopDetailStatus: SerialDirective['status'] | undefined
     try {
       const summary = await groupThreadStore.readSummary(input.id)
       for (let step = 1; step <= serial.maxSteps; step++) {
@@ -832,10 +847,12 @@ class RunRegistry {
         }
         if (serial.stopOnConsensus && directive.status === 'consensus') {
           stopReason = 'consensus'
+          stopDetailStatus = directive.status
           break
         }
         if (directive.next === '@user' || directive.status === 'blocked') {
           stopReason = 'no-next-agent'
+          stopDetailStatus = directive.status
           break
         }
         const next = selectNextAgentFromDirective(directive, serial.participants, currentAgent)
@@ -854,6 +871,7 @@ class RunRegistry {
         stopReason,
         completedSteps,
         stopMessage,
+        stopDetailStatus,
       )
     } finally {
       this.archiveGroupTurnReplay(input.id, groupTurnId)
@@ -868,13 +886,14 @@ class RunRegistry {
     reason: string,
     steps: number,
     message?: string,
+    detailStatus?: SerialDirective['status'],
   ) {
     const now = new Date().toISOString()
     const statusEnv = wrapGroup(
       {
         type: 'meta',
         key: 'serial_turn_status',
-        value: { groupTurnId, status, reason, steps, ...(message ? { message } : {}) },
+        value: { groupTurnId, status, reason, steps, ...(message ? { message } : {}), ...(detailStatus ? { detailStatus } : {}) },
         ts: now,
       },
       groupTurnId,
@@ -885,7 +904,13 @@ class RunRegistry {
       {
         type: 'meta',
         key: 'user_notification',
-        value: { groupTurnId, text: `@user 接力讨论已结束: ${reason}` },
+        value: {
+          groupTurnId,
+          reason,
+          steps,
+          ...(detailStatus ? { detailStatus } : {}),
+          text: serialCompletionNotification(reason, steps, detailStatus),
+        },
         ts: now,
       },
       groupTurnId,

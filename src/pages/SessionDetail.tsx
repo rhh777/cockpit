@@ -183,6 +183,7 @@ export function SessionDetail() {
   const [live, setLive] = useState(false)
   const [streams, setStreams] = useState<ActiveStream[]>([])
   const [sendError, setSendError] = useState<string | null>(null)
+  const [reviewStateWarning, setReviewStateWarning] = useState<string | null>(null)
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([])
   const [expandedApprovals, setExpandedApprovals] = useState<Set<string>>(new Set())
   const [activeTrace, setActiveTrace] = useState<TraceGroup | null>(null)
@@ -727,6 +728,7 @@ export function SessionDetail() {
     setReviewRoom(null)
     setEvents([])
     setSendError(null)
+    setReviewStateWarning(null)
     setPendingApprovals([])
     // 切 session 时只断开当前页面的订阅。follow-up run 留在服务端继续跑,显式取消才 abort。
     for (const abort of abortsRef.current.values()) abort()
@@ -743,7 +745,7 @@ export function SessionDetail() {
           if (isReview) {
             fetchReviewRoom(id)
               .then((r) => alive && setReviewRoom(r))
-              .catch(() => {})
+              .catch((e) => alive && setReviewStateWarning(String((e as Error)?.message ?? e)))
           }
           fetchRunningRuns()
             .then((runs) => {
@@ -1421,6 +1423,11 @@ export function SessionDetail() {
           {sendError && (
           <div className="banner warn conversation-banner">{t('detail.sendFailed', { error: sendError })}</div>
         )}
+          {reviewStateWarning && (
+            <div className="banner warn conversation-banner">
+              {t('reviewRoom.stateCorrupt', { error: reviewStateWarning })}
+            </div>
+          )}
           <div className="conversation-bottom">
             <StreamingStatus
               streams={groupMode ? streams : streams.filter((s) => s.agent === sessionAgentOf(source))}
@@ -1547,7 +1554,10 @@ function ReviewRoomPanel({
     <>
       <div className="review-room-banner">
         <div className="review-room-main">
-          <span className="review-room-kicker">Review Room</span>
+          <span className="review-room-kicker">
+            <span className="review-room-mark"><Icon name="sparkle" size={13} /></span>
+            {t('newChat.reviewRoom')}
+          </span>
           <span className="review-room-title">
             {t('reviewRoom.collab', {
               agents: (room?.participants ?? ['claude', 'codex']).map(labelForAgent).join(' × '),
@@ -1654,60 +1664,63 @@ function ReviewRoomPanel({
       </div>
       <div className="review-rounds">
         <div className="review-rounds-head">
-          <span className="review-rounds-title">{t('reviewRoom.rounds')}</span>
-          <span>·</span>
-          <span>{t('reviewRoom.nextRound')}</span>
-          <div className="review-kind-row">
-            {(['review', 'fix', 'verify'] as const).map((k) => (
-              <button
-                key={k}
-                type="button"
-                className={`review-kind-item ${nextKind === k ? 'active' : ''}`}
-                onClick={() => setNextKind(k)}
-                aria-pressed={nextKind === k}
-              >
-                {ROUND_KIND_LABEL[k]}
-              </button>
-            ))}
+          <div className="review-rounds-heading">
+            <span className="review-rounds-title">{t('reviewRoom.rounds')}</span>
+            <span>{t('reviewRoom.nextRound')}</span>
           </div>
-          {nextKind === 'fix' ? (
-            // fix 只允许一个 writer,所以这里换成 fixer 选择,而不是并行/接力开关。
-            <div className="review-kind-row" role="group" aria-label={t('reviewRoom.singleWriter')}>
-              <span className="review-rounds-title" title={t('reviewRoom.singleWriterLabel')}>
-                {t('reviewRoom.singleWriter')}
-              </span>
-              {(['auto', ...participants] as const).map((f) => (
+          <div className="review-rounds-controls">
+            <div className="review-kind-row review-segmented" role="group" aria-label={t('reviewRoom.nextRound')}>
+              {(['review', 'fix', 'verify'] as const).map((k) => (
                 <button
-                  key={f}
+                  key={k}
                   type="button"
-                  className={`review-kind-item ${fixer === f ? 'active' : ''}`}
-                  onClick={() => setFixer(f as AgentName | 'auto')}
-                  aria-pressed={fixer === f}
-                  title={
-                    f === 'auto'
-                      ? t('reviewRoom.autoFixerHint')
-                      : t('reviewRoom.fixerHint', { agent: labelForAgent(f as AgentName) })
-                  }
+                  className={`review-kind-item ${nextKind === k ? 'active' : ''}`}
+                  onClick={() => setNextKind(k)}
+                  aria-pressed={nextKind === k}
                 >
-                  {f === 'auto' ? t('reviewRoom.autoFixer') : labelForAgent(f as AgentName)}
+                  {ROUND_KIND_LABEL[k]}
                 </button>
               ))}
             </div>
-          ) : (
-            <div className="review-kind-row">
-              {(['parallel', 'serial'] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  className={`review-kind-item ${nextMode === m ? 'active' : ''}`}
-                  onClick={() => setNextMode(m)}
-                  aria-pressed={nextMode === m}
-                >
-                  {m === 'parallel' ? t('newChat.parallel') : t('newChat.serial')}
-                </button>
-              ))}
-            </div>
-          )}
+            {nextKind === 'fix' ? (
+              // fix 只允许一个 writer,所以这里换成 fixer 选择,而不是并行/接力开关。
+              <div className="review-kind-row review-segmented" role="group" aria-label={t('reviewRoom.singleWriter')}>
+                <span className="review-control-label" title={t('reviewRoom.singleWriterLabel')}>
+                  {t('reviewRoom.singleWriter')}
+                </span>
+                {(['auto', ...participants] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    className={`review-kind-item ${fixer === f ? 'active' : ''}`}
+                    onClick={() => setFixer(f as AgentName | 'auto')}
+                    aria-pressed={fixer === f}
+                    title={
+                      f === 'auto'
+                        ? t('reviewRoom.autoFixerHint')
+                        : t('reviewRoom.fixerHint', { agent: labelForAgent(f as AgentName) })
+                    }
+                  >
+                    {f === 'auto' ? t('reviewRoom.autoFixer') : labelForAgent(f as AgentName)}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="review-kind-row review-segmented" role="group" aria-label={t('newChat.discussionMode')}>
+                {(['parallel', 'serial'] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    className={`review-kind-item ${nextMode === m ? 'active' : ''}`}
+                    onClick={() => setNextMode(m)}
+                    aria-pressed={nextMode === m}
+                  >
+                    {m === 'parallel' ? t('newChat.parallel') : t('newChat.serial')}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         {rounds.length === 0 ? (
           <div className="review-round-row" style={{ gridTemplateColumns: '1fr' }}>

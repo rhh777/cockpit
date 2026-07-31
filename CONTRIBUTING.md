@@ -40,7 +40,7 @@ docs: 补充群聊设计文档
 
 ## 新增来源 / agent
 
-想接入 Cursor、Cline、Aider 等?参考 `docs/02-session-formats.md §四`,写一个新的 `server/loaders/<source>-loader.ts`,产出统一的 `NormalizedEvent[]` + `SessionSummary`,其他层不用改。
+新增 session 来源请参考 `docs/02-session-formats.md`,实现 `SessionSourceLoader`,产出统一的 `NormalizedEvent[]` + `SessionSummary`。新增可调用 agent 则实现 `ReviewAgent`,注册到 `server/adapters/registry.ts`,并按 `AGENTS.md` 的 UI 同步清单接入共享 agent 列表、图标、模型/权限选择、@mention 和运行状态。来源与 agent 是两条独立扩展路径,不要只写 loader 后在 UI/server 硬编码名称。
 
 ## 报告问题
 

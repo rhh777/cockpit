@@ -85,6 +85,7 @@ pnpm electron:build    # 打 macOS dmg
 8. API key 不进前端 bundle;follow-up 默认只读并过滤敏感路径。
 9. cockpit 事件必须带 `origin`;follow-up/group 带 `turnId`;adapter stream 带 `runId`。
 10. 扩展只能加可选字段/方法;破坏 interface 先改设计。
+11. 本地 HTTP API 必须经过 `cockpitApi()` 的 loopback/origin guard,新增路由不得绕过。
 
 ## 数据落盘位置(都在 `~/.cockpit/`)
 

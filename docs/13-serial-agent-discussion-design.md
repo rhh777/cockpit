@@ -516,7 +516,7 @@ Status: needs-review | needs-changes | consensus | blocked
 | 2 | 讨论策略 preset 选择 | 已完成 | 见下方「Phase 2 前端控制实现记录」 |
 | 2 | `StreamingStatus` serial step 进度 | 已完成 | 见下方「Phase 2 前端控制实现记录」 |
 | 2 | timeline 对 serial meta 轻量展示 | 已完成 | `EventItem` 渲染协议 chip + `serial_turn_status` 卡片 |
-| 3 | 更好的 `@user` 收口文本 | 部分完成 | 当前是固定模板「接力讨论已结束: {reason}」,未按分歧/共识分别生成 |
+| 3 | 更好的 `@user` 收口文本 | 已完成 | 按 consensus / max-steps / blocked / returned / aborted / protocol failure 区分;达到上限时明确提示检查剩余分歧 |
 | 3 | 从文档附件创建接力模板 / 手动插队 / 分歧摘要 | 未开始 | 设计里已标为可选项 |
 
 ### 协议修复实现记录(2026-07-30)

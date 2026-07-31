@@ -278,7 +278,8 @@ export async function fetchReviewRoom(id: string): Promise<ReviewRoomState | nul
   const res = await fetch(`/api/review-rooms/${encodeURIComponent(id)}`)
   if (res.status === 404) return null
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-  const json = await res.json()
+  const json = await res.json() as { review?: ReviewRoomState | null; warning?: { code?: string; message?: string } }
+  if (json.warning) throw new Error(json.warning.message ?? json.warning.code ?? 'corrupt review state')
   return (json.review ?? null) as ReviewRoomState | null
 }
 

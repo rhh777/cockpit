@@ -11,6 +11,7 @@ import { handleSessionsRoute } from './routes/sessions'
 import { handleSettingsRoute } from './routes/settings'
 import { handleThreadsRoute } from './routes/threads'
 import { handleReviewRoomsRoute } from './routes/review-rooms'
+import { checkIncomingLocalApiRequest } from './security/local-request'
 
 type Next = (err?: unknown) => void
 
@@ -19,6 +20,14 @@ export function cockpitApi() {
   return async function (req: IncomingMessage, res: ServerResponse, next: Next) {
     const rawUrl = req.url ?? '/'
     if (!rawUrl.startsWith('/api/')) return next()
+
+    const requestCheck = checkIncomingLocalApiRequest(req)
+    if (!requestCheck.ok) {
+      res.statusCode = requestCheck.status ?? 403
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      res.end(JSON.stringify({ error: 'forbidden local API request', reason: requestCheck.reason }))
+      return
+    }
 
     let url: URL
     try {

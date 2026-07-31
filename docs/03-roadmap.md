@@ -59,6 +59,7 @@
 - 浏览器形态用 `pnpm dev`。
 - Electron 桌面壳用 `pnpm electron:dev`,生产包用 `pnpm electron:build`。
 - 桌面壳与浏览器形态共用同一套 React UI 和 server middleware。
+- 本地 API 校验 loopback Host 与浏览器同源 mutation;Electron 限制静态文件目录、跨 origin 导航和可外开的 URL scheme。
 
 ## 当前不做
 

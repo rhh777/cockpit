@@ -1,6 +1,6 @@
 // 共享 shiki 高亮器:全 app 一个实例,语言按需懒加载,避免每个 <CodeBlock> 都重建一个 wasm。
 // 参考 shiki v1 文档 getSingletonHighlighter。
-import { getSingletonHighlighter, type Highlighter } from 'shiki'
+import type { Highlighter } from 'shiki'
 
 // 预热常用语言:第一次出现这些 lang 不必再走异步 loadLanguage。
 // 其它 lang 在 highlight() 第一次遇到时按需加载;失败就退回纯文本。
@@ -31,10 +31,15 @@ let highlighterPromise: Promise<Highlighter> | null = null
 
 function getHighlighter(): Promise<Highlighter> {
   if (!highlighterPromise) {
-    highlighterPromise = getSingletonHighlighter({
-      themes: [...THEMES],
-      langs: [...PRELOAD_LANGS],
-    })
+    // `shiki` bundles grammars/themes; keeping the value import at module scope made
+    // the whole highlighter part of the initial app chunk. Code blocks are already
+    // async, so load the highlighter only when the first fenced block becomes visible.
+    highlighterPromise = import('shiki').then(({ getSingletonHighlighter }) =>
+      getSingletonHighlighter({
+        themes: [...THEMES],
+        langs: [...PRELOAD_LANGS],
+      }),
+    )
   }
   return highlighterPromise
 }

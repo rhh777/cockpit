@@ -46,6 +46,7 @@ Use `pnpm` for this repo.
 6. API keys must not enter the frontend bundle.
 7. Cockpit events need `origin`; follow-up/group events need `turnId`; adapter streams need `runId`.
 8. Interface changes should be additive unless the relevant design doc is updated first.
+9. Local HTTP API requests must pass the shared loopback/origin guard; do not add a route that bypasses `cockpitApi()`.
 
 ## UI Synchronization Rules
 

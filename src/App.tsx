@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { Route, Routes } from 'react-router-dom'
 import { SessionList } from './pages/SessionList'
-import { SessionDetail } from './pages/SessionDetail'
 import { Splitter } from './components/Splitter'
 import { SettingsPanel } from './components/SettingsPanel'
 import { Icon } from './components/Icon'
@@ -14,6 +13,8 @@ import {
   applyThemePreference,
   readDefaultAgent,
 } from './lib/preferences'
+
+const SessionDetail = lazy(() => import('./pages/SessionDetail').then((module) => ({ default: module.SessionDetail })))
 
 export default function App() {
   const { t } = useI18n()
@@ -64,7 +65,14 @@ export default function App() {
               </div>
             }
           />
-          <Route path="/:source/:id" element={<SessionDetail />} />
+          <Route
+            path="/:source/:id"
+            element={
+              <Suspense fallback={<div className="detail"><div className="empty">{t('common.loading')}</div></div>}>
+                <SessionDetail />
+              </Suspense>
+            }
+          />
         </Routes>
       </div>
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}

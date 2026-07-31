@@ -28,7 +28,7 @@ Follow-up agent 默认只读。「回到原会话」模式只通过官方 CLI �
 
 **未做:** 跨会话全文搜索 · 导出 Markdown/HTML · 产物/补丁管理 · 会话笔记与标签 · 分支可视化 · cockpit 侧 policy engine(`auto-safe` 的路径/命令分类)· 高风险写入的 sandbox diff-then-merge。
 
-**已知粗糙处(依赖它之前请知悉):** Review Room 还没有 done 收口和 issue 状态手改;i18n 不处理复数形式(英文会出现 "1 events")。能力事实源见 `docs/03-roadmap.md`,分阶段实现状态见 `docs/13` / `docs/14`。
+**已知粗糙处(依赖它之前请知悉):** 部分英文复数形式尚未处理(会出现 "1 events");实时 token delta 有 `docs/01 §十` 记录的脱敏边界;仓库未配置签名 secret 时发布包不带签名。能力事实源见 `docs/03-roadmap.md`,分阶段实现状态见 `docs/13` / `docs/14`。
 
 ## 文档
 
@@ -46,6 +46,7 @@ Follow-up agent 默认只读。「回到原会话」模式只通过官方 CLI �
 - `docs/12-design-review-findings.md` — 2026-07 设计评审,17 项已全部关闭
 - `docs/13-serial-agent-discussion-design.md` — 群聊接力讨论模式
 - `docs/14-review-room-workflow-design.md` — Review Room 工作流与 fresh review
+- `docs/15-release-process.md` — tag 发布、校验和、签名与公证
 
 ## 快速开始
 

@@ -4,6 +4,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { cockpitApi } from '../server/index'
 import { fixPath } from './fix-path'
+import { isAllowedExternalUrl, isSameAppOrigin, resolveStaticAsset } from './security'
 
 // Electron 主进程:dev 模式直接指向 vite (localhost:5173);
 // 生产模式启动内置 http server (随机端口) 同时提供 /api/* 和静态资源。
@@ -41,10 +42,8 @@ async function startBackend(): Promise<string> {
 
 function serveStatic(req: IncomingMessage, res: ServerResponse) {
   const distDir = path.join(__dirname, '../dist')
-  const rawPath = (req.url ?? '/').split('?')[0]
-  const requested = path.join(distDir, rawPath === '/' ? '/index.html' : rawPath)
-  const resolved = path.resolve(requested)
-  if (!resolved.startsWith(path.resolve(distDir))) {
+  const resolved = resolveStaticAsset(distDir, req.url ?? '/')
+  if (!resolved) {
     res.statusCode = 403
     res.end('forbidden')
     return
@@ -93,12 +92,15 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+  const url = isDev ? DEV_URL : backendUrl
+  mainWindow.webContents.setWindowOpenHandler(({ url: requestedUrl }) => {
+    if (isAllowedExternalUrl(requestedUrl)) void shell.openExternal(requestedUrl)
     return { action: 'deny' }
   })
+  mainWindow.webContents.on('will-navigate', (event, requestedUrl) => {
+    if (!isSameAppOrigin(requestedUrl, url)) event.preventDefault()
+  })
 
-  const url = isDev ? DEV_URL : backendUrl
   mainWindow.loadURL(url)
 }
 

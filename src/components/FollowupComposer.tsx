@@ -9,6 +9,7 @@ import { AGENT_OPTIONS, labelForAgent } from '../lib/agents'
 import { fetchAgentModels, type AgentModelOptionDTO } from '../lib/api'
 import type { ApprovalMode, RunPermissions } from '../lib/types'
 import { useI18n, type MessageKey } from '../lib/i18n'
+import { pickLocalPaths } from '../lib/native-dialog'
 
 export type SendMode = 'followup' | 'native'
 type GroupDiscussionMode = 'parallel' | 'serial'
@@ -455,30 +456,13 @@ export function FollowupComposer({
     })
   }
 
-  const pickLocalPaths = async (kind: 'file' | 'directory'): Promise<string[]> => {
-    try {
-      const res = await fetch(`/api/native-dialog/open?kind=${kind}`, { method: 'POST' })
-      if (res.ok) {
-        const body = (await res.json()) as { paths?: string[] }
-        return Array.isArray(body.paths) ? body.paths : []
-      }
-    } catch {
-      /* fall through to Electron preload */
-    }
-
-    if (window.cockpitNative) {
-      return kind === 'file' ? window.cockpitNative.pickFiles() : window.cockpitNative.pickDirectory()
-    }
-    throw new Error(t('composer.noNativePicker'))
-  }
-
   const pickFiles = async () => {
     setAttachmentMenuOpen(false)
     try {
       const paths = await pickLocalPaths('file')
       addPathAttachments('file', paths)
     } catch (err) {
-      setAttachmentError(String((err as Error)?.message ?? err))
+      setAttachmentError((err as Error)?.message === 'native-picker-unavailable' ? t('composer.noNativePicker') : String((err as Error)?.message ?? err))
     }
   }
 
@@ -488,7 +472,7 @@ export function FollowupComposer({
       const paths = await pickLocalPaths('directory')
       addPathAttachments('directory', paths)
     } catch (err) {
-      setAttachmentError(String((err as Error)?.message ?? err))
+      setAttachmentError((err as Error)?.message === 'native-picker-unavailable' ? t('composer.noNativePicker') : String((err as Error)?.message ?? err))
     }
   }
 

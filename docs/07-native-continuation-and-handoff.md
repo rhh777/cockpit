@@ -348,7 +348,7 @@ LLM-driven summary 留到 Phase 3,且必须显式触发(`POST /api/handoffs/:id/
 ```md
 # File References
 
-- cwd: `/Users/hrh/code/ai/cockpit`
+- cwd: `/Users/alice/code/cockpit`
 - branch: `...`
 - relevant files:
   - `server/routes/group-threads.ts`
@@ -515,10 +515,10 @@ Handoff prompt 示例:
 Please continue from this Cockpit handoff.
 
 Read:
-/Users/hrh/.cockpit/handoffs/<handoffId>/handoff.codex.md
+/Users/alice/.cockpit/handoffs/<handoffId>/handoff.codex.md
 
 Workspace:
-/Users/hrh/code/ai/cockpit
+/Users/alice/code/cockpit
 ```
 
 ### App-server 进阶
