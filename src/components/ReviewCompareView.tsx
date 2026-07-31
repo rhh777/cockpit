@@ -1,5 +1,11 @@
 import { useMemo, useState } from 'react'
-import type { ReviewIssueDTO, ReviewIssueOutcome, ReviewIssueSetDTO, ReviewRoomState } from '../lib/api'
+import type {
+  ReviewIssueDTO,
+  ReviewIssueOutcome,
+  ReviewIssueSetDTO,
+  ReviewIssueStatus,
+  ReviewRoomState,
+} from '../lib/api'
 import type { AgentName } from '../lib/types'
 import { labelForAgent } from '../lib/agents'
 import { useI18n, type MessageKey } from '../lib/i18n'
@@ -58,6 +64,60 @@ function FollowupResults({
         </div>
       ))}
     </div>
+  )
+}
+
+const STATUS_LABEL: Record<ReviewIssueStatus, MessageKey> = {
+  open: 'issue.statusOpen',
+  fixed: 'issue.statusFixed',
+  wontfix: 'issue.statusWontfix',
+  'needs-check': 'issue.statusNeedsCheck',
+}
+const STATUS_ORDER: ReviewIssueStatus[] = ['open', 'fixed', 'wontfix', 'needs-check']
+
+// 单条 issue 的状态选择器。选中当前状态 = 清除人工状态(回落到派生/默认)。
+function IssueStatusPicker({
+  roundId,
+  issue,
+  onSetIssueStatus,
+}: {
+  roundId: string
+  issue: ReviewIssueDTO
+  onSetIssueStatus: (roundId: string, issueId: string, status: ReviewIssueStatus | null) => void
+}) {
+  const { t } = useI18n()
+  const status = issue.status ?? 'open'
+  const manual = issue.statusSource === 'manual'
+  return (
+    <span className="issue-status-picker" onClick={(e) => e.stopPropagation()}>
+      <select
+        className={`issue-status-select status-${status} ${manual ? 'is-manual' : ''}`}
+        value={status}
+        title={manual ? t('issue.statusManual') : t('issue.statusAuto')}
+        aria-label={t('issue.setStatus')}
+        onChange={(e) => {
+          const next = e.target.value as ReviewIssueStatus
+          // 选回当前的派生状态即视为"清除人工状态"。
+          onSetIssueStatus(roundId, issue.id, manual && next === status ? null : next)
+        }}
+      >
+        {STATUS_ORDER.map((v) => (
+          <option key={v} value={v}>
+            {t(STATUS_LABEL[v])}
+          </option>
+        ))}
+      </select>
+      {manual && (
+        <button
+          type="button"
+          className="issue-status-clear"
+          title={t('issue.clearStatus')}
+          onClick={() => onSetIssueStatus(roundId, issue.id, null)}
+        >
+          <Icon name="close" size={10} />
+        </button>
+      )}
+    </span>
   )
 }
 
@@ -126,16 +186,87 @@ function clusterIssues(issues: ReviewIssueDTO[], threshold = 0.5): ClusterEntry[
   })
 }
 
+
+// docs/14 §Done:收口后展示最终决策、已修复、未修复但接受、仍待处理,以及评审来源快照。
+function DoneSummary({ room }: { room: ReviewRoomState }) {
+  const { t } = useI18n()
+  const lastReview = [...room.rounds].reverse().find((r) => r.kind === 'review' && r.status === 'completed')
+  const set = lastReview ? room.issueSets.find((s) => s.roundId === lastReview.id) : undefined
+  const issues = set?.issues ?? []
+  const groups: { key: string; labelKey: MessageKey; items: ReviewIssueDTO[] }[] = [
+    { key: 'fixed', labelKey: 'done.fixed', items: issues.filter((i) => i.status === 'fixed') },
+    { key: 'wontfix', labelKey: 'done.wontfix', items: issues.filter((i) => i.status === 'wontfix') },
+    {
+      key: 'remaining',
+      labelKey: 'done.remaining',
+      items: issues.filter((i) => i.status !== 'fixed' && i.status !== 'wontfix'),
+    },
+  ]
+  return (
+    <div className="review-done">
+      <div className="review-done-head">
+        <Icon name="check" size={14} />
+        <span className="review-done-title">{t('done.title')}</span>
+        {room.doneAt && (
+          <span className="review-done-at">
+            {t('done.at', { when: new Date(room.doneAt).toLocaleString() })}
+          </span>
+        )}
+      </div>
+      {room.conclusion && (
+        <div className="review-done-block">
+          <div className="review-done-block-title">{t('done.conclusion')}</div>
+          <div className="review-done-conclusion">{room.conclusion}</div>
+        </div>
+      )}
+      {groups.map((g) => (
+        <div className="review-done-block" key={g.key}>
+          <div className="review-done-block-title">
+            {t(g.labelKey)} <span className="review-compare-stat-count">{g.items.length}</span>
+          </div>
+          {g.items.length === 0 ? (
+            <div className="review-compare-empty">{t('done.noneInGroup')}</div>
+          ) : (
+            <ul className="review-done-list">
+              {g.items.map((it) => (
+                <li key={`${it.agent}:${it.id}`}>
+                  <span className={`review-sev sev-${it.severity}`}>{SEVERITY_LABEL[it.severity] ?? it.severity}</span>
+                  <span>{it.title}</span>
+                  {it.path && (
+                    <code className="review-cluster-issue-path">
+                      {it.path}
+                      {it.line ? `:${it.line}` : ''}
+                    </code>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ))}
+      <div className="review-done-block">
+        <div className="review-done-block-title">{t('done.sourceSnapshot')}</div>
+        <div className="review-done-source">
+          <code className="review-cluster-issue-path">{room.source.title}</code>
+          <span className="review-compare-empty">{room.source.kind}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function ReviewCompareView({
   room,
   onExtract,
   onFreshReview,
+  onSetIssueStatus,
   busy,
   freshBusy,
 }: {
   room: ReviewRoomState
   onExtract: () => void
   onFreshReview?: () => void
+  onSetIssueStatus?: (roundId: string, issueId: string, status: ReviewIssueStatus | null) => void
   busy?: boolean
   freshBusy?: boolean
 }) {
@@ -232,6 +363,7 @@ export function ReviewCompareView({
 
   return (
     <div className="review-compare">
+      {room.phase === 'done' && <DoneSummary room={room} />}
       <div className="review-compare-head">
         <div className="review-compare-title">
           <Icon name="wrench" size={13} />
@@ -279,6 +411,17 @@ export function ReviewCompareView({
         </div>
       </div>
 
+      {room.statusSummary && room.statusSummary.total > 0 && (
+        <div className="review-status-summary">
+          {t('compare.statusSummary', {
+            fixed: room.statusSummary.fixed,
+            wontfix: room.statusSummary.wontfix,
+            open: room.statusSummary.open,
+            needsCheck: room.statusSummary.needsCheck,
+          })}
+        </div>
+      )}
+
       {set.recommendedNextStep && (
         <div className="review-compare-next">
           <strong>{t('compare.nextStep')}</strong>&nbsp;{set.recommendedNextStep}
@@ -324,6 +467,18 @@ export function ReviewCompareView({
                       </span>
                     )}
                   </span>
+                  {(() => {
+                    // 簇里只要还有 open/needs-check,头部就显示未完成的那个,避免"部分已修"被误读成全修完。
+                    const statuses = c.issues.map((it) => it.status ?? 'open')
+                    const worst =
+                      statuses.find((x) => x === 'open') ??
+                      statuses.find((x) => x === 'needs-check') ??
+                      statuses.find((x) => x === 'wontfix') ??
+                      statuses[0]
+                    return worst && worst !== 'open' ? (
+                      <span className={`issue-status-badge status-${worst}`}>{t(STATUS_LABEL[worst])}</span>
+                    ) : null
+                  })()}
                   <span className="review-cluster-agents">
                     {[...c.agents].map((a) => (
                       <AgentIcon key={a} source={a} size={14} />
@@ -356,6 +511,13 @@ export function ReviewCompareView({
                               {it.path}
                               {it.line ? `:${it.line}` : ''}
                             </code>
+                          )}
+                          {onSetIssueStatus && activeRoundId && (
+                            <IssueStatusPicker
+                              roundId={activeRoundId}
+                              issue={it}
+                              onSetIssueStatus={onSetIssueStatus}
+                            />
                           )}
                         </div>
                         <div className="review-cluster-issue-title">{it.title}</div>

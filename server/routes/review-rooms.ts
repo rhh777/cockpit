@@ -8,6 +8,12 @@ import { groupThreadStore } from '../store/group-thread-store'
 import { reviewRoomStore, type ReviewRoomPathSource, type ReviewRoomSource } from '../store/review-room-store'
 import { extractIssuesForRound } from '../review/extract-issues'
 import { planReviewRound, RoundPlanError, type RoundKind } from '../review/round-plan'
+import {
+  collectOutcomeTrail,
+  resolveIssueStatus,
+  summarizeIssueStatuses,
+} from '../review/issue-status'
+import type { ReviewIssueStatus, ReviewRoomDiskState } from '../store/review-room-store'
 import { randomUUID } from 'node:crypto'
 import { handoffDir, handoffStore } from '../store/handoff-store'
 import { buildContext } from '../handoffs/context-builder'
@@ -478,6 +484,99 @@ function reviewPrompt(
   ].filter(Boolean).join('\n')
 }
 
+// 下发给前端的 review DTO:每条 issue 附上解析后的 status / statusSource,
+// 并带一份最近一轮 review 的状态汇总。优先级规则只在服务端实现一次(docs/14)。
+function decorateReview(review: ReviewRoomDiskState) {
+  const outcomeTrail = collectOutcomeTrail(review.rounds, review.issueSets)
+  return {
+    ...review,
+    issueSets: review.issueSets.map((set) => ({
+      ...set,
+      issues: set.issues.map((issue) => {
+        const resolved = resolveIssueStatus({
+          roundId: set.roundId,
+          issue,
+          overrides: review.statusOverrides,
+          outcomeTrail,
+        })
+        return { ...issue, status: resolved.status, statusSource: resolved.source }
+      }),
+    })),
+    statusSummary: summarizeIssueStatuses(review.rounds, review.issueSets, review.statusOverrides),
+  }
+}
+
+const ISSUE_STATUSES: ReviewIssueStatus[] = ['open', 'fixed', 'wontfix', 'needs-check']
+
+async function handleSetIssueStatus(req: IncomingMessage, res: ServerResponse, id: string) {
+  if (!isValidSessionId(id)) {
+    sendJson(res, 400, { error: 'invalid reviewRoomId' })
+    return
+  }
+  const body = (await readBody(req)) as { roundId?: string; issueId?: string; status?: string | null; note?: string }
+  const roundId = typeof body.roundId === 'string' ? body.roundId : ''
+  const issueId = typeof body.issueId === 'string' ? body.issueId : ''
+  if (!roundId || !issueId) {
+    sendJson(res, 400, { error: 'roundId and issueId are required' })
+    return
+  }
+  // status === null 表示清除人工状态,回落到派生/默认。
+  const status =
+    body.status === null || body.status === undefined
+      ? null
+      : (ISSUE_STATUSES as string[]).includes(body.status)
+        ? (body.status as ReviewIssueStatus)
+        : undefined
+  if (status === undefined) {
+    sendJson(res, 400, { error: `status must be one of ${ISSUE_STATUSES.join(' | ')} or null` })
+    return
+  }
+  const review = await reviewRoomStore.read(id)
+  if (!review) {
+    sendJson(res, 404, { error: 'review room not found' })
+    return
+  }
+  if (!review.rounds.some((r) => r.id === roundId)) {
+    sendJson(res, 404, { error: 'round not found' })
+    return
+  }
+  const next = await reviewRoomStore.setIssueStatus(id, roundId, issueId, status, body.note)
+  if (!next) {
+    sendJson(res, 404, { error: 'review room not found' })
+    return
+  }
+  sendJson(res, 200, { reviewRoomId: id, review: decorateReview(next) })
+}
+
+async function handleDone(req: IncomingMessage, res: ServerResponse, id: string) {
+  if (!isValidSessionId(id)) {
+    sendJson(res, 400, { error: 'invalid reviewRoomId' })
+    return
+  }
+  const body = (await readBody(req)) as { done?: boolean; conclusion?: string }
+  const done = body.done !== false
+  const review = await reviewRoomStore.read(id)
+  if (!review) {
+    sendJson(res, 404, { error: 'review room not found' })
+    return
+  }
+  if (done && review.rounds.some((r) => r.status === 'running')) {
+    sendJson(res, 409, { error: 'cannot finish while a round is still running' })
+    return
+  }
+  const next = await reviewRoomStore.setDone(
+    id,
+    done,
+    typeof body.conclusion === 'string' ? body.conclusion.trim() : undefined,
+  )
+  if (!next) {
+    sendJson(res, 404, { error: 'review room not found' })
+    return
+  }
+  sessionRegistry.invalidate()
+  sendJson(res, 200, { reviewRoomId: id, review: decorateReview(next) })
+}
+
 async function handleGet(res: ServerResponse, id: string) {
   if (!isValidSessionId(id)) {
     sendJson(res, 400, { error: 'invalid reviewRoomId' })
@@ -490,7 +589,7 @@ async function handleGet(res: ServerResponse, id: string) {
     return
   }
   review = (await reconcileRoundsAndIssues(id, review)) ?? review
-  sendJson(res, 200, { reviewRoomId: id, groupThreadId: id, state, review })
+  sendJson(res, 200, { reviewRoomId: id, groupThreadId: id, state, review: decorateReview(review) })
 }
 
 async function handleFreshReview(req: IncomingMessage, res: ServerResponse, id: string) {
@@ -581,7 +680,7 @@ async function handleFreshReview(req: IncomingMessage, res: ServerResponse, id: 
     parentReviewRoomId: id,
     childReviewRoomId: child.id,
     groupThreadId: child.id,
-    review: childReview,
+    review: decorateReview(childReview),
     started,
     ...(startError ? { startError } : {}),
   })
@@ -687,7 +786,7 @@ async function handleExtract(req: IncomingMessage, res: ServerResponse, id: stri
     const saved = await reviewRoomStore.saveIssueSet(id, rId, parsed)
     if (saved) next = saved
   }
-  sendJson(res, 200, { reviewRoomId: id, review: next })
+  sendJson(res, 200, { reviewRoomId: id, review: decorateReview(next) })
 }
 
 // GET 时按 transcript 的 turn_status 补写轮次状态,并对已完成、还没 issueSet 的轮次做一次抽取。
@@ -786,6 +885,16 @@ export async function handleReviewRoomsRoute(
 
   if (req.method === 'POST' && parts.length === 4 && parts[3] === 'extract') {
     await handleExtract(req, res, decodeURIComponent(parts[2]))
+    return true
+  }
+
+  if (req.method === 'POST' && parts.length === 4 && parts[3] === 'issue-status') {
+    await handleSetIssueStatus(req, res, decodeURIComponent(parts[2]))
+    return true
+  }
+
+  if (req.method === 'POST' && parts.length === 4 && parts[3] === 'done') {
+    await handleDone(req, res, decodeURIComponent(parts[2]))
     return true
   }
 

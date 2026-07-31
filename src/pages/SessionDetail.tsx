@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { extractReviewIssues, fetchChanges, fetchReviewRoom, fetchRunningRuns, fetchSessionDetail, revealSession, startFreshReview, type ReviewRoomState, type SessionDetailDTO } from '../lib/api'
+import {
+  extractReviewIssues,
+  fetchChanges,
+  fetchReviewRoom,
+  fetchRunningRuns,
+  fetchSessionDetail,
+  finishReviewRoom,
+  revealSession,
+  setReviewIssueStatus,
+  startFreshReview,
+  type ReviewRoomState,
+  type SessionDetailDTO,
+} from '../lib/api'
 import { ReviewCompareView } from '../components/ReviewCompareView'
 import {
   attachGroupTurnStream,
@@ -1023,6 +1035,28 @@ export function SessionDetail() {
     [id, appendEnvelopes, attachGroupRun, attachGroupTurn],
   )
 
+  const handleReviewRoomFinish = useCallback(
+    (done: boolean, conclusion?: string) => {
+      if (!id) return
+      setSendError(null)
+      finishReviewRoom(id, { done, ...(conclusion !== undefined ? { conclusion } : {}) })
+        .then((r) => r && setReviewRoom(r))
+        .catch((e) => setSendError(t('detail.finishFailed', { error: String(e) })))
+    },
+    [id, t],
+  )
+
+  const handleSetIssueStatus = useCallback(
+    (roundId: string, issueId: string, status: import('../lib/api').ReviewIssueStatus | null) => {
+      if (!id) return
+      setSendError(null)
+      setReviewIssueStatus(id, { roundId, issueId, status })
+        .then((r) => r && setReviewRoom(r))
+        .catch((e) => setSendError(t('detail.issueStatusFailed', { error: String(e) })))
+    },
+    [id, t],
+  )
+
   const handleReviewRoomStart = useCallback(
     (opts?: { kind?: 'review' | 'fix' | 'verify'; mode?: 'parallel' | 'serial'; participants?: AgentName[] }) => {
       if (!id) return
@@ -1242,12 +1276,14 @@ export function SessionDetail() {
               room={reviewRoom}
               busy={streams.length > 0}
               onStart={handleReviewRoomStart}
+              onFinish={handleReviewRoomFinish}
             />
             {reviewRoom && (
               <ReviewCompareView
                 room={reviewRoom}
                 busy={extractingIssues}
                 freshBusy={freshReviewBusy}
+                onSetIssueStatus={handleSetIssueStatus}
                 onExtract={async () => {
                   if (!id) return
                   setExtractingIssues(true)
@@ -1455,6 +1491,7 @@ function ReviewRoomPanel({
   room,
   busy,
   onStart,
+  onFinish,
 }: {
   phase: string
   sourceKind?: string
@@ -1462,6 +1499,7 @@ function ReviewRoomPanel({
   room: ReviewRoomState | null
   busy: boolean
   onStart: (opts?: { kind?: 'review' | 'fix' | 'verify'; mode?: 'parallel' | 'serial'; participants?: import('../lib/types').AgentName[] }) => void
+  onFinish: (done: boolean, conclusion?: string) => void
 }) {
   const { t } = useI18n()
   const rounds = room?.rounds ?? []
@@ -1472,7 +1510,11 @@ function ReviewRoomPanel({
   // fix 轮只能有一个 writer(docs/14 §Fix)。'auto' = 交给后端按「非发现者」规则挑,
   // 不在前端复制那套规则,避免两处逻辑漂移。
   const [fixer, setFixer] = useState<AgentName | 'auto'>('auto')
+  const [doneDialogOpen, setDoneDialogOpen] = useState(false)
   const participants = room?.participants ?? (['claude', 'codex'] as AgentName[])
+  const isDone = room?.phase === 'done'
+  const summary = room?.statusSummary
+  const canFinish = !anyRunning && (room?.rounds.length ?? 0) > 0
   useEffect(() => {
     if (!started) return setNextKind('review')
     const last = rounds[rounds.length - 1]
@@ -1539,6 +1581,32 @@ function ReviewRoomPanel({
               ? t('reviewRoom.startKind', { kind: ROUND_KIND_LABEL[nextKind] })
               : 'Start Review'}
           </button>
+          {isDone ? (
+            <button
+              className="review-room-secondary"
+              onClick={() => onFinish(false)}
+              disabled={busy}
+              title={t('reviewRoom.reopenTitle')}
+            >
+              {t('reviewRoom.reopen')}
+            </button>
+          ) : (
+            <button
+              className={`review-room-secondary ${summary?.allResolved ? 'is-ready' : ''}`}
+              onClick={() => setDoneDialogOpen(true)}
+              disabled={busy || !canFinish}
+              title={
+                anyRunning
+                  ? t('reviewRoom.finishBlocked')
+                  : summary?.allResolved
+                    ? t('reviewRoom.allResolved')
+                    : t('reviewRoom.finishTitle')
+              }
+            >
+              <Icon name="check" size={14} />
+              {t('reviewRoom.finish')}
+            </button>
+          )}
         </div>
       </div>
       <div className="review-rounds">
@@ -1618,6 +1686,73 @@ function ReviewRoomPanel({
           ))
         )}
       </div>
+      {doneDialogOpen && (
+        <DoneDialog
+          summary={summary}
+          initialConclusion={room?.conclusion ?? ''}
+          busy={busy}
+          onCancel={() => setDoneDialogOpen(false)}
+          onConfirm={(conclusion) => {
+            setDoneDialogOpen(false)
+            onFinish(true, conclusion)
+          }}
+        />
+      )}
     </>
+  )
+}
+
+function DoneDialog({
+  summary,
+  initialConclusion,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  summary?: ReviewRoomState['statusSummary']
+  initialConclusion: string
+  busy: boolean
+  onCancel: () => void
+  onConfirm: (conclusion: string) => void
+}) {
+  const { t } = useI18n()
+  const [conclusion, setConclusion] = useState(initialConclusion)
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <span className="modal-title">{t('reviewRoom.doneDialogTitle')}</span>
+          <button className="modal-close" onClick={onCancel} aria-label={t('common.close')}>×</button>
+        </div>
+        <div className="modal-body">
+          {summary && summary.total > 0 && (
+            <div className="modal-hint">
+              {t('reviewRoom.doneSummary', {
+                fixed: summary.fixed,
+                wontfix: summary.wontfix,
+                open: summary.open + summary.needsCheck,
+              })}
+            </div>
+          )}
+          <label className="modal-section">
+            <span className="modal-label">{t('reviewRoom.conclusion')}</span>
+            <textarea
+              className="modal-textarea"
+              value={conclusion}
+              onChange={(e) => setConclusion(e.target.value)}
+              placeholder={t('reviewRoom.conclusionPlaceholder')}
+              rows={4}
+              autoFocus
+            />
+          </label>
+        </div>
+        <div className="modal-actions">
+          <button className="modal-btn" onClick={onCancel} disabled={busy}>{t('common.cancel')}</button>
+          <button className="modal-btn primary" onClick={() => onConfirm(conclusion.trim())} disabled={busy}>
+            {t('reviewRoom.finish')}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }

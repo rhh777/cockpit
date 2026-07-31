@@ -643,7 +643,7 @@ Fresh Review 推荐复用 `docs/07-native-continuation-and-handoff.md` 的 conte
 | 1 | group timeline + phase header | 已完成 | `ReviewRoomPanel`(`src/pages/SessionDetail.tsx`) |
 | 2 | compare 生成 issue set | 已完成(实现方式与设计不同) | 未用 orchestrator LLM 轮次;改为**确定性解析** agent 回复末尾的 `FINDINGS` JSON 块(`server/review/extract-issues.ts`),GET 时对已完成轮次自动补抽。可见、可追溯、无额外 token 成本 |
 | 2 | UI 展示 issue list / 共同问题 / 分歧 / 推荐下一步 | 已完成 | `ReviewCompareView` 按 Jaccard + path 聚类,标出双方共识项 |
-| 2 | **issue status 手动修改** | **未开始** | `ReviewIssue` 连 `status` 字段都没有(只有 fix/verify 回填的 `outcome`),store 无 update 方法,compare 视图纯只读 |
+| 2 | issue status 手动修改 | 已完成 | 见下方「issue 状态与 Done 收口实现记录」 |
 | 2 | summary.md 记录 goal / decisions / tasks | 部分完成 | 沿用群聊 summary 机制,未按 Review Room 语义定制 |
 | 3 | `Fix with Claude/Codex` | 已完成 | 见上文 §Fix 实现记录(2026-07-30 收口单 writer) |
 | 3 | agent fix 只允许一个 writer | 已完成 | `server/review/round-plan.ts` |
@@ -655,12 +655,46 @@ Fresh Review 推荐复用 `docs/07-native-continuation-and-handoff.md` 的 conte
 | 4 | **Fresh Review 结果回链 parent issue set** | **未开始** | 只有 `linkFreshReview` 记链接;child 新发现的 issue 不会以 `open` 追加到 parent,parent 也不会标 `verified` |
 | 5 | 接入 docs/13 serial mode | 已完成 | 创建时和每轮都可选 parallel / serial |
 | 5 | serial step 状态的 workflow 展示 | 部分完成 | timeline 有 `serial_step_start` / `serial_turn_status` 卡片;`StreamingStatus` 没有「第 N/M 步」进度(见 docs/13) |
-| — | **`done` 收口阶段** | **未开始** | `ReviewPhase` 有 `'done'`,但 store 从不写它,UI 也没有结束入口;§Done 描述的最终决策/已接受未修问题/后续任务面板不存在 |
+| — | `done` 收口阶段 | 已完成 | 见下方「issue 状态与 Done 收口实现记录」 |
 | — | **source snapshot stale 检测** | **未开始** | `sourceSnapshot`(gitHead / fileMtimeMs / eventCount)已落盘,但从不与当前状态比对,§上下文来源要求的「标 stale 或显示 source changed」没有实现 |
 
 测试覆盖现状:`server/review/extract-issues.test.ts`(8 例)+ `server/review/round-plan.test.ts`(13 例)。
 下方「测试计划」里的**路由级**用例(路径校验 400、非 allowed root、不写原生 CLI 文件、
 review-state 损坏可降级为普通 timeline、fresh review 建 child + handoff)**尚未落地**。
+
+### issue 状态与 Done 收口实现记录(2026-07-31)
+
+**issue 状态**(§Compare「支持 issue status 手动修改」):
+
+- 状态取值沿用设计:`open` / `fixed` / `wontfix` / `needs-check`。
+- 解析优先级收在纯函数 `server/review/issue-status.ts`:
+  `manual`(用户手改)> `derived`(后续 fix/verify 轮里该 issue 最新的 `outcome`,
+  verified→fixed、still-broken→open、needs-discussion→needs-check)> 兜底 `open`。
+- **人工状态与 issueSets 分开存**(`ReviewRoomDiskState.statusOverrides`,key = `轮次id:issueId`)。
+  `saveIssueSet` 会整体替换某轮的 issueSet(重新抽取 / force extract),状态写在 issue 里会被覆盖;
+  而 issue id 由 extract-issues 按 `agent-序号` 确定性生成,同一轮重抽结果一致,所以按 key 存能跨重抽存活。
+  实测:设为 wontfix → force 重新抽取 → 状态仍在。
+- 端点 `POST /api/review-rooms/:id/issue-status`,body `{roundId, issueId, status|null, note?}`;
+  `status: null` = 清除人工状态、回落到派生值。非法 status → 400,未知 roundId → 404。
+- 优先级规则**只在服务端实现一次**:GET / extract / issue-status / done 的响应都经 `decorateReview()`
+  给每条 issue 附 `status` + `statusSource`,并带一份 `statusSummary`。前端不重复推导这套优先级。
+- UI:compare 视图里每条 issue 一个状态下拉(人工设置时高亮并给清除按钮),
+  簇头显示簇内「最未完成」的状态,顶部一行状态汇总。
+
+**Done 收口**(§Done):
+
+- `POST /api/review-rooms/:id/done`,body `{done, conclusion?}`;`done: false` 为重新打开(回到 compare)。
+  有轮次 running 时收口返回 409。
+- `conclusion` 是自由文本,承载 §Done 要求的「最终决策」与「后续任务」——第一版不做结构化 task 管理。
+- Done 面板展示:最终决策、已修复、未修复但接受、仍待处理、评审来源快照,以及既有的 fresh review 链接。
+- **已 done 的房间不会因为重新抽取被悄悄改回 compare**:收口是用户的显式决定,
+  只有显式「重新打开」或启动新一轮才离开 done。
+- `allResolved`(全部 fixed / wontfix)只用来把「完成 Review」按钮标成 ready 并给提示,**不自动收口**;
+  空 issue 列表或没有已完成 review 轮时不算已收口,避免空房间被当成完成。
+
+覆盖:`server/review/issue-status.test.ts`(11 例:优先级、多轮 outcome 取最新、roundId 隔离、
+allResolved 边界)。端到端在 dev server 上实测:GET 附状态、手改持久化、force 重抽后人工状态存活、
+收口 / 重新打开、done 期间重抽不掉档、非法输入 400 / 404。
 
 ## 测试计划
 

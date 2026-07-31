@@ -55,6 +55,18 @@ export interface ReviewRound {
 
 export type IssueSeverity = 'blocker' | 'major' | 'minor' | 'nit'
 export type VerifyOutcome = 'verified' | 'still-broken' | 'needs-discussion'
+export type ReviewIssueStatus = 'open' | 'fixed' | 'wontfix' | 'needs-check'
+
+/** 人工设置的 issue 状态。key = `${roundId}:${issueId}`(见 issueStatusKey)。 */
+export interface IssueStatusOverride {
+  status: ReviewIssueStatus
+  note?: string
+  updatedAt: string
+}
+
+export function issueStatusKey(roundId: string, issueId: string): string {
+  return `${roundId}:${issueId}`
+}
 
 export interface ReviewIssue {
   id: string
@@ -101,6 +113,16 @@ export interface ReviewRoomDiskState {
   rounds: ReviewRound[]
   issueSets: ReviewIssueSet[]
   freshReviews: FreshReviewLink[]
+  /**
+   * 人工设置的 issue 状态,**与 issueSets 分开存**。
+   * issueSets 会被 saveIssueSet 整体替换(重新抽取 / force extract),状态放在里面会被覆盖;
+   * issue id 由 extract-issues 按 `${agent}-${序号}` 确定性生成,同一轮重抽结果一致,
+   * 所以按 key 存的人工状态能跨重抽存活。
+   */
+  statusOverrides?: Record<string, IssueStatusOverride>
+  /** Done 收口时用户写下的最终决策 / 后续任务(自由文本)。 */
+  conclusion?: string
+  doneAt?: string
   createdAt: string
   updatedAt: string
 }
@@ -240,8 +262,60 @@ export const reviewRoomStore = {
       const next: ReviewRoomDiskState = {
         ...current,
         // 完成 review round 后进入 compare;fix/verify 保留 startRound 里已设的 phase。
-        phase: current.rounds.find((r) => r.id === roundId)?.kind === 'review' ? 'compare' : current.phase,
+        // 已 done 的房间不因为重新抽取而被悄悄改回 compare —— 收口是用户的显式决定。
+        phase:
+          current.phase !== 'done' && current.rounds.find((r) => r.id === roundId)?.kind === 'review'
+            ? 'compare'
+            : current.phase,
         issueSets: [...filtered, set],
+        updatedAt: now,
+      }
+      await writeState(next)
+      return next
+    })
+  },
+
+  /** 设置(status 非 null)或清除(status === null)某条 issue 的人工状态。 */
+  async setIssueStatus(
+    groupThreadId: string,
+    roundId: string,
+    issueId: string,
+    status: ReviewIssueStatus | null,
+    note?: string,
+  ): Promise<ReviewRoomDiskState | null> {
+    return enqueue(groupThreadId, async () => {
+      const current = await this.read(groupThreadId)
+      if (!current) return null
+      const key = issueStatusKey(roundId, issueId)
+      const overrides = { ...(current.statusOverrides ?? {}) }
+      if (status === null) delete overrides[key]
+      else overrides[key] = { status, ...(note ? { note } : {}), updatedAt: new Date().toISOString() }
+      const next: ReviewRoomDiskState = {
+        ...current,
+        statusOverrides: overrides,
+        updatedAt: new Date().toISOString(),
+      }
+      await writeState(next)
+      return next
+    })
+  },
+
+  /** Done 收口 / 重新打开。收口只改 phase 与 conclusion,不动 rounds 和 issueSets。 */
+  async setDone(
+    groupThreadId: string,
+    done: boolean,
+    conclusion?: string,
+  ): Promise<ReviewRoomDiskState | null> {
+    return enqueue(groupThreadId, async () => {
+      const current = await this.read(groupThreadId)
+      if (!current) return null
+      const now = new Date().toISOString()
+      const next: ReviewRoomDiskState = {
+        ...current,
+        // 重新打开时回到 compare(已有 findings 可继续处理);没有任何轮次则回 draft。
+        phase: done ? 'done' : current.rounds.length ? 'compare' : 'draft',
+        ...(conclusion !== undefined ? { conclusion } : {}),
+        ...(done ? { doneAt: now } : { doneAt: undefined }),
         updatedAt: now,
       }
       await writeState(next)

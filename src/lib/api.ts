@@ -80,6 +80,9 @@ export interface CreateReviewRoomBody {
 
 export type ReviewIssueSeverity = 'blocker' | 'major' | 'minor' | 'nit'
 export type ReviewIssueOutcome = 'verified' | 'still-broken' | 'needs-discussion'
+export type ReviewIssueStatus = 'open' | 'fixed' | 'wontfix' | 'needs-check'
+/** 状态来源:manual = 用户手改,derived = 由 fix/verify 的 outcome 推出,default = 兜底 open。 */
+export type ReviewIssueStatusSource = 'manual' | 'derived' | 'default'
 export interface ReviewIssueDTO {
   id: string
   agent: string
@@ -90,6 +93,9 @@ export interface ReviewIssueDTO {
   body: string
   refIssueIds?: string[]
   outcome?: ReviewIssueOutcome
+  /** 服务端解析后的状态(优先级规则只在服务端实现一次,前端不重复推导)。 */
+  status?: ReviewIssueStatus
+  statusSource?: ReviewIssueStatusSource
 }
 export interface ReviewIssueSetDTO {
   id: string
@@ -119,6 +125,16 @@ export interface ReviewRoomState {
     groupTurnId?: string
   }[]
   issueSets: ReviewIssueSetDTO[]
+  conclusion?: string
+  doneAt?: string
+  statusSummary?: {
+    total: number
+    open: number
+    fixed: number
+    wontfix: number
+    needsCheck: number
+    allResolved: boolean
+  }
   freshReviews?: {
     parentReviewRoomId: string
     childReviewRoomId: string
@@ -176,6 +192,42 @@ export async function extractReviewIssues(id: string, opts?: { roundId?: string;
   })
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   const json = await res.json()
+  return (json.review ?? null) as ReviewRoomState | null
+}
+
+export async function setReviewIssueStatus(
+  id: string,
+  body: { roundId: string; issueId: string; status: ReviewIssueStatus | null; note?: string },
+): Promise<ReviewRoomState | null> {
+  const res = await fetch(`/api/review-rooms/${encodeURIComponent(id)}/issue-status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`${res.status}`)
+  const json = (await res.json()) as { review?: ReviewRoomState }
+  return (json.review ?? null) as ReviewRoomState | null
+}
+
+export async function finishReviewRoom(
+  id: string,
+  body: { done: boolean; conclusion?: string },
+): Promise<ReviewRoomState | null> {
+  const res = await fetch(`/api/review-rooms/${encodeURIComponent(id)}/done`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    let detail = `${res.status}`
+    try {
+      detail = ((await res.json()) as { error?: string }).error ?? detail
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail)
+  }
+  const json = (await res.json()) as { review?: ReviewRoomState }
   return (json.review ?? null) as ReviewRoomState | null
 }
 
