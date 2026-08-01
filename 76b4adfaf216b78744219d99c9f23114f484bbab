@@ -1,0 +1,34 @@
+.github/workflows/ci.yml
+  e5af872414ab38b2 24,71
+.github/workflows/release.yml
+  e5af872414ab38b2 21,53
+package.json
+  e5af872414ab38b2 28-29,55-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "76b4adfaf216b78744219d99c9f23114f484bbab",
+  "prompts": {
+    "e5af872414ab38b2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3f792032-2a4d-44fa-a7fc-c1d933f2b2ad",
+        "model": "claude-opus-5"
+      },
+      "human_author": "haorenhui",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 7,
+      "accepted_lines": 8,
+      "overriden_lines": 0,
+      "messages_url": "http://172.20.103.50:8002/cas/7c1d7603be471992f60b6a4b1138d6c862de2fc6634740a05caed1554c342a5d",
+      "token_usage": {
+        "input_tokens": 93,
+        "output_tokens": 21912,
+        "cache_creation_input_tokens": 55377,
+        "cache_read_input_tokens": 2979196
+      }
+    }
+  }
+}
