@@ -45,9 +45,10 @@ function result(refId: string, outcome: VerifyOutcome): ReviewIssue {
 }
 
 test('statusFromOutcome 映射', () => {
-  assert.equal(statusFromOutcome('verified'), 'fixed')
-  assert.equal(statusFromOutcome('still-broken'), 'open')
-  assert.equal(statusFromOutcome('needs-discussion'), 'needs-check')
+  assert.equal(statusFromOutcome({ kind: 'fix', outcome: 'verified' }), 'needs-check')
+  assert.equal(statusFromOutcome({ kind: 'verify', outcome: 'verified' }), 'fixed')
+  assert.equal(statusFromOutcome({ kind: 'verify', outcome: 'still-broken' }), 'open')
+  assert.equal(statusFromOutcome({ kind: 'verify', outcome: 'needs-discussion' }), 'needs-check')
 })
 
 test('没有 outcome 也没有人工状态 → open/default', () => {
@@ -65,6 +66,14 @@ test('verify 轮的 outcome 派生出状态', () => {
   const trail = collectOutcomeTrail(rounds, sets)
   const r = resolveIssueStatus({ roundId: 'r1', issue: issue('claude-1'), outcomeTrail: trail })
   assert.deepEqual(r, { status: 'fixed', source: 'derived' })
+})
+
+test('fix 轮报告完成后先进入待确认', () => {
+  const rounds = [round('r1', 'review'), round('r2', 'fix')]
+  const sets = [set('r1', [issue('claude-1')]), set('r2', [result('claude-1', 'verified')])]
+  const trail = collectOutcomeTrail(rounds, sets)
+  const r = resolveIssueStatus({ roundId: 'r1', issue: issue('claude-1'), outcomeTrail: trail })
+  assert.deepEqual(r, { status: 'needs-check', source: 'derived' })
 })
 
 test('多轮 outcome 取最新一条', () => {

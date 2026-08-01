@@ -19,6 +19,16 @@ const OUTCOME_LABEL: Record<ReviewIssueOutcome, MessageKey> = {
   'needs-discussion': 'compare.outcomeNeedsDiscussion',
 }
 
+function outcomeLabel(kind: string, outcome: ReviewIssueOutcome): MessageKey {
+  return kind === 'fix' && outcome === 'verified'
+    ? 'compare.outcomeFixApplied'
+    : OUTCOME_LABEL[outcome]
+}
+
+function outcomeClass(kind: string, outcome: ReviewIssueOutcome): string {
+  return kind === 'fix' && outcome === 'verified' ? 'pending-check' : `sev-${outcome}`
+}
+
 const ROUND_KIND_LABEL: Record<string, MessageKey> = {
   review: 'reviewRoom.kindReview',
   fix: 'reviewRoom.kindFix',
@@ -90,7 +100,9 @@ function FollowupResults({
               {set.issues.map((it) => (
                 <div key={`${it.agent}:${it.id}`} className={`review-followup-item ${it.outcome ?? ''}`}>
                   {it.outcome && (
-                    <span className={`review-outcome sev-${it.outcome}`}>{t(OUTCOME_LABEL[it.outcome])}</span>
+                    <span className={`review-outcome ${outcomeClass(round.kind, it.outcome)}`}>
+                      {t(outcomeLabel(round.kind, it.outcome))}
+                    </span>
                   )}
                   <div className="review-followup-item-main">
                     <div className="review-followup-item-head">
@@ -627,10 +639,10 @@ export function ReviewCompareView({
                     {c.primaryTitle}
                     {latestOutcome && (
                       <span
-                        className={`review-outcome sev-${latestOutcome.outcome} inline`}
+                        className={`review-outcome ${outcomeClass(latestOutcome.kind, latestOutcome.outcome)} inline`}
                         title={`${latestOutcome.round} ${ROUND_KIND_LABEL[latestOutcome.kind] ? t(ROUND_KIND_LABEL[latestOutcome.kind]) : latestOutcome.kind} · ${labelForAgent(latestOutcome.agent as AgentName)}`}
                       >
-                        {t(OUTCOME_LABEL[latestOutcome.outcome])}
+                        {t(outcomeLabel(latestOutcome.kind, latestOutcome.outcome))}
                       </span>
                     )}
                   </span>
@@ -662,7 +674,9 @@ export function ReviewCompareView({
                         {clusterOutcomes.map((o, i) => (
                           <span key={i} className="review-cluster-trail-item">
                             {o.round} {ROUND_KIND_LABEL[o.kind] ? t(ROUND_KIND_LABEL[o.kind]) : o.kind} · {labelForAgent(o.agent as AgentName)}{' '}
-                            <span className={`review-outcome sev-${o.outcome}`}>{t(OUTCOME_LABEL[o.outcome])}</span>
+                            <span className={`review-outcome ${outcomeClass(o.kind, o.outcome)}`}>
+                              {t(outcomeLabel(o.kind, o.outcome))}
+                            </span>
                           </span>
                         ))}
                       </div>
@@ -700,7 +714,7 @@ export function ReviewCompareView({
                             {onFixIssue && it.status !== 'fixed' && it.status !== 'wontfix' && (
                               <button type="button" className="review-issue-action primary" onClick={() => onFixIssue(it)} disabled={busy}>
                                 <Icon name="wrench" size={12} />
-                                {t('issue.fixThis')}
+                                {t('issue.startFix')}
                               </button>
                             )}
                           </div>

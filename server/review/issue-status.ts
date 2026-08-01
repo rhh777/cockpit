@@ -24,10 +24,18 @@ export interface ResolvedIssueStatus {
   source: IssueStatusSource
 }
 
-/** verify/fix 轮的 outcome → issue 状态。 */
-export function statusFromOutcome(outcome: VerifyOutcome): ReviewIssueStatus {
-  if (outcome === 'verified') return 'fixed'
-  if (outcome === 'needs-discussion') return 'needs-check'
+export interface IssueOutcomeRecord {
+  kind: 'fix' | 'verify'
+  outcome: VerifyOutcome
+}
+
+/**
+ * fix 轮只能证明「修复者认为改完了」,因此 verified 先进入 needs-check;
+ * 只有独立 verify 轮确认通过后才成为 fixed。
+ */
+export function statusFromOutcome(record: IssueOutcomeRecord): ReviewIssueStatus {
+  if (record.outcome === 'verified') return record.kind === 'verify' ? 'fixed' : 'needs-check'
+  if (record.outcome === 'needs-discussion') return 'needs-check'
   return 'open'
 }
 
@@ -38,8 +46,8 @@ export function statusFromOutcome(outcome: VerifyOutcome): ReviewIssueStatus {
 export function collectOutcomeTrail(
   rounds: ReviewRound[],
   issueSets: ReviewIssueSet[],
-): Map<string, VerifyOutcome[]> {
-  const trail = new Map<string, VerifyOutcome[]>()
+): Map<string, IssueOutcomeRecord[]> {
+  const trail = new Map<string, IssueOutcomeRecord[]>()
   // 按轮次在 rounds 里的顺序遍历,保证「最新 outcome」是时间序上的最后一个。
   for (const round of rounds) {
     if (round.kind !== 'fix' && round.kind !== 'verify') continue
@@ -49,7 +57,7 @@ export function collectOutcomeTrail(
       if (!issue.outcome || !issue.refIssueIds) continue
       for (const refId of issue.refIssueIds) {
         const list = trail.get(refId) ?? []
-        list.push(issue.outcome)
+        list.push({ kind: round.kind, outcome: issue.outcome })
         trail.set(refId, list)
       }
     }
@@ -61,7 +69,7 @@ export function resolveIssueStatus(input: {
   roundId: string
   issue: ReviewIssue
   overrides?: Record<string, IssueStatusOverride>
-  outcomeTrail: Map<string, VerifyOutcome[]>
+  outcomeTrail: Map<string, IssueOutcomeRecord[]>
 }): ResolvedIssueStatus {
   const manual = input.overrides?.[issueStatusKey(input.roundId, input.issue.id)]
   if (manual) return { status: manual.status, source: 'manual' }

@@ -6734,6 +6734,10 @@ body.resizing * {
   color: #2e8b57;
   border-color: color-mix(in srgb, #2e8b57 50%, var(--color-border));
 }
+.review-outcome.pending-check {
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 50%, var(--color-border));
+}
 .review-outcome.sev-still-broken {
   color: #c05555;
   border-color: color-mix(in srgb, #c05555 50%, var(--color-border));

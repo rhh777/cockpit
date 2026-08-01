@@ -261,6 +261,8 @@ Apply fix with
 
 - 选择 agent 修复时,启动单 agent run,输入包含 issue set、source snapshot、当前文件状态和用户选择的修复范围。
 - 默认由发现问题以外的 agent 修复,但用户可以改。
+- 修复 agent 报告问题已处理时,issue 自动进入 `needs-check`,不能由修复者自己的结论直接变成 `fixed`。
+- 只有后续 Verify 轮返回 `verified` 时,issue 才自动进入 `fixed`;用户仍可用人工状态覆盖派生结果。
 - 选择 `I'll fix manually` 时,Review Room 标记 phase=`fix`,issues 保持 `open` 或 `needs-check`。
 - 用户手动修完后点击 `I fixed it, verify now` 进入 Verify。
 
@@ -681,7 +683,7 @@ Fresh Review 推荐复用 `docs/07-native-continuation-and-handoff.md` 的 conte
 - 状态取值沿用设计:`open` / `fixed` / `wontfix` / `needs-check`。
 - 解析优先级收在纯函数 `server/review/issue-status.ts`:
   `manual`(用户手改)> `derived`(后续 fix/verify 轮里该 issue 最新的 `outcome`,
-  verified→fixed、still-broken→open、needs-discussion→needs-check)> 兜底 `open`。
+  fix verified→needs-check、verify verified→fixed、still-broken→open、needs-discussion→needs-check)> 兜底 `open`。
 - **人工状态与 issueSets 分开存**(`ReviewRoomDiskState.statusOverrides`,key = `轮次id:issueId`)。
   `saveIssueSet` 会整体替换某轮的 issueSet(重新抽取 / force extract),状态写在 issue 里会被覆盖;
   而 issue id 由 extract-issues 按 `agent-序号` 确定性生成,同一轮重抽结果一致,所以按 key 存能跨重抽存活。
