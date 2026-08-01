@@ -86,6 +86,10 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: |
-            release/*
-            !release/*.blockmap
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+            release/*.AppImage
+            release/*.deb
+            release/*.tar.gz
           if-no-files-found: error

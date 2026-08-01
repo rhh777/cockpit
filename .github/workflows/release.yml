@@ -93,12 +93,19 @@ jobs:
           fi
       - name: Build packages
         run: pnpm ${{ matrix.script }}
+      # 只收安装包本身。release/ 下还有 mac/、mac-arm64/ 这类解包目录(每个约 300MB),
+      # 传上去既拖慢 CI,又会让 publish 阶段把目录当成 release asset。
       - uses: actions/upload-artifact@v4
         with:
           name: cockpit-${{ matrix.platform }}
           path: |
-            release/*
-            !release/*.blockmap
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+            release/*.AppImage
+            release/*.deb
+            release/*.tar.gz
+            release/latest*.yml
           if-no-files-found: error
 
   publish:
@@ -108,9 +115,16 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+      # 必须用块标量:单行 plain scalar 里「空格 + #」会被 YAML 当成注释截断。
+      # 校验和按 release asset 的扁平文件名列出,下载者才能直接比对。
       - name: Create checksums
-        run: find artifacts -type f ! -name SHA256SUMS.txt -exec sha256sum {} + | sed 's#  artifacts/#  #' > artifacts/SHA256SUMS.txt
+        working-directory: artifacts
+        run: |
+          find . -type f ! -name 'SHA256SUMS.txt' -exec sha256sum {} + \
+            | awk '{ name = $2; sub(/.*\//, "", name); print $1 "  " name }' \
+            | sort -k2 > SHA256SUMS.txt
+          cat SHA256SUMS.txt
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" artifacts/**/* artifacts/SHA256SUMS.txt --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+        run: gh release create "$GITHUB_REF_NAME" artifacts/*/* artifacts/SHA256SUMS.txt --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
