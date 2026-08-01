@@ -56,14 +56,43 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libarchive-tools rpm
       - run: pnpm install --frozen-lockfile
+      # 只在 secret 非空时才导出签名环境变量。
+      # electron-builder 看到 CSC_LINK 已定义(哪怕是空字符串)就会进证书导入流程,
+      # 把空路径解析成工作目录并以 "not a file" 失败,所以不能用 `|| ''` 兜底。
+      - name: Configure code signing
+        shell: bash
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -eu
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            if [ -n "${MAC_CSC_LINK:-}" ]; then
+              printf 'CSC_LINK=%s\n' "$MAC_CSC_LINK" >> "$GITHUB_ENV"
+              printf 'CSC_KEY_PASSWORD=%s\n' "${MAC_CSC_KEY_PASSWORD:-}" >> "$GITHUB_ENV"
+              # 三个公证变量必须齐全,缺一个就整体跳过公证,避免 notarytool 中途报错。
+              if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
+                printf 'APPLE_ID=%s\n' "$APPLE_ID" >> "$GITHUB_ENV"
+                printf 'APPLE_APP_SPECIFIC_PASSWORD=%s\n' "$APPLE_APP_SPECIFIC_PASSWORD" >> "$GITHUB_ENV"
+                printf 'APPLE_TEAM_ID=%s\n' "$APPLE_TEAM_ID" >> "$GITHUB_ENV"
+              else
+                echo "::warning::Signing certificate present but notarization credentials are incomplete — skipping notarization."
+              fi
+            else
+              echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+              echo "::warning::No macOS signing certificate configured — producing an unsigned build."
+            fi
+          elif [ "$RUNNER_OS" = "Windows" ] && [ -n "${WIN_CSC_LINK:-}" ]; then
+            printf 'CSC_LINK=%s\n' "$WIN_CSC_LINK" >> "$GITHUB_ENV"
+            printf 'CSC_KEY_PASSWORD=%s\n' "${WIN_CSC_KEY_PASSWORD:-}" >> "$GITHUB_ENV"
+          fi
       - name: Build packages
         run: pnpm ${{ matrix.script }}
-        env:
-          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || runner.os == 'Windows' && secrets.WIN_CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || runner.os == 'Windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
-          APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
       - uses: actions/upload-artifact@v4
         with:
           name: cockpit-${{ matrix.platform }}
