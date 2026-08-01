@@ -161,26 +161,44 @@ composer 里 mention 用一层与 textarea 共享盒模型的高亮背板着色(
 ## API
 
 ```txt
-GET    /api/group-threads
-POST   /api/group-threads
+POST   /api/group-threads                       # 新建空群聊
 POST   /api/group-threads/from-session          # 从原生 session 复制上下文创建群聊
-GET    /api/group-threads/:id
 PATCH  /api/group-threads/:id                   # 目前用于修改 title
-POST   /api/group-threads/:id/runs              # 主发送路径,返回 202 + { groupTurnId, records, userEnvelope, turnStart };
-                                                # SSE 流通过 GET /api/runs/:runId/stream 消费
+POST   /api/group-threads/:id/runs              # 主发送路径,返回 202 + { groupTurnId, baseEventSeq, records, userEnvelope, turnStart };
+                                                # 并行模式的 SSE 通过 GET /api/runs/:runId/stream 消费
+GET    /api/group-threads/:id/turns/:groupTurnId/stream   # group turn 级 SSE(接力模式必需,见 docs/13)
 POST   /api/group-threads/:id/turns/:groupTurnId/cancel
 DELETE /api/group-threads/:id
 ```
+
+**群聊的列表与详情不走这里**:群聊本身就是 `source='cockpit'` 的 session,
+读取统一走 `GET /api/sessions` 与 `GET /api/sessions/cockpit/:id`(`cockpit-loader`),
+所以没有 `GET /api/group-threads` / `GET /api/group-threads/:id`。这样列表页、
+timeline、watcher、SSE 增量全部复用单聊那一套,不为群聊再造一条读路径。
+
+同理,群聊的 active runs 目前由客户端从 `GET /api/runs?status=running` 过滤,
+没有 `GET /api/group-threads/:id/runs`(docs/06)。
 
 发送:
 
 ```ts
 interface SendGroupMessageBody {
   text: string
-  mode?: 'parallel'
+  mode?: 'parallel' | 'serial'          // 缺省 parallel;serial 见 docs/13
   targetAgents?: AgentName[]
+  participants?: AgentName[]            // 本轮参与成员,服务端与 state.agents 取交集
+  serial?: {
+    participants?: AgentName[]
+    firstAgent?: AgentName
+    maxSteps?: number                   // 服务端 clamp 到 [2, 20],默认 6
+    stopOnConsensus?: boolean           // 默认 true
+    preset?: 'architecture-first' | 'implementation-first' | 'peer-review'
+  }
   useTools?: boolean
+  permissions?: RunPermissions
+  cliByAgent?: Partial<Record<AgentName, { model?: string; effort?: string }>>
   attachments?: ChatAttachment[]
+  codexAcceleratedMode?: boolean        // docs/07 Phase 2 opt-in,会产生原生 Codex session 副作用
 }
 ```
 
@@ -199,6 +217,8 @@ type GroupSseMessage =
   | { kind: 'done'; groupTurnId: string; status: 'completed' | 'partial' | 'failed'; message?: string }
   | { kind: 'error'; groupTurnId: string; message: string }
 ```
+
+接力模式在 group turn stream 上额外下发 `serial_step`(step 1..N 都发),见 docs/13 §API。
 
 ## 边界
 

@@ -129,13 +129,18 @@ interface RunPermissions {
 }
 ```
 
-推荐默认值:
+`permissionsForMode()`(`server/permissions/types.ts`)的实际取值 —— 这几个 flag 是**粗粒度开关**,
+不是 policy engine;细分类(安全命令 vs 危险命令、workspace 内外)要等 Phase 4 的 PolicyEngine:
 
-| 模式 | 网络 | workspace 写入 | workspace 外写入 | shell |
+| 模式 | `allowNetwork` | `allowWorkspaceWrite` | `allowOutsideWorkspaceWrite` | `allowShell` |
 |---|---:|---:|---:|---:|
-| `ask` | 询问 | 询问 | 拒绝或询问 | 询问 |
-| `auto-safe` | 安全自动/风险询问 | 小范围自动/风险询问 | 询问 | 安全自动/风险询问 |
-| `full-access` | 允许 | 允许 | 仍默认询问 | 允许 |
+| `ask` | false | false | false | false |
+| `auto-safe` | true | true | **false** | **false** |
+| `full-access` | true | true | **true** | true |
+
+读法:`false` 不等于「拒绝」,而是「不预先放行」——`ask` 档下这些 operation 走逐操作审批卡。
+`auto-safe` 目前把 shell 整体留给审批(没有安全命令白名单,那要 classifier),
+`full-access` 是用户显式选的全权模式,workspace 外写入也一并放行,不再二次询问。
 
 ## Operation 与 PolicyDecision
 
@@ -180,6 +185,8 @@ interface ApprovalRequest {
   createdAt: string
   decidedAt?: string
   reason?: string
+  /** status=approved 时的放行范围;缺省视为 once(兼容旧记录)。 */
+  decisionScope?: 'once' | 'always'
 }
 ```
 

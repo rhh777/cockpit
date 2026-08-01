@@ -432,21 +432,31 @@ ActiveGroupTurn aborted 并 abort 全部成员,同时把 review-state 中所有 
 
 第一个创建带完整 workflow 的 Review Room。第二个直接创建最小 Review Room 并进入 Review 阶段,适合用户只想让另一个 agent 独立挑问题。
 
-## API 草案
+## API
 
-新增端点建议:
+已实现的端点(`server/routes/review-rooms.ts`):
 
 ```txt
-POST /api/review-rooms
-GET  /api/review-rooms/:id
-POST /api/review-rooms/:id/review
-POST /api/review-rooms/:id/compare
-POST /api/review-rooms/:id/fix
-POST /api/review-rooms/:id/verify
-POST /api/review-rooms/:id/fresh-review
+POST /api/review-rooms                    # 建 group thread + review-state,可 startReview:true 直接开跑
+GET  /api/review-rooms/:id                # 读 review-state,顺带补抽已完成轮次的 issueSet、附派生状态
+POST /api/review-rooms/:id/review         # 起一轮:body.kind = 'review' | 'fix' | 'verify'
+POST /api/review-rooms/:id/cancel         # 取消进行中的轮次
+POST /api/review-rooms/:id/extract        # 手动(可 force)重新抽取 FINDINGS
+POST /api/review-rooms/:id/issue-status   # 人工覆盖单条 issue 状态
+POST /api/review-rooms/:id/manual-fix     # 「我自己改好了,去复核」
+POST /api/review-rooms/:id/done           # 收口 / 重新打开
+POST /api/review-rooms/:id/fresh-review   # 派生独立复核子房间
 ```
 
-这些可以是 `group-threads` 的薄包装,不要复制 run-registry。
+与早期草案的两点差异(草案里的 `/compare` `/fix` `/verify` **不存在**):
+
+- **fix / verify 不是独立端点**,而是 `/review` 的 `kind` 参与轮次调度,共用一套
+  `planReviewRound` 约束(fix 强制单 writer,verify 默认换人)。三个端点做同一件事只会让
+  「谁能写盘」这条安全约束散在三处。
+- **compare 不是一次调用**,而是 `extract-issues.ts` 对已完成 review 轮的确定性解析结果,
+  GET 时自动补抽;`/extract` 只用于手动重抽。
+
+这些端点是 `group-threads` 的薄包装,不复制 run-registry。
 
 ```ts
 interface CreateReviewRoomBody {
@@ -455,24 +465,31 @@ interface CreateReviewRoomBody {
   preset?: 'plan-review' | 'implementation-review' | 'compare-approaches' | 'debug' | 'document-review'
   participants?: AgentName[]
   mode?: 'parallel' | 'serial'
+  startReview?: boolean                 // true = 建完直接起第一轮 review
+  promptLocale?: 'en' | 'zh-CN'         // 只影响写进 agent prompt 的语言,不是 UI 语言
   permissions?: RunPermissions
-  cliByAgent?: Partial<Record<AgentName, { model?: string; effort?: string }>>
 }
 ```
+
+每个 agent 的 model / effort **不在创建 body 里**:轮次启动时从
+`~/.cockpit/settings.json` 的 `cliByAgent` 读当前默认值,避免房间存一份会过期的快照。
 
 创建响应:
 
 ```ts
 interface CreateReviewRoomResponse {
+  reviewRoomId: string          // 恒等于 groupThreadId
   groupThreadId: string
-  reviewRoomId: string
   state: GroupThreadState
+  review: ReviewRoomDiskState
+  started: unknown | null       // startReview:true 时的首轮启动结果
+  startError?: string           // 房间建好了但首轮没起来时给出原因,不整体失败
 }
 ```
 
 实现约束:
 
-- `reviewRoomId` 第一版可以等于 `groupThreadId`。
+- `reviewRoomId` 恒等于 `groupThreadId`。
 - 后端内部仍调用 `GroupThreadStore` 和 `RunRegistry`。
 - 不增加和 `/api/group-threads/:id/runs` 平行的第二套 agent 执行路径。
 - 如果未来 API 稳定后,可把 Review Room routes 做成更明确的一等资源。
@@ -487,10 +504,11 @@ interface CreateReviewRoomResponse {
   transcript.jsonl
   summary.md
   attachments/
-  review-state.json       # 可选,也可内嵌 state.json
+  review-state.json       # 已落地:独立文件,不内嵌 state.json
 ```
 
-建议将较大的 issue set / round state 放 `review-state.json`,避免 `state.json` 越来越重。
+issue set / round state 走独立的 `review-state.json`(`server/store/review-room-store.ts`),
+避免 `state.json` 越来越重;文件损坏时降级为「不是 Review Room」而不是打不开群聊。
 
 ```ts
 interface ReviewRoomDiskState {

@@ -6,7 +6,7 @@
 
 ### Session Viewer
 
-- 扫描本机 Claude Code / Codex CLI 的原生 JSONL 会话,以及 OpenCode CLI 的 SQLite 会话库。
+- 扫描本机 Claude Code / Codex CLI / Cursor Agent CLI 的原生 JSONL 会话,以及 OpenCode CLI 的 SQLite 会话库。
 - 在统一 timeline 中渲染 user / assistant / thinking / tool_use / tool_result / usage / meta 等事件。
 - 按原始文件行序展示,不按 timestamp 全局重排。
 - loader best-effort:坏行或未知 schema 不阻塞整页打开,通过 warning/meta 暴露。
@@ -29,7 +29,9 @@
 
 - 用户可显式切到「回到原会话」模式,让官方 CLI 子进程续写原生 session。
 - cockpit 进程不直接改写原生 JSONL,只负责启动官方 CLI、转发 SSE、结束后重读原生历史。
-- 该模式只对同源原生 session 开放:Claude session 只能回到 Claude, Codex session 只能回到 Codex。
+- 该模式只对同源原生 session 开放:Claude session 回 Claude,Codex session 回 Codex,OpenCode session 回 OpenCode。
+- Cursor 只作为只读来源,暂不支持原生续写。
+- 支持哪些来源由 adapter 的 `canResumeNative` 声明,不在路由层写 source 白名单(docs/01 §十)。
 - `@mention` 多 agent 拆分在该模式下关闭,避免把群聊语义混入原生历史。
 
 ### Group Thread
@@ -39,6 +41,32 @@
 - 群聊维护 `transcript.jsonl`、`summary.md`、`state.json` 和图片附件目录。
 - 图片附件复制到 cockpit 自己的附件目录;file/directory 附件只校验存在性,不复制。
 - 同一 group thread 中有 agent run 未完成时,新的唤醒型消息会被拒绝,避免上下文快照落在半完成输出中间。
+
+### 接力讨论(Serial Discussion)
+
+- 群聊除并行模式外还有**接力模式**:一次只有一个 agent 发言,靠回复末尾的 `Next:` / `Status:` 协议块交棒。
+- composer 可选参与成员子集、首位 agent、最大发言数、讨论策略 preset(架构先行 / 实现先行 / 双向审稿)。
+- 缺协议块时向同一 agent 补问一次;仍失败才以 `protocol-missing` 终止,补问不占发言预算。
+- 接力轮走 group turn 级 stream(`GET /api/group-threads/:id/turns/:groupTurnId/stream`),
+  step 1..N 的 runId 都从 `serial_step` 消息下发。
+- 详细设计与逐项进度见 `docs/13-serial-agent-discussion-design.md`。
+
+### Review Room
+
+- 把一个 repo / 目录 / 文件集 / 文档 / 已有 session / 自由文本作为评审来源,建成工作流化的群聊。
+- 阶段:draft → review → compare → fix → verify → done,并可派生 fresh review 子房间。
+- review 轮可并行或接力;findings 由 agent 回复末尾的 `FINDINGS` JSON 块**确定性解析**,不额外调 LLM。
+- compare 视图聚类共识项与分歧项,issue 状态可派生也可人工覆盖(`open` / `fixed` / `wontfix` / `needs-check`)。
+- **fix 阶段强制单 writer**,不允许多 agent 并行写盘;verify 默认换另一位 participant 复核。
+- 来源快照过期会检测并提示;状态落 `~/.cockpit/group-threads/<id>/review-state.json`。
+- 详细设计与逐项进度见 `docs/14-review-room-workflow-design.md`。
+
+### 设置
+
+- 主题(system / light / dark)、语言、字号、默认 agent、启用的 agent 列表、三栏宽度等界面偏好。
+- 各 agent 的模型与推理强度从本机 CLI 发现,可按 agent 保存默认值。
+- 统一持久化到 `~/.cockpit/settings.json`;首次升级会迁移旧 localStorage 设置。
+- 设置页有 agent 可用性 diagnostics。
 
 ### Realtime
 
@@ -70,7 +98,7 @@
 - Cursor 只扫描公开的 Agent CLI transcript JSONL 与 meta.json;不读取 Cursor IDE 项目数据库或 chat `store.db`。
 - 不默认允许 follow-up agent 写盘;写权限必须由用户为该 run 显式选择权限档位,ask 档逐操作审批(docs/09)。diff 展示与回滚边界未实现。
 - 不做 prompt 语义预审批;审批只由 agent runtime 实际发起的 operation 触发。
-- 不做产物/补丁管理,review 输出目前仍是 timeline 中的 markdown。
+- 不做产物/补丁管理:Review Room 已能把 findings 结构化成 issue set,但 patch、报告、导出文件仍只是 timeline 里的 markdown。
 - 不做跨 session 全文搜索。
 
 ## 关键风险与约束
@@ -98,8 +126,10 @@
 | 审批层增强 | 基础三档权限与逐操作审批已实现(docs/09);待做:网络/MCP 细粒度 policy 面板、审批时 diff 展示、回滚边界、Claude CLI hook 备份路径 |
 | 产物/补丁管理 | 把 patch、报告、导出文件等从普通 markdown 回复中结构化管理 |
 | 全文搜索 | 跨 Claude/Codex/cockpit 会话搜索标题、正文、工具调用和路径 |
-| 新 session 来源 | 接入 OpenCode / Cursor / Cline / Aider 等本地 agent 工具的历史格式 |
-| 新 agent adapter | 接入 Qwen Code、Goose、本地模型、官方 API Key adapter 或其他 CLI agent |
+| 新 session 来源 | OpenCode / Cursor 已接入;待接:Cline、Aider 等本地 agent 工具的历史格式 |
+| 新 agent adapter | 已接:claude / codex / opencode / cursor;待接:Qwen Code、Goose、本地模型、官方 API Key adapter |
+| Review Room 增强 | 结构化 task 管理、产物导出、fresh review 之外的多轮回归 |
+| 接力讨论 Phase 3 剩余项 | 从文档附件建接力模板、运行中手动插队、到达发言上限时自动生成分歧摘要(docs/13) |
 | 会话笔记/标签 | 在 `~/.cockpit/annotations/` 旁挂用户自己的轻量标注 |
 | 分支可视化 | 利用 Claude `parentUuid` 等字段展示非线性对话分支 |
 | 中立 review 模式 | 允许 Claude review 时不读取项目级 CLAUDE.md 等本地规则 |

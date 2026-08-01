@@ -6,11 +6,11 @@ This file gives guidance to anyone working in this repository (Claude Code or ot
 
 `cockpit` 是本地 AI CLI 会话查看器与协作控制台。
 
-- 读取 Claude Code / Codex / OpenCode CLI 原生会话并渲染 timeline。
-- 在原会话基础上发起跨 agent follow-up、review 或群聊。
+- 读取 Claude Code / Codex / OpenCode / Cursor Agent CLI 原生会话并渲染 timeline。
+- 在原会话基础上发起跨 agent follow-up、review、群聊、接力讨论或 Review Room。
 - 将 cockpit 数据保存到 `~/.cockpit/`,不直接改写原生 CLI 文件。
 
-「回到原会话」只通过官方 CLI 子进程写入原生历史。
+「回到原会话」只通过官方 CLI 子进程写入原生历史,当前支持 Claude / Codex / OpenCode;Cursor 只读。
 
 ## 代码分布
 
@@ -24,7 +24,7 @@ This file gives guidance to anyone working in this repository (Claude Code or ot
 ## 动手前先读
 
 - `docs/01-architecture.md` — 架构契约、数据流、不变量、安全、扩展点。
-- `docs/02-session-formats.md` — Claude / Codex JSONL schema 实测,loader 的事实来源。
+- `docs/02-session-formats.md` — Claude / Codex / Cursor JSONL 与 OpenCode SQLite schema 实测,loader 的事实来源。
 - `docs/03-roadmap.md` — 当前能力、边界与后续方向。
 - `docs/04-ui-design.md` — UI 视觉/交互规范。
 - `docs/05-group-chat-design.md` — 群聊模式(transcript.jsonl + summary.md,@mention 并行调度)。
@@ -36,6 +36,7 @@ This file gives guidance to anyone working in this repository (Claude Code or ot
 - `docs/12-design-review-findings.md` — 设计评审问题清单与修复进度(动手修复前先看这里)。
 - `docs/13-serial-agent-discussion-design.md` — 群聊串行/接力讨论模式。
 - `docs/14-review-room-workflow-design.md` — 从 session、仓库、文件、文档触发 Claude/Codex 方案协作与 fresh review。
+- `docs/15-release-process.md` — 打 tag 发版、checksum、签名与公证。
 
 文档记录的是已定决策。
 
@@ -64,12 +65,14 @@ Vite + React 19 + TypeScript,Vite middleware 后端,SSE,Tailwind v4,`react-markd
 ```bash
 pnpm dev              # 浏览器开发,http://localhost:5173
 pnpm electron:dev      # Electron 桌面壳
-pnpm test              # server 侧单测(tsx --test)
-pnpm typecheck         # tsc --noEmit
-pnpm electron:build    # 打 macOS dmg
+pnpm test              # server/ 与 electron/ 单测(tsx --test)
+pnpm typecheck         # tsc -b --noEmit
+pnpm electron:build    # 打当前平台安装包(另有 :mac / :win / :linux)
 ```
 
-`claude` / `codex` 是作为子进程调用的运行时依赖(需要本机已装并登录),不是 npm 包,不装官方 SDK。
+`claude` / `codex` / `opencode` / `cursor-agent` 是作为子进程调用的运行时依赖(需要本机已装并登录),不是 npm 包。
+例外:Claude 与 OpenCode 的深集成路径确实装了官方 SDK(`@anthropic-ai/claude-agent-sdk`、`@opencode-ai/sdk`),
+但它们内部仍然驱动本机 CLI/runtime 的登录态,cockpit 不接管 OAuth 或 provider API key(详见 docs/10)。
 
 ## 核心约束
 
@@ -91,10 +94,12 @@ pnpm electron:build    # 打 macOS dmg
 
 | 类型 | 路径 |
 |---|---|
-| 单 session follow-up | `~/.cockpit/threads/<src>/<id>/{followups.jsonl, summary.md, context-state.json}` |
+| 单 session follow-up | `~/.cockpit/threads/<src>/<id>/{followups.jsonl, summary.md, context-state.json, attachments/}` |
 | 群聊 | `~/.cockpit/group-threads/<id>/{transcript.jsonl, summary.md, state.json, attachments/}` |
+| Review Room | 复用群聊目录,额外一个 `~/.cockpit/group-threads/<id>/review-state.json`(阶段 / 轮次 / issueSet / 人工状态) |
 | Handoff | `~/.cockpit/handoffs/<id>/{manifest.json, *.md}` |
 | 后台运行 | `~/.cockpit/runs/index.jsonl`,native resume 影子日志 `~/.cockpit/runs/native-shadow/<src>/<id>/<runId>.jsonl` |
+| 逐操作审批 | `~/.cockpit/approvals/<approvalId>.json`(docs/09) |
 | Provider thread 链接(Phase 2 opt-in) | `~/.cockpit/runtime-links/{codex,claude}.jsonl` |
 | discovery 缓存 | `~/.cockpit/cache/`(可删可重建) |
 | 应用设置 | `~/.cockpit/settings.json`(主题、语言、agent、模型、推理强度、界面偏好) |

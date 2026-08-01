@@ -218,6 +218,9 @@ interface SendGroupMessageBody {
 - 服务端必须把目标限制在 `state.agents` 交集内。
 - `serial.firstAgent` 必须同时属于 `serial.participants` 和 `state.agents`。
 - `serial.participants` 过滤后至少要有 1 个成员;为空时返回 400。
+  服务端只兜到 1,是因为它无法假设调用方意图(单成员接力会在第一步就 `no-next-agent` 收口,
+  是可预期的降级而不是错误)。**接力真正有意义要 ≥ 2**,所以这条约束由 UI 承担:
+  composer 与 Review Room 的接力选项在参与成员不足 2 时禁用。README 描述的是后者。
 - `serial.maxSteps` 表示最大发言数,不是一来一回的 round。
 - 同一 group thread 仍只允许一个 in-flight group turn。
 

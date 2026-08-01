@@ -1503,9 +1503,11 @@ export function SessionDetail() {
                 onFixIssue={(issue) => handleReviewRoomStart({ kind: 'fix', mode: 'parallel', issueIds: [issue.id] })}
                 onDiscussIssue={(issue) => {
                   const ref = issue.path ? `${issue.path}${issue.line ? `:${issue.line}` : ''}` : ''
-                  const text = locale.startsWith('zh')
-                    ? `请围绕评审问题 ${issue.id} 单独讨论：${issue.title}${ref ? `（${ref}）` : ''}\n\n请先分析问题是否成立、影响范围和可选处理方式，不要直接修改文件。`
-                    : `Discuss review issue ${issue.id} separately: ${issue.title}${ref ? ` (${ref})` : ''}\n\nFirst assess whether it is valid, its impact, and possible approaches. Do not modify files yet.`
+                  const text = t('detail.discussIssuePrompt', {
+                    id: issue.id,
+                    title: issue.title,
+                    ref: ref ? t('detail.discussIssueRef', { ref }) : '',
+                  })
                   setComposerDraft({ text, nonce: Date.now() })
                   setReviewWorkflowOpen(false)
                 }}

@@ -6,10 +6,10 @@
 |---|---|
 | **形态** | Vite + React 单页应用,可选 Electron 桌面壳 |
 | **运行** | 纯本地。Node 后端(或 Vite middleware)负责读盘 + 调本机 CLI Adapter;前端只负责渲染 |
-| **数据源(只读)** | `~/.claude/projects/**/*.jsonl`、`~/.codex/sessions/**/*.jsonl`、`~/.local/share/opencode/opencode.db`、`~/.cursor/projects/*/agent-transcripts/**/*.jsonl` |
-| **数据源(读写)** | `~/.cockpit/` 下:`threads/<source>/<originalSessionId>/`(followups.jsonl / summary.md / context-state.json / attachments/)、`group-threads/<id>/`、`handoffs/<id>/`、`runs/`、`runtime-links/`、`cache/` |
+| **数据源(只读)** | `~/.claude/projects/**/*.jsonl`、`~/.codex/sessions/**/*.jsonl`、`~/.local/share/opencode/opencode.db`、`~/.cursor/projects/*/agent-transcripts/**/*.jsonl`、`~/.cursor/chats/<workspace-hash>/<uuid>/meta.json` |
+| **数据源(读写)** | `~/.cockpit/` 下:`threads/<source>/<originalSessionId>/`(followups.jsonl / summary.md / context-state.json / attachments/)、`group-threads/<id>/`、`handoffs/<id>/`、`runs/`、`approvals/`、`runtime-links/`、`cache/` |
 | **状态** | URL 路由 + 内存。Follow-up 持久化到上面那个目录,format 仿原生 JSONL；session 列表可有轻量 cache,原生文件仍是事实来源 |
-| **依赖** | React · Vite · 本机已安装并登录的 `claude` / `codex` CLI |
+| **依赖** | React · Vite · 本机已安装并登录的 `claude` / `codex` CLI(`opencode` / `cursor-agent` 可选) |
 
 ## 二、四层架构
 
@@ -45,10 +45,11 @@
 │  - POST /api/native/:src/:id/runs      回到原会话续写        │
 │         (由官方 CLI 子进程 append 原生 jsonl,cockpit       │
 │          仅做 SSE 转发与刷新触发,见 §十)                   │
+│  - POST /api/sessions/:src/:id/reveal  在文件管理器里定位   │
 │  周边(见 §六模块树):                                     │
 │  - /api/attachments · /api/approvals · /api/native-dialog   │
-│  - /api/git · /api/runs · /api/handoffs                     │
-│  - /api/group-threads · /api/settings                       │
+│  - /api/git · /api/runs · /api/handoffs · /api/agents       │
+│  - /api/group-threads · /api/review-rooms · /api/settings   │
 └────────────────────────────────────────────────────────────┘
 
 **所有 `:id` 参数必须先校验再用于解析 filePath**(防路径穿越):见 §十安全。
@@ -72,11 +73,14 @@
 │   ~/.codex/session_index.jsonl   ← 现成索引                │
 │   ~/.local/share/opencode/opencode.db ← SQLite session store │
 │   ~/.cursor/projects/*/agent-transcripts/**/*.jsonl ← Cursor Agent transcripts │
+│   ~/.cursor/chats/<workspace-hash>/<uuid>/meta.json ← Cursor 标题/cwd/时间 │
 │  读写:                                                     │
 │   ~/.cockpit/threads/<source>/<id>/{followups.jsonl,summary.md,context-state.json,attachments/} │
-│   ~/.cockpit/group-threads/<id>/{transcript.jsonl,summary.md,state.json,attachments/} │
+│   ~/.cockpit/group-threads/<id>/{transcript.jsonl,summary.md,state.json,review-state.json,attachments/} │
 │   ~/.cockpit/handoffs/<id>/{manifest.json,*.md}           │
+│   ~/.cockpit/runs/index.jsonl                             │
 │   ~/.cockpit/runs/native-shadow/<src>/<id>/<runId>.jsonl  │
+│   ~/.cockpit/approvals/<approvalId>.json                  │
 │   ~/.cockpit/runtime-links/{codex,claude}.jsonl (opt-in)  │
 │   ~/.cockpit/settings.json                                │
 │   ~/.cockpit/cache/session-index.json (可删可重建)       │
@@ -237,7 +241,7 @@ interface SessionRegistry {
 
 **关键约束**:
 - Follow-up **持久化到 `~/.cockpit/`**,关掉浏览器不丢
-- **绝不写入** `~/.claude/` / `~/.codex/` / `~/.local/share/opencode/`,零侵入原生 CLI
+- **绝不写入** `~/.claude/` / `~/.codex/` / `~/.local/share/opencode/` / `~/.cursor/`,零侵入原生 CLI
 - 用户消息**先落盘再调 agent**,这样即使 agent 调用失败用户消息也保留
 - 断开订阅不 abort:切换 session / 关闭页面只断 run stream,后台继续跑;
   只有显式 POST /api/runs/:runId/cancel 才 AbortController.abort();已生成的部分已落盘,保留
@@ -280,29 +284,38 @@ cockpit/
 │   ├── sessions-service.ts          ← 打开 session:loader + threadStore 合并
 │   ├── changes-service.ts           ← /changes 一次性 JSON(/stream SSE 在 routes/sessions)
 │   ├── routes/
-│   │   ├── sessions.ts              ← /api/sessions[/:src/:id[/stream|/changes]]
+│   │   ├── sessions.ts              ← /api/sessions[/:src/:id[/stream|/changes|/reveal]]
 │   │   ├── threads.ts               ← follow-up DELETE 清空/回删(发送走 runs.ts)
 │   │   ├── native-dialog.ts         ← 桌面壳原生对话框
-│   │   ├── group-threads.ts         ← 群聊:from-session / PATCH / /runs / cancel
+│   │   ├── group-threads.ts         ← 群聊:create / from-session / PATCH / DELETE
+│   │   │                              /runs / turns/:id/{cancel,stream}
+│   │   ├── review-rooms.ts          ← Review Room:create / review / extract
+│   │   │                              issue-status / manual-fix / done / fresh-review
 │   │   ├── handoffs.ts              ← Handoff bundle + capabilities/refresh/open-native
 │   │   ├── runs.ts                  ← run 启动/查询/取消(follow-up、native resume、SSE /runs/:id/stream)
 │   │   ├── approvals.ts             ← Adapter 侧工具审批
 │   │   ├── attachments.ts           ← 群聊/线程附件读取
+│   │   ├── agents.ts                ← agent 可用性 / 模型与推理强度发现
 │   │   ├── git.ts                   ← 只读 git 状态
-│   │   ├── settings.ts              ← 后端可读设置
+│   │   ├── settings.ts              ← 设置读写 + diagnostics/warmup
 │   │   └── resolve.ts               ← :id → filePath 校验 + 白名单守卫
-│   ├── loaders/                     ← 读原生 CLI(只读)
+│   ├── loaders/                     ← 读原生 CLI(只读)+ cockpit 自有会话
 │   │   ├── types.ts                 ← 共享类型 + SessionSourceLoader interface
 │   │   ├── claude-loader.ts
 │   │   ├── codex-loader.ts
+│   │   ├── opencode-loader.ts       ← OpenCode SQLite
+│   │   ├── cursor-loader.ts         ← Cursor Agent CLI transcripts + meta.json
+│   │   ├── cockpit-loader.ts        ← 群聊 / Review Room 作为 source='cockpit'
 │   │   └── index.ts                 ← discoverAll() 合并
 │   ├── registry/
 │   │   └── session-registry.ts      ← source:id → filePath/cache
 │   ├── store/                       ← 读写 cockpit 自己的数据
-│   │   ├── paths.ts                 ← ~/.cockpit/ 路径常量
+│   │   ├── paths.ts                 ← thread 目录下的路径常量(根目录常量在 config.ts)
 │   │   ├── thread-store.ts          ← follow-up 读/写/append/abort 恢复
 │   │   ├── thread-context-store.ts  ← context-state.json 缓存(docs/11)
 │   │   ├── group-thread-store.ts    ← 群聊 state / transcript / summary
+│   │   ├── review-room-store.ts     ← review-state.json:阶段/轮次/issueSet(docs/14)
+│   │   ├── settings-store.ts        ← ~/.cockpit/settings.json 读写 + 迁移
 │   │   ├── handoff-store.ts         ← handoff manifest 落盘
 │   │   └── provider-thread-link-store.ts  ← Codex/Claude runtime thread 复用(Phase 2 opt-in)
 │   ├── adapters/                    ← 调本机 CLI / Agent SDK
@@ -315,9 +328,10 @@ cockpit/
 │   │   ├── cursor-call.ts / opencode-call.ts / mock-adapter.ts
 │   │   ├── json-cli-events.ts / cli-utils.ts
 │   ├── runs/                        ← 后台运行注册中心
-│   │   ├── run-registry.ts          ← runId 管理 + SSE 多客户端 fan-out
+│   │   ├── run-registry.ts          ← runId 管理 + SSE 多客户端 fan-out + serial orchestrator
 │   │   ├── run-store.ts             ← RunRecord 落盘
 │   │   └── native-shadow-store.ts   ← 原生 resume 的影子日志
+│   ├── review/                      ← Review Room 纯逻辑(issue 抽取/状态/轮次调度/新鲜度)
 │   ├── handoffs/                    ← Handoff 生成 / 消费
 │   ├── approvals/                   ← Adapter 侧审批状态机
 │   ├── permissions/                 ← adapter-policy(mode → CLI 参数映射)
@@ -326,11 +340,16 @@ cockpit/
 │   └── util/
 └── src/                             ← React 前端
     ├── main.tsx / App.tsx
-    ├── pages/                       ← SessionList / SessionDetail / 群聊 / 设置
+    ├── pages/                       ← SessionList / SessionDetail
+    │                                  (群聊与 Review Room 面板内嵌在 SessionDetail,
+    │                                   设置是 components/SettingsPanel.tsx)
     ├── components/                  ← Timeline / Composer / Picker / ReviewPanel 等,详见 docs/04 §六
-    ├── hooks/                       ← useSessionStream / useApprovals 等
+    ├── hooks/                       ← useEnabledAgents / useResizable / useStickToBottom
+    │                                  (session/run 的 SSE 订阅直接写在 SessionDetail,
+    │                                   没有抽成 hook)
     ├── lib/
     │   ├── agents.ts                ← agent 列表 / 图标 / 默认值(共享事实来源)
+    │   ├── i18n.ts                  ← 全部用户可见文案(en + zh-CN)
     │   └── api.ts / sse.ts / ...
     └── styles.css
 ```
@@ -451,7 +470,7 @@ cockpit 提供两种「发」的模式,语义与对原生 jsonl 的影响完全�
 | 模式 | 写入哪里 | 谁在写 | 用户感知 |
 |---|---|---|---|
 | **Cockpit 追问**(默认) | `~/.cockpit/threads/<src>/<id>/followups.jsonl` | cockpit 自己 | 原生客户端看不到这条对话(本来就不该看到) |
-| **回到原会话** | 原 `~/.claude/projects/...jsonl` 或 `~/.codex/sessions/...jsonl` | **官方 CLI 自己**(`claude -p --resume` / `codex exec resume`) | 原生客户端重启后能看到这条对话 |
+| **回到原会话** | 原 `~/.claude/projects/...jsonl`、`~/.codex/sessions/...jsonl` 或 OpenCode 的 session 库 | **官方 CLI 自己**(`claude -p --resume` / `codex exec resume` / `opencode run -s`) | 原生客户端重启后能看到这条对话 |
 
 **这是有意识的、且不违反不变量 1 的精神**:
 
@@ -464,7 +483,11 @@ cockpit 提供两种「发」的模式,语义与对原生 jsonl 的影响完全�
 **安全收口**(与 Cockpit 追问相同):
 - 同一份 `serializeForAgent` 截断 + 敏感路径过滤仍然作用于 prompt 输入。
 - adapter 调用参数仍然走只读默认(`--sandbox read-only` / `--allowedTools Read,Grep,Glob`)。
-- 走不通的源(`source !== 'claude-code' && source !== 'codex'`)在路由层就 400,不暴露能力。
+- **能不能续写由 adapter 自己声明,不在路由层写 source 白名单**:`ReviewAgent.canResumeNative(source)`
+  由 registry 的 `agentForNativeSource()` 反查(`server/adapters/registry.ts`),
+  `RunRegistry.startNativeResume` 查不到 adapter 就抛错,路由层转成 400。
+  当前声明了 `canResumeNative` 的是 claude(`claude-code`)、codex(`codex`)、opencode(`opencode`);
+  cursor 只做只读来源。新增来源只需在对应 adapter 上实现 `canResumeNative` + `resumeNative`,不改路由。
 
 ## 十一、UI 信息架构
 
@@ -479,7 +502,7 @@ Timeline 不只渲染流水账,还应服务“看清 agent 干了什么”:
 
 ## 十二、设计不变量
 
-1. cockpit 不直接写、删、改 `~/.claude/`、`~/.codex/` 或 `~/.local/share/opencode/` 原生文件。
+1. cockpit 不直接写、删、改 `~/.claude/`、`~/.codex/`、`~/.local/share/opencode/` 或 `~/.cursor/` 原生文件。
 2. `~/.cockpit/` 是唯一自有写入目录;cache 可删可重建。
 3. Native resume 只通过官方 CLI 子进程写回,并且必须显式选择。
 4. 事件顺序按文件 append 顺序;跨来源只在 `followup_boundary` 拼接。
@@ -506,10 +529,10 @@ Timeline 不只渲染流水账,还应服务“看清 agent 干了什么”:
 
 | 扩展点 | 当前状态 | 留法 |
 |---|---|---|
-| **新增 session 来源** | claude / codex / opencode / cockpit | 新增 `SessionSourceLoader` |
+| **新增 session 来源** | claude / codex / opencode / cursor / cockpit | 新增 `SessionSourceLoader` |
 | **新增 reviewer agent**(本地 LM / DeepSeek / Gemini) | claude / codex / opencode / cursor 四个 CLI Adapter | `adapters/types.ts` 定义 `ReviewAgent` interface;不在 UI/server 任何地方硬编码 agent 名(docs/12 D1 已收口到 registry) |
 | **Review/Follow-up 持久化** | 已支持(`~/.cockpit/threads/`) | — |
-| **回到原会话续写** | 已支持 | 独立 `/api/native`,不复用 `/api/threads` |
+| **回到原会话续写** | 已支持:claude / codex / opencode | 独立 `/api/native`,不复用 `/api/threads`;能力由 adapter 的 `canResumeNative` 声明(见 §十) |
 | **会话笔记 / 标签** | 不支持 | `SessionSummary` 留一个 `extensions?: Record<string, unknown>` 字段;后续在 `~/.cockpit/annotations/<source>/<id>.json` 旁挂 |
 | **自建 cockpit 会话** | 已支持(group thread) | `Source` 的 `'cockpit'` + `GroupThreadStore` + cockpit loader |
 | **链式 review**(A → B 再 review A 的 review) | 已支持 | Review Room 的 review → compare → fix → verify → fresh review(docs/14);findings 以 `FINDINGS` JSON 块结构化输出,由 `server/review/extract-issues.ts` 解析后供下一轮消费 |

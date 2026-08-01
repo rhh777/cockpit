@@ -41,7 +41,11 @@ cockpit 就地读原生 CLI 会话,只往 `~/.cockpit/` 写。
 | `~/.codex/sessions/` | `~/.cockpit/group-threads/<id>/` — 群聊、Review Room、附件 |
 | `~/.local/share/opencode/` | `~/.cockpit/handoffs/<id>/` — handoff bundle |
 | `~/.cursor/projects/`、`~/.cursor/chats/` | `~/.cockpit/runs/` — 后台运行索引与 native resume 影子日志 |
+| | `~/.cockpit/approvals/` — 逐操作审批记录 |
+| | `~/.cockpit/runtime-links/` — opt-in 的 Codex/Claude runtime thread 链接 |
 | | `~/.cockpit/settings.json`、`~/.cockpit/cache/`(可删可重建) |
+
+Review Room 不另开目录,以 `review-state.json` 落在对应群聊目录里。
 
 路径解析只允许落在上述根目录内,越界一律拒绝。
 
@@ -85,7 +89,7 @@ pnpm dev
 
 ```bash
 pnpm typecheck        # tsc --noEmit
-pnpm test             # server 侧单测
+pnpm test             # server/ 与 electron/ 单测
 pnpm build            # 前端生产构建
 pnpm electron:dev     # Electron 开发模式
 pnpm electron:build   # 当前平台 Electron 包

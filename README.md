@@ -41,7 +41,11 @@ Cockpit reads native CLI sessions in place and writes only under `~/.cockpit/`.
 | `~/.codex/sessions/` | `~/.cockpit/group-threads/<id>/` — group chats, Review Rooms, attachments |
 | `~/.local/share/opencode/` | `~/.cockpit/handoffs/<id>/` — handoff bundles |
 | `~/.cursor/projects/`, `~/.cursor/chats/` | `~/.cockpit/runs/` — background run index and native-resume shadow logs |
+| | `~/.cockpit/approvals/` — per-operation approval records |
+| | `~/.cockpit/runtime-links/` — opt-in Codex/Claude runtime thread links |
 | | `~/.cockpit/settings.json`, `~/.cockpit/cache/` (disposable) |
+
+Review Rooms live inside their group thread directory, as an extra `review-state.json`.
 
 Path resolution is restricted to those roots; anything outside them is rejected.
 
@@ -85,7 +89,7 @@ pnpm dev
 
 ```bash
 pnpm typecheck        # TypeScript check
-pnpm test             # Server-side unit tests
+pnpm test             # Unit tests for server/ and electron/
 pnpm build            # Web production build
 pnpm electron:dev     # Electron development mode
 pnpm electron:build   # Electron package for the current platform

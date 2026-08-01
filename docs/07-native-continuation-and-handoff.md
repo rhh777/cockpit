@@ -437,7 +437,8 @@ interface CreateGroupFromSessionBody {
   sessionId: string
   agents: AgentName[]
   title?: string
-  includeRecentEvents?: number
+  /** 导入最近 N 条 user/assistant 事件(clamp 到 5000);'all' = 全量。缺省 20。 */
+  includeRecentEvents?: number | 'all'
 }
 ```
 
@@ -446,9 +447,12 @@ interface CreateGroupFromSessionBody {
 ```ts
 interface CreateGroupFromSessionResponse {
   groupThreadId: string
-  handoffId?: string
 }
 ```
+
+这条路径**只建群聊、不建 handoff**:上下文是直接把原 session 的 user/assistant 事件
+复制进 `transcript.jsonl`(外加一条 `imported_from` meta),不经过 handoff bundle。
+要 bundle 走 `POST /api/handoffs`。
 
 ### 创建 handoff
 

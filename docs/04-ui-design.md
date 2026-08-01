@@ -158,7 +158,8 @@ Agent 相关 UI 是全局组件体系,不是单聊/群聊各自发挥的局部�
 
 ## 五、深色模式
 
-- 跟随系统,默认开启,当前不做手动切换。
+- 默认跟随系统;设置页提供 system / light / dark 手动切换,选择持久化到 `~/.cockpit/settings.json`。
+  实现:`system` 删掉 `document.documentElement.dataset.theme`,其余写入 `data-theme`,由 CSS 变量接管。
 - 所有色走 CSS 变量自动适配;来源色(蓝/琥珀)用色板内的浅填充 + 深文字,深色模式下由变量/色板类自动翻转。
 - 自测标准:背景若近黑,每段文字仍可读。
 
@@ -175,6 +176,8 @@ Agent 相关 UI 是全局组件体系,不是单聊/群聊各自发挥的局部�
 | `FollowupComposer.tsx` | textarea + 双模式开关(Cockpit 追问 / 回到原会话)+ @mention 多 agent + Review 模板 + 只读标 + CLI 提示 |
 | `WarningsBanner.tsx` | loader warnings 折叠展示 |
 | `ReviewPanel.tsx` | 右侧抽屉,展示结构化 review 结论 |
+| `ReviewCompareView.tsx` | Review Room compare 视图:issue 聚类、共识/分歧、状态下拉、修复与讨论入口 |
+| `FindingsChip.tsx` | timeline 里 `FINDINGS` 块的折叠 chip |
 | `TraceDrawer.tsx` | 底部抽屉,某轮次的 raw 事件流 |
 | `Splitter.tsx` + `useResizable.ts` | 三栏宽度拖拽 + `~/.cockpit/settings.json` 持久化 |
 | `StreamingStatus.tsx` | 进行中流式轮次的状态指示 |

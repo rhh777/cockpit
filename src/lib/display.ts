@@ -1,5 +1,5 @@
 import type { Source } from './types'
-import { translate, type ResolvedLocale } from './i18n'
+import { translate, type MessageKey, type ResolvedLocale } from './i18n'
 
 export function sourceBadge(source: Source): string {
   if (source === 'claude-code') return 'Claude'
@@ -95,21 +95,33 @@ export function displayTitle(raw: string, maxLen = 60, locale?: ResolvedLocale):
   return stripMarkup(text).slice(0, maxLen) || translate('title.untitled', undefined, locale)
 }
 
-/** 兼容旧版本已经落盘的系统默认评审标题；用户自定义标题保持原样。 */
+/**
+ * 兼容旧版本已经落盘的系统默认评审标题；用户自定义标题保持原样。
+ *
+ * 匹配的是**落盘的英文字面量**(创建时写死的默认标题),这些正则不能跟着界面语言翻译；
+ * 输出侧一律走 `translate()`,不在这里拼任何用户可见文案(CLAUDE.md i18n 规则)。
+ */
+const LEGACY_KIND_KEYS: Record<string, MessageKey> = {
+  repository: 'title.legacyKindRepository',
+  folder: 'title.legacyKindFolder',
+  document: 'title.legacyKindDocument',
+  files: 'title.legacyKindFiles',
+}
+
 export function localizeReviewRoomTitle(raw: string, locale?: ResolvedLocale): string {
-  if (!locale?.startsWith('zh')) return raw
   const fresh = raw.match(/^Fresh review\s*·\s*(.+)$/i)
-  if (fresh) return `独立复核 · ${localizeReviewRoomTitle(fresh[1], locale)}`
+  if (fresh) {
+    return translate('title.legacyFreshReviewOf', { title: localizeReviewRoomTitle(fresh[1], locale) }, locale)
+  }
   const review = raw.match(/^(Repository|Folder|Document|Files) Review:\s*(.+)$/i)
   if (review) {
-    const kind = review[1].toLowerCase()
-    const label = kind === 'repository' ? '仓库' : kind === 'folder' ? '文件夹' : kind === 'document' ? '文档' : '文件'
-    return `${label}评审：${review[2]}`
+    const kind = translate(LEGACY_KIND_KEYS[review[1].toLowerCase()] ?? 'title.legacyKindFiles', undefined, locale)
+    return translate('title.legacyKindReview', { kind, name: review[2] }, locale)
   }
   const generic = raw.match(/^Review:\s*(.+)$/i)
-  if (generic) return `评审：${generic[1]}`
-  if (/^Fresh Review$/i.test(raw)) return '独立复核'
-  if (/^Review Room$/i.test(raw)) return '评审室'
+  if (generic) return translate('title.legacyReview', { name: generic[1] }, locale)
+  if (/^Fresh Review$/i.test(raw)) return translate('title.legacyFreshReview', undefined, locale)
+  if (/^Review Room$/i.test(raw)) return translate('title.legacyReviewRoom', undefined, locale)
   return raw
 }
 
