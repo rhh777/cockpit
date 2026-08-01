@@ -12,7 +12,7 @@ function firstString(...values: unknown[]): string {
 }
 
 function eventTimestamp(raw: Record<string, any>): string {
-  const value = raw.timestamp ?? raw.ts ?? raw.createdAt ?? raw.created_at
+  const value = raw.timestamp ?? raw.timestamp_ms ?? raw.ts ?? raw.createdAt ?? raw.created_at
   if (typeof value === 'string' && value) return value
   if (typeof value === 'number' && Number.isFinite(value)) return new Date(value).toISOString()
   return new Date().toISOString()
@@ -132,13 +132,31 @@ export function normalizeJsonCliEvent(raw: Record<string, any>, agent: AgentName
     type === 'output'
 
   if (text && isAssistant) {
+    // Cursor 2026.07 在 --stream-partial-output 下把 assistant delta 表示成
+    // type=assistant + timestamp_ms,最后再发一条无 timestamp_ms 的完整 assistant。
+    // 两者共用 session_id 作为 streamId,让 UI 合并碎片并在终态到达后替换。
+    const cursorAssistantDelta =
+      agent === 'cursor' && type === 'assistant' && typeof raw.timestamp_ms === 'number'
+    const cursorStreamId =
+      agent === 'cursor' && type === 'assistant' && typeof raw.session_id === 'string'
+        ? `${raw.session_id}:assistant`
+        : ''
     out.push({
       type: 'assistant_text',
       text,
       ts,
       agent,
-      streamId: String(raw.streamId ?? raw.stream_id ?? raw.messageId ?? raw.message_id ?? raw.id ?? part?.id ?? `${agent}:stream`),
-      delta: type.includes('delta') || type.includes('content') || raw.delta != null,
+      streamId: String(
+        cursorStreamId ||
+          raw.streamId ||
+          raw.stream_id ||
+          raw.messageId ||
+          raw.message_id ||
+          raw.id ||
+          part?.id ||
+          `${agent}:stream`,
+      ),
+      delta: cursorAssistantDelta || type.includes('delta') || type.includes('content') || raw.delta != null,
     })
     return out
   }

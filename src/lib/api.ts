@@ -545,6 +545,9 @@ export interface SettingsDiagnostics {
     codexIndex: string
     opencodeData: string
     opencodeDb: string
+    cursorData: string
+    cursorProjects: string
+    cursorChats: string
   }
   agents: { name: string; available: boolean; error?: string }[]
 }

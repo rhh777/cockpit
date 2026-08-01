@@ -147,9 +147,16 @@ interface GroupTurnMeta {
 规则保守:
 
 - 识别独立 `@claude` / `@codex` / `@opencode` / `@cursor`。
+- 全员 mention:`@all` / `@everyone` / `@所有人` / `@全体` / `@大家`,展开成本轮参与成员
+  (单聊里展开成所有已启用 agent)。ASCII 别名靠词边界收尾,`@allen` 不命中。
 - 忽略 code block、inline code、blockquote。
 - 解析结果去重,并与 thread 成员取交集。
 - 无有效目标时按静默消息处理。
+- 客户端与服务端各有一份实现(`src/lib/mentions.ts` / `server/util/mentions.ts`),
+  必须同步:并行模式下服务端只信任自己从原文解析出的目标,不用请求体里的 `targetAgents`。
+
+composer 里 mention 用一层与 textarea 共享盒模型的高亮背板着色(`.composer-highlight`):
+背板只画底色、文字保持透明,真正的文字仍由 textarea 绘制,避免选中态和 caret 错位。
 
 ## API
 

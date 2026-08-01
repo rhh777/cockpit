@@ -4,7 +4,7 @@ import type { AgentName } from '../loaders/types'
 import { groupAttachmentsDir, groupThreadStore } from '../store/group-thread-store'
 import { normalizeAttachments, type AttachmentDraft } from '../util/attachments'
 import { sessionRegistry } from '../registry/session-registry'
-import { parseMentions } from '../util/mentions'
+import { scanMentions } from '../util/mentions'
 import { cleanTitle } from '../util/title'
 import { runRegistry } from '../runs/run-registry'
 import { loadSessionDetail } from '../sessions-service'
@@ -156,7 +156,8 @@ async function handleStartRun(req: IncomingMessage, res: ServerResponse, id: str
     return
   }
 
-  const mentions = parseMentions(text)
+  const mentionScan = scanMentions(text)
+  const mentions = mentionScan.agents
   const memberSet = new Set(state.agents)
   const mode = body.mode === 'serial' ? 'serial' : 'parallel'
   const rawParticipants =
@@ -167,11 +168,15 @@ async function handleStartRun(req: IncomingMessage, res: ServerResponse, id: str
         : state.agents
   const participants = [...new Set(rawParticipants.filter((a) => memberSet.has(a)))]
   const participantSet = new Set(participants)
+  // @all / @所有人 展开成本轮参与成员,不受成员顺序之外的过滤。
   const targetAgents =
     mode === 'serial'
       ? []
-      : mentions.filter((a) => memberSet.has(a) && participantSet.has(a))
-  const firstFromBody = body.serial?.firstAgent ?? body.targetAgents?.[0] ?? mentions[0]
+      : mentionScan.all
+        ? participants
+        : mentions.filter((a) => memberSet.has(a) && participantSet.has(a))
+  const firstFromBody =
+    body.serial?.firstAgent ?? body.targetAgents?.[0] ?? (mentionScan.all ? participants[0] : mentions[0])
   const firstAgent = firstFromBody && memberSet.has(firstFromBody) ? firstFromBody : participants[0]
   if (mode === 'serial') {
     if (participants.length === 0) {

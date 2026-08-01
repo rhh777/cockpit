@@ -9,6 +9,9 @@ export const CODEX_SESSIONS_ROOT = path.join(HOME, '.codex', 'sessions')
 export const CODEX_SESSION_INDEX = path.join(HOME, '.codex', 'session_index.jsonl')
 export const OPENCODE_DATA_ROOT = path.join(HOME, '.local', 'share', 'opencode')
 export const OPENCODE_DB_PATH = path.join(OPENCODE_DATA_ROOT, 'opencode.db')
+export const CURSOR_DATA_ROOT = path.join(HOME, '.cursor')
+export const CURSOR_PROJECTS_ROOT = path.join(CURSOR_DATA_ROOT, 'projects')
+export const CURSOR_CHATS_ROOT = path.join(CURSOR_DATA_ROOT, 'chats')
 
 // cockpit 自己的数据(可删可重建)。
 export const COCKPIT_ROOT = path.join(HOME, '.cockpit')
@@ -20,4 +23,10 @@ export const COCKPIT_RUNTIME_LINKS_ROOT = path.join(COCKPIT_ROOT, 'runtime-links
 export const COCKPIT_SETTINGS_PATH = path.join(COCKPIT_ROOT, 'settings.json')
 
 // 路径穿越白名单根目录(不变量 13)。任何 resolve 出的 filePath 必须 startsWith 其中之一。
-export const ALLOWED_ROOTS = [CLAUDE_PROJECTS_ROOT, CODEX_SESSIONS_ROOT, OPENCODE_DATA_ROOT, COCKPIT_ROOT]
+export const ALLOWED_ROOTS = [
+  CLAUDE_PROJECTS_ROOT,
+  CODEX_SESSIONS_ROOT,
+  OPENCODE_DATA_ROOT,
+  CURSOR_DATA_ROOT,
+  COCKPIT_ROOT,
+]

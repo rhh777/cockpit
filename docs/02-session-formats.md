@@ -318,11 +318,45 @@ OpenCode 1.17.x 使用 SQLite 保存会话。Cockpit 只读该 DB,不写入、�
 
 ---
 
-## 五、未来可能接入的来源(占位)
+## 五、Cursor Agent CLI
+
+### 路径
+
+```
+~/.cursor/projects/<workspace>/agent-transcripts/<uuid>/<uuid>.jsonl
+~/.cursor/chats/<workspace-hash>/<uuid>/meta.json
+```
+
+`agent-transcripts` 是时间线事实来源;`meta.json` 提供 `title`、`cwd`、`createdAtMs`、
+`updatedAtMs`。Cockpit 只读这些文件,不读取/修改 `store.db`,也不把 Cursor 原生续写
+伪装成已支持能力。
+
+### 行结构(实测 Cursor Agent CLI 2026.07)
+
+```json
+{"role":"user","message":{"content":[{"type":"text","text":"..."}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"..."}]}}
+{"type":"turn_ended","status":"completed"}
+```
+
+- `role='user'` 的 text part → `user_text`。
+- `role='assistant'` 的 text part → `assistant_text(agent='cursor')`。
+- thinking/reasoning/tool part 按统一事件类型 best-effort 保留。
+- transcript 行当前没有时间戳;loader 以 meta `createdAtMs` 为基准按行号生成稳定递增时间,
+  只用于展示,不据此跨来源重排。
+- `turn_ended` 与未知行降级为 `meta`。
+
+Cursor CLI 的 `--stream-partial-output` 形状与落盘 transcript 不同:流式 assistant
+片段是带 `timestamp_ms` 的 `type='assistant'`,最后还有一条无 `timestamp_ms` 的完整
+assistant。Adapter 必须把前者标成同一 `streamId` 的 delta,后者作为终态覆盖,不能把
+每个 token 落成独立回复。
+
+---
+
+## 六、未来可能接入的来源(占位)
 
 | 来源 | 位置(待验证) | 优先级 |
 |---|---|---|
-| Cursor | `~/Library/Application Support/Cursor/` | 低 |
 | Cline (VS Code) | `~/.vscode/.../cline/` | 中 |
 | Aider | `.aider.chat.history.md` (项目内) | 中 |
 
@@ -330,7 +364,7 @@ OpenCode 1.17.x 使用 SQLite 保存会话。Cockpit 只读该 DB,不写入、�
 
 ---
 
-## 六、Loader 容错与 warnings
+## 七、Loader 容错与 warnings
 
 所有 loader 都必须 best-effort:
 - 单行 JSON parse 失败:记录 `LoaderWarning{line, code:'json_parse_failed'}`,跳过该行。

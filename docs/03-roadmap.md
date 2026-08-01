@@ -23,7 +23,7 @@
 - 默认只读运行:Codex 使用 read-only sandbox,Claude 限制写入/执行类工具,OpenCode SDK session 自动放行只读工具并对写入/执行类工具询问,Cursor 使用 `ask` mode。
 - 权限是 run 级三档(ask / auto-safe / full-access),由用户在 composer 显式选择,不跨 run 继承;ask 档下写盘/shell 等操作由 agent runtime 发起审批请求,经 SSE 推给前端审批卡片(见 `docs/09-approval-and-write-access.md`)。
 - 序列化输入与 tool_result 落盘/回显前都会做敏感路径过滤。
-- OpenCode 也可作为只读原生 session 来源;Cursor 当前只作为 Cockpit follow-up agent,不作为原生 session 来源。
+- OpenCode 与 Cursor Agent CLI 都可作为只读原生 session 来源;Cursor 原生续写仍未接入。
 
 ### Native Resume
 
@@ -67,7 +67,7 @@
 - 不抓取网页登录态、不复用 cookie/token、不实现非官方 OAuth。
 - 不接管官方 CLI 账号凭证;模型请求由本机官方 CLI 自己处理。
 - 普通 follow-up 不写入原生 Claude/Codex 历史;写回历史必须显式选择 Native Resume。
-- 不扫描 Cursor 的原生历史或项目数据库;Cursor 当前只作为可调用 adapter。
+- Cursor 只扫描公开的 Agent CLI transcript JSONL 与 meta.json;不读取 Cursor IDE 项目数据库或 chat `store.db`。
 - 不默认允许 follow-up agent 写盘;写权限必须由用户为该 run 显式选择权限档位,ask 档逐操作审批(docs/09)。diff 展示与回滚边界未实现。
 - 不做 prompt 语义预审批;审批只由 agent runtime 实际发起的 operation 触发。
 - 不做产物/补丁管理,review 输出目前仍是 timeline 中的 markdown。

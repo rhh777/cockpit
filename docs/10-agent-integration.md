@@ -38,7 +38,7 @@
 | **opencode** | **`@opencode-ai/sdk/v2` + `opencode serve`**:ephemeral session,`v2.event.subscribe()` 逐 token,permission events 回 Cockpit approval UI | 同左 | CLI `opencode run -s <sessionId> --format json --dir <cwd> <prompt>` | — |
 | **cursor** | CLI `cursor-agent -p --output-format stream-json --stream-partial-output` | 同左 | — | — |
 
-- Handoff 目前只调用 claude / codex。opencode 支持 Cockpit follow-up、group chat 与 native resume,但不支持 handoff open-native;cursor 暂不支持 native resume / handoff open-native。
+- Handoff 目前只调用 claude / codex。opencode 支持 Cockpit follow-up、group chat 与 native resume,但不支持 handoff open-native;cursor 支持只读发现/查看 Agent CLI 原生历史,暂不支持 native resume / handoff open-native。
 - Codex handoff 三档语义详见 [docs/07 § 和 Codex 继续](07-native-continuation-and-handoff.md#和-codex-继续)。
 
 ### 表 B — 逐 token 流式(SSE 逐字增量)
@@ -60,7 +60,7 @@
 | **claude** | `~/.cockpit/threads/claude-code/<id>/followups.jsonl`<br>+ `summary.md` + `context-state.json` | `~/.cockpit/group-threads/<id>/transcript.jsonl` + `summary.md` + `state.json` | **写回 `~/.claude/projects/<hash>/<sessionId>.jsonl`**(由 `claude` 进程完成) |
 | **codex** | `~/.cockpit/threads/codex/<id>/followups.jsonl` | 同上 | **写回 `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`**(由 `codex exec resume` 完成) |
 | **opencode** | `~/.cockpit/threads/opencode/<id>/followups.jsonl`;原生历史只读自 `~/.local/share/opencode/opencode.db` | `~/.cockpit/group-threads/<id>/transcript.jsonl` | **写回 `~/.local/share/opencode/opencode.db`**(由 `opencode run -s` 完成;loader 合并 `session_message` 与 legacy `message`/`part`) |
-| **cursor** | `~/.cockpit/threads/<src>/<id>/followups.jsonl`(用于兼容后续接入的原生 loader) | `~/.cockpit/group-threads/<id>/transcript.jsonl` | — |
+| **cursor** | 原生历史只读 `~/.cursor/projects/*/agent-transcripts/**/*.jsonl`;Cockpit 追问写 `~/.cockpit/threads/cursor/<id>/followups.jsonl` | `~/.cockpit/group-threads/<id>/transcript.jsonl` | — |
 | 附件(图片) | 群聊:`~/.cockpit/group-threads/<id>/attachments/`;单聊:`~/.cockpit/threads/<src>/<id>/attachments/`;**都不进原生 CLI 目录** | 同左 | 附件由 CLI 子进程处理写回,cockpit 只传路径 |
 
 - Cockpit 侧写盘的都是 `EventEnvelope`(`origin: 'cockpit'` 或 `'native'`),loader 端可以按 `followup_boundary` 拼接。

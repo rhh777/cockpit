@@ -8,7 +8,7 @@ import {
   readAllCliSelections,
   readDefaultAgent,
 } from '../lib/preferences'
-import { parseMentions } from '../lib/mentions'
+import { scanMentions, splitMentionSegments, type MentionTarget } from '../lib/mentions'
 import { labelForAgent } from '../lib/agents'
 import { fetchAgentCapabilities, type AgentCliCapabilitiesDTO } from '../lib/api'
 import type { ApprovalMode, RunPermissions } from '../lib/types'
@@ -254,13 +254,15 @@ export function FollowupComposer({
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [reviewDraft, setReviewDraft] = useState(false)
   const [mentionMenu, setMentionMenu] = useState<{ start: number; query: string; active: number } | null>(null)
-  const [mentionConfirm, setMentionConfirm] = useState<AgentName | null>(null)
+  const [mentionConfirm, setMentionConfirm] = useState<MentionTarget | null>(null)
   const mentionConfirmTimer = useRef<number | null>(null)
   const modelMenuRef = useRef<HTMLDivElement | null>(null)
   const attachmentMenuRef = useRef<HTMLDivElement | null>(null)
   const advancedMenuRef = useRef<HTMLDivElement | null>(null)
   const permissionMenuRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const highlightRef = useRef<HTMLDivElement | null>(null)
+  const mentionSegments = useMemo(() => splitMentionSegments(text), [text])
   useEffect(() => {
     if (!externalDraft) return
     setMode('followup')
@@ -301,7 +303,11 @@ export function FollowupComposer({
     return () => document.removeEventListener('mousedown', onDoc)
   }, [modelMenuOpen, attachmentMenuOpen, advancedMenuOpen, permissionMenuOpen])
 
-  const mentions = useMemo(() => parseMentions(text).filter((name) => enabledSet.has(name)), [text, enabledSet])
+  const mentionScan = useMemo(() => scanMentions(text), [text])
+  const mentions = useMemo(
+    () => mentionScan.agents.filter((name) => enabledSet.has(name)),
+    [mentionScan, enabledSet],
+  )
   const activeGroupAgents = useMemo(
     () => {
       const visible = groupAgents.filter((name) => enabledSet.has(name))
@@ -310,9 +316,14 @@ export function FollowupComposer({
     [groupAgents, enabledAgents, enabledSet],
   )
   const activeGroupSet = useMemo(() => new Set(activeGroupAgents), [activeGroupAgents])
+  // @all / @所有人:群聊里展开成本轮参与成员,单聊里展开成所有已启用 agent。
   const groupMentions = useMemo(
-    () => mentions.filter((a) => activeGroupSet.has(a)),
-    [mentions, activeGroupSet],
+    () => (mentionScan.all ? activeGroupAgents : mentions.filter((a) => activeGroupSet.has(a))),
+    [mentionScan.all, mentions, activeGroupAgents, activeGroupSet],
+  )
+  const singleMentions = useMemo(
+    () => (mentionScan.all ? enabledAgents : mentions),
+    [mentionScan.all, mentions, enabledAgents],
   )
   const serialParticipants = useMemo(
     () => activeGroupAgents.filter((a) => !serialExcluded.has(a)),
@@ -334,16 +345,24 @@ export function FollowupComposer({
       : groupMentions
     : usingNative
     ? [sessionAgent]
-    : mentions.length
-    ? mentions
+    : singleMentions.length
+    ? singleMentions
     : [agent]
-  const usingMentions = !usingNative && mentions.length > 0
-  const mentionOptions = useMemo(() => {
+  const usingMentions = !usingNative && singleMentions.length > 0
+  const mentionOptions = useMemo((): { value: MentionTarget; label: string }[] => {
     if (!mentionMenu) return []
-    return enabledAgentOptions.filter((a) =>
+    const agents = enabledAgentOptions.filter((a) =>
       a.value.toLowerCase().startsWith(mentionMenu.query) && (!groupMode || activeGroupSet.has(a.value)),
     )
-  }, [mentionMenu, groupMode, activeGroupSet, enabledAgentOptions])
+    // 全员选项:候选成员多于一个时才有意义,@all / @everyone 都能筛到它。
+    const allCandidates = groupMode ? activeGroupAgents : enabledAgents
+    const matchesAll = ['all', 'everyone'].some((alias) => alias.startsWith(mentionMenu.query))
+    const allOption: { value: MentionTarget; label: string }[] =
+      allCandidates.length > 1 && matchesAll
+        ? [{ value: 'all', label: t('composer.mentionAllLabel', { count: allCandidates.length }) }]
+        : []
+    return [...allOption, ...agents]
+  }, [mentionMenu, groupMode, activeGroupSet, activeGroupAgents, enabledAgentOptions, enabledAgents, t])
 
   useEffect(() => {
     let alive = true
@@ -559,7 +578,7 @@ export function FollowupComposer({
     })
   }
 
-  const pickMention = (picked?: AgentName) => {
+  const pickMention = (picked?: MentionTarget) => {
     if (!mentionMenu || !picked) return
     const el = textareaRef.current
     const caret = el?.selectionStart ?? text.length
@@ -569,7 +588,7 @@ export function FollowupComposer({
     const next = `${before}${insert}${after}`
     const nextCaret = before.length + insert.length
     setText(next)
-    setAgent(picked)
+    if (picked !== 'all') setAgent(picked)
     setMentionMenu(null)
     setMentionConfirm(picked)
     if (mentionConfirmTimer.current) window.clearTimeout(mentionConfirmTimer.current)
@@ -994,9 +1013,29 @@ export function FollowupComposer({
           </div>
         )}
         {attachmentError && <div className="attachment-error">{attachmentError}</div>}
+        <div className="composer-textarea-shell">
+        {/* 高亮背板:与 textarea 共用 .composer-input 的盒模型,只画 mention 底色,文字保持透明。 */}
+        <div className="composer-input composer-highlight" ref={highlightRef} aria-hidden="true">
+          {mentionSegments.map((seg, index) =>
+            seg.target ? (
+              <span
+                key={index}
+                className={`composer-highlight-mention ${seg.target === 'all' ? 'mention-all' : `agent-${seg.target}`}`}
+              >
+                {seg.text}
+              </span>
+            ) : (
+              <span key={index}>{seg.text}</span>
+            ),
+          )}
+          {'\n'}
+        </div>
         <textarea
           ref={textareaRef}
           className="composer-input"
+          onScroll={(e) => {
+            if (highlightRef.current) highlightRef.current.scrollTop = e.currentTarget.scrollTop
+          }}
           placeholder={
             groupMode
               ? t('composer.groupPlaceholder')
@@ -1046,6 +1085,7 @@ export function FollowupComposer({
           }}
           rows={2}
         />
+        </div>
         {mentionMenu && mentionOptions.length > 0 && (
           <div className="mention-menu" role="listbox">
             {mentionOptions.map((a, index) => (
@@ -1059,7 +1099,7 @@ export function FollowupComposer({
                 role="option"
                 aria-selected={index === mentionMenu.active}
               >
-                <AgentIcon agent={a.value} size={16} />
+                {a.value === 'all' ? <Icon name="users" size={16} /> : <AgentIcon agent={a.value} size={16} />}
                 <span>@{a.value}</span>
                 <span className="mention-menu-label">{a.label}</span>
               </button>
@@ -1067,8 +1107,8 @@ export function FollowupComposer({
           </div>
         )}
         {mentionConfirm && (
-          <div className={`mention-confirm agent-${mentionConfirm}`} aria-live="polite">
-            <AgentIcon agent={mentionConfirm} size={15} />
+          <div className={`mention-confirm ${mentionConfirm === 'all' ? 'mention-all' : `agent-${mentionConfirm}`}`} aria-live="polite">
+            {mentionConfirm === 'all' ? <Icon name="users" size={15} /> : <AgentIcon agent={mentionConfirm} size={15} />}
             <span>{t('composer.mentionAdded', { agent: mentionConfirm })}</span>
           </div>
         )}

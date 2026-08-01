@@ -65,7 +65,7 @@
 - 顶部:搜索框 + 来源/agent 快捷过滤 `[全部][群聊][Claude][Codex][OpenCode][Cursor]`。
   - `群聊` 只过滤 `source='cockpit'`。
   - Claude/Codex 包含对应原生来源(`claude-code` / `codex`)以及 Cockpit follow-up/group 中出现过该 agent 的 session。
-  - OpenCode 包含原生来源 `opencode` 以及 Cockpit follow-up/group 中出现过 OpenCode 的 session;Cursor 当前没有原生 session loader,只按 Cockpit follow-up/group 的 `extensions.followupAgents` / `extensions.agents` 过滤。
+  - OpenCode/Cursor 分别包含原生来源 `opencode` / `cursor`,以及 Cockpit follow-up/group 中出现过对应 agent 的 session。
 - **按项目(cwd)分组**,不按来源分组——同项目下 Claude/Codex 混列,来源用角标区分。
 - 每条:标题 + 相对时间;第二行显示来源、消息数、follow-up 角标。
 - 选中态:白底 + `0.5px` 实线边框;未选中无边框。

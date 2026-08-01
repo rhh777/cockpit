@@ -160,7 +160,7 @@ cursor-agent -p \
 当前不做:
 
 - 不调用 Cursor IDE 内部 API。
-- 不读取 Cursor workspace/index/session 数据库。
+- 原生历史 loader 只读 Cursor Agent CLI 的 transcript JSONL 与 `meta.json`;adapter 不读取 Cursor workspace/index/session 数据库或 `store.db`。
 - 不做 Cursor Cloud handoff。
 
 ## JSON Event Parser

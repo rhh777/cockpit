@@ -8,6 +8,9 @@ import {
   COCKPIT_THREADS_ROOT,
   OPENCODE_DATA_ROOT,
   OPENCODE_DB_PATH,
+  CURSOR_DATA_ROOT,
+  CURSOR_PROJECTS_ROOT,
+  CURSOR_CHATS_ROOT,
 } from '../config'
 import { listAgents, resolveAgent } from '../adapters/registry'
 import type { AgentName } from '../loaders/types'
@@ -103,6 +106,9 @@ export async function handleSettingsRoute(
       codexIndex: CODEX_SESSION_INDEX,
       opencodeData: OPENCODE_DATA_ROOT,
       opencodeDb: OPENCODE_DB_PATH,
+      cursorData: CURSOR_DATA_ROOT,
+      cursorProjects: CURSOR_PROJECTS_ROOT,
+      cursorChats: CURSOR_CHATS_ROOT,
     },
     agents: await Promise.all(listAgents().map((a) => agentStatus(a.name))),
   })

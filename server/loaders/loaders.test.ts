@@ -10,6 +10,7 @@ import { promisify } from 'node:util'
 import { claudeLoader, normalizeClaudeLine } from './claude-loader'
 import { codexLoader, normalizeCodexLine, resolveCodexUpdatedAt, summarizeCodexFile } from './codex-loader'
 import { opencodeLoader } from './opencode-loader'
+import { cursorLoader, normalizeCursorTranscriptLine } from './cursor-loader'
 import type { NormalizedEvent } from './types'
 
 const FIX = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../__fixtures__')
@@ -91,6 +92,93 @@ test('claude loader: user image content blocks become attachments', () => {
   assert.equal(ev.attachments?.[0]?.kind, 'image')
   assert.equal(ev.attachments?.[0]?.mimeType, 'image/png')
   assert.equal(ev.attachments?.[0]?.dataUrl, 'data:image/png;base64,aGVsbG8=')
+})
+
+test('cursor loader: transcript roles normalize into native timeline events', async () => {
+  const file = tempJsonl('cursor-transcript')
+  await fsp.writeFile(
+    file,
+    [
+      JSON.stringify({ role: 'user', message: { content: [{ type: 'text', text: '你好' }] } }),
+      JSON.stringify({ role: 'assistant', message: { content: [{ type: 'text', text: '你好，我是 Cursor。' }] } }),
+      JSON.stringify({ type: 'turn_ended', status: 'completed' }),
+      '{bad json',
+    ].join('\n'),
+  )
+  try {
+    const result = await cursorLoader.loadEvents(file, '11111111-1111-4111-8111-111111111111')
+    assert.deepEqual(types(result.events), ['user_text', 'assistant_text', 'meta'])
+    assert.equal(result.summaryPatch.messageCount, 2)
+    assert.equal(result.warnings[0]?.code, 'json_parse_failed')
+    const assistant = result.events[1]?.event
+    assert.equal(assistant.type, 'assistant_text')
+    if (assistant.type === 'assistant_text') {
+      assert.equal(assistant.agent, 'cursor')
+      assert.equal(assistant.text, '你好，我是 Cursor。')
+    }
+  } finally {
+    await rmQuiet(file)
+  }
+})
+
+test('cursor loader: assistant thinking and tool calls are preserved', () => {
+  const events = normalizeCursorTranscriptLine(
+    {
+      role: 'assistant',
+      message: {
+        content: [
+          { type: 'thinking', text: '分析' },
+          { type: 'tool_use', id: 'tool-1', name: 'read_file', input: { path: 'a.ts' } },
+        ],
+      },
+    },
+    '2026-08-01T00:00:00.000Z',
+  )
+  assert.deepEqual(events.map((event) => event.type), ['thinking', 'tool_use'])
+})
+
+test('cursor loader: 用户消息剥掉 <timestamp>/<user_query> 包装并采用真实时间', async () => {
+  const file = tempJsonl('cursor-wrapped')
+  await fsp.writeFile(
+    file,
+    [
+      JSON.stringify({
+        role: 'user',
+        message: {
+          content: [
+            {
+              type: 'text',
+              text: '<timestamp>Saturday, Aug 1, 2026, 4:07 PM (UTC+8)</timestamp>\n<user_query>\nhello\n</user_query>',
+            },
+          ],
+        },
+      }),
+      JSON.stringify({ role: 'assistant', message: { content: [{ type: 'text', text: '你好' }] } }),
+    ].join('\n'),
+  )
+  try {
+    const result = await cursorLoader.loadEvents(file, '22222222-2222-4222-8222-222222222222')
+    const user = result.events[0]?.event
+    assert.equal(user.type, 'user_text')
+    if (user.type === 'user_text') assert.equal(user.text, 'hello')
+    assert.equal(user.ts, '2026-08-01T08:07:00.000Z')
+    assert.equal(result.events[1]?.event.ts, '2026-08-01T08:07:00.001Z')
+  } finally {
+    await rmQuiet(file)
+  }
+})
+
+test('cursor loader: 只有上下文块、没有真实输入的用户行不进 timeline', () => {
+  const events = normalizeCursorTranscriptLine(
+    {
+      role: 'user',
+      message: {
+        content: [{ type: 'text', text: '<timestamp>Saturday, Aug 1, 2026, 4:07 PM (UTC+8)</timestamp>\n<additional_data>ctx</additional_data>' }],
+      },
+    },
+    '2026-08-01T00:00:00.000Z',
+  )
+  assert.deepEqual(events, [])
 })
 
 test('codex loader: payload.type keying, arguments parse, output prefix strip', async () => {

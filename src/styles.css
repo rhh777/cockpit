@@ -2403,6 +2403,60 @@ body.resizing * {
   border-color: color-mix(in srgb, var(--color-followup) 58%, var(--color-border));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-followup) 14%, transparent);
 }
+/* textarea + mention 高亮背板共处一格,背板绝对定位盖在下面。 */
+.composer-textarea-shell {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.composer-highlight {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+  pointer-events: none;
+  background: transparent;
+  color: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+.composer-textarea-shell .composer-input:not(.composer-highlight) {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+}
+/* 文字仍由上层 textarea 绘制,这里只画底色 —— 所以字色必须保持透明。 */
+.composer-highlight-mention {
+  --mention-color: var(--color-followup);
+  color: transparent;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--mention-color) 18%, transparent);
+  /* 用 box-shadow 而不是 padding 撑出留白,避免影响排版和 caret 对齐 */
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--mention-color) 22%, transparent);
+}
+.composer-highlight-mention.agent-claude {
+  --mention-color: var(--color-claude-fg);
+}
+.composer-highlight-mention.agent-codex {
+  --mention-color: var(--color-codex-fg);
+}
+.composer-highlight-mention.agent-opencode {
+  --mention-color: var(--color-opencode-fg);
+}
+.composer-highlight-mention.agent-cursor {
+  --mention-color: var(--color-cursor-fg);
+}
+.composer-highlight-mention.mention-all {
+  --mention-color: var(--color-followup);
+  background: color-mix(in srgb, var(--mention-color) 22%, transparent);
+}
 .composer-input-area {
   display: flex;
   flex-direction: column;
@@ -3403,6 +3457,14 @@ body.resizing * {
   background: color-mix(in srgb, var(--color-cursor-bg) 76%, var(--color-background-primary));
   border-color: color-mix(in srgb, var(--color-cursor-fg) 38%, var(--color-border));
 }
+.mention-menu-item.agent-all {
+  font-weight: 620;
+}
+.mention-menu-item.active.agent-all {
+  color: var(--color-followup);
+  background: color-mix(in srgb, var(--color-followup) 14%, var(--color-background-primary));
+  border-color: color-mix(in srgb, var(--color-followup) 38%, var(--color-border));
+}
 .mention-menu-label {
   min-width: 0;
   overflow: hidden;
@@ -3451,6 +3513,11 @@ body.resizing * {
   background: color-mix(in srgb, var(--color-cursor-bg) 82%, var(--color-background-primary));
   border-color: color-mix(in srgb, var(--color-cursor-fg) 38%, var(--color-border));
   color: var(--color-cursor-fg);
+}
+.mention-confirm.mention-all {
+  background: color-mix(in srgb, var(--color-followup) 14%, var(--color-background-primary));
+  border-color: color-mix(in srgb, var(--color-followup) 38%, var(--color-border));
+  color: var(--color-followup);
 }
 @keyframes mention-confirm-pop {
   0% {

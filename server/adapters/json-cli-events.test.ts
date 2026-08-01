@@ -11,6 +11,35 @@ test('normalizeJsonCliEvent: Cursor content delta -> assistant_text delta', () =
   assert.equal((events[0] as any).text, 'Analyzing...')
 })
 
+test('normalizeJsonCliEvent: Cursor assistant chunks share a stream and final replaces them', () => {
+  const chunk = normalizeJsonCliEvent(
+    {
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'text', text: '你' }] },
+      session_id: 'cursor-session',
+      timestamp_ms: 1785577028900,
+    },
+    'cursor',
+  )
+  const final = normalizeJsonCliEvent(
+    {
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'text', text: '你好' }] },
+      session_id: 'cursor-session',
+    },
+    'cursor',
+  )
+
+  assert.equal(chunk[0].type, 'assistant_text')
+  assert.equal((chunk[0] as any).delta, true)
+  assert.equal((chunk[0] as any).streamId, 'cursor-session:assistant')
+  assert.match(chunk[0].ts, /^2026-/)
+  assert.equal(final[0].type, 'assistant_text')
+  assert.equal((final[0] as any).delta, false)
+  assert.equal((final[0] as any).streamId, 'cursor-session:assistant')
+  assert.equal((final[0] as any).text, '你好')
+})
+
 test('normalizeJsonCliEvent: tool_use and tool_result are preserved', () => {
   const use = normalizeJsonCliEvent({ type: 'tool_use', id: 't1', tool: 'read_file', args: { path: 'a.ts' } }, 'cursor')
   assert.equal(use[0].type, 'tool_use')

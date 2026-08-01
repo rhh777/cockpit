@@ -6,7 +6,7 @@
 |---|---|
 | **形态** | Vite + React 单页应用,可选 Electron 桌面壳 |
 | **运行** | 纯本地。Node 后端(或 Vite middleware)负责读盘 + 调本机 CLI Adapter;前端只负责渲染 |
-| **数据源(只读)** | `~/.claude/projects/**/*.jsonl`、`~/.codex/sessions/**/*.jsonl`、`~/.local/share/opencode/opencode.db` |
+| **数据源(只读)** | `~/.claude/projects/**/*.jsonl`、`~/.codex/sessions/**/*.jsonl`、`~/.local/share/opencode/opencode.db`、`~/.cursor/projects/*/agent-transcripts/**/*.jsonl` |
 | **数据源(读写)** | `~/.cockpit/` 下:`threads/<source>/<originalSessionId>/`(followups.jsonl / summary.md / context-state.json / attachments/)、`group-threads/<id>/`、`handoffs/<id>/`、`runs/`、`runtime-links/`、`cache/` |
 | **状态** | URL 路由 + 内存。Follow-up 持久化到上面那个目录,format 仿原生 JSONL；session 列表可有轻量 cache,原生文件仍是事实来源 |
 | **依赖** | React · Vite · 本机已安装并登录的 `claude` / `codex` CLI |
@@ -71,6 +71,7 @@
 │   ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl             │
 │   ~/.codex/session_index.jsonl   ← 现成索引                │
 │   ~/.local/share/opencode/opencode.db ← SQLite session store │
+│   ~/.cursor/projects/*/agent-transcripts/**/*.jsonl ← Cursor Agent transcripts │
 │  读写:                                                     │
 │   ~/.cockpit/threads/<source>/<id>/{followups.jsonl,summary.md,context-state.json,attachments/} │
 │   ~/.cockpit/group-threads/<id>/{transcript.jsonl,summary.md,state.json,attachments/} │
@@ -193,7 +194,7 @@ interface SessionRegistry {
 
 **规则:**
 - `SessionSummary.filePath` 是 server 内部字段,前端可展示但不能把它当权限凭据。
-- `SessionSummary.extensions.followupAgents` 可由 ThreadStore 从 Cockpit follow-up JSONL 推导,用于列表页按 Claude/Codex/OpenCode/Cursor 过滤;它不是原生 session source,也不能当权限凭据。
+- `SessionSummary.extensions.followupAgents` 可由 ThreadStore 从 Cockpit follow-up JSONL 推导,用于列表页按 Claude/Codex/OpenCode/Cursor 过滤;Cursor 同时也是只读原生 session source,但这个扩展字段仍不能当权限凭据。
 - registry miss 时再 fallback 到 loader 的慢路径搜索。
 - 可选 cache 写到 `~/.cockpit/cache/session-index.json`,只缓存 `source/id/filePath/mtime/size/title/cwd/startedAt/updatedAt`。
 - cache 可随时删除重建,**原生 JSONL 永远是事实来源**。

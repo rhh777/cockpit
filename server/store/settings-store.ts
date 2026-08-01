@@ -6,7 +6,7 @@ import type { AgentName } from '../loaders/types'
 export type ThemePreference = 'system' | 'light' | 'dark'
 export type LanguagePreference = 'system' | 'en' | 'zh-CN'
 export type FontSizePreference = 'small' | 'medium' | 'large' | 'xlarge'
-export type SourceFilterPreference = 'all' | 'native' | 'claude-code' | 'codex' | 'opencode' | 'cockpit'
+export type SourceFilterPreference = 'all' | 'native' | 'claude-code' | 'codex' | 'opencode' | 'cursor' | 'cockpit'
 
 export interface AppSettings {
   version: 1
@@ -29,7 +29,7 @@ const AGENTS: AgentName[] = ['claude', 'codex', 'opencode', 'cursor']
 const THEMES = new Set(['system', 'light', 'dark'])
 const LANGUAGES = new Set(['system', 'en', 'zh-CN'])
 const FONT_SIZES = new Set(['small', 'medium', 'large', 'xlarge'])
-const FILTERS = new Set(['all', 'native', 'claude-code', 'codex', 'opencode', 'cockpit'])
+const FILTERS = new Set(['all', 'native', 'claude-code', 'codex', 'opencode', 'cursor', 'cockpit'])
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   version: 1,

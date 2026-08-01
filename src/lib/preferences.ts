@@ -2,7 +2,7 @@ import type { AgentName } from './types'
 
 export type ThemePreference = 'system' | 'light' | 'dark'
 export type LanguagePreference = 'system' | 'en' | 'zh-CN'
-export type SourceFilterPreference = 'all' | 'native' | 'claude-code' | 'codex' | 'opencode' | 'cockpit'
+export type SourceFilterPreference = 'all' | 'native' | 'claude-code' | 'codex' | 'opencode' | 'cursor' | 'cockpit'
 export type FontSizePreference = 'small' | 'medium' | 'large' | 'xlarge'
 export type CliField = 'model' | 'effort'
 export type CliSelection = Partial<Record<CliField, string>>
@@ -98,7 +98,7 @@ function migrateLegacySettings(base: AppSettings): AppSettings {
   }
   if (!next.enabledAgents.includes(next.defaultAgent)) next.defaultAgent = next.enabledAgents[0]
   const filter = legacyValue(STORAGE_KEYS.defaultSourceFilter)
-  if (filter === 'native' || filter === 'claude-code' || filter === 'codex' || filter === 'opencode' || filter === 'cockpit') next.defaultSourceFilter = filter
+  if (filter === 'native' || filter === 'claude-code' || filter === 'codex' || filter === 'opencode' || filter === 'cursor' || filter === 'cockpit') next.defaultSourceFilter = filter
   if (legacyValue(STORAGE_KEYS.autoRefresh) === 'false') next.autoRefresh = false
   for (const agent of KNOWN_AGENTS) {
     for (const field of ['model', 'effort'] as const) {

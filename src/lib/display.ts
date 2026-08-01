@@ -5,6 +5,7 @@ export function sourceBadge(source: Source): string {
   if (source === 'claude-code') return 'Claude'
   if (source === 'codex') return 'Codex'
   if (source === 'opencode') return 'OpenCode'
+  if (source === 'cursor') return 'Cursor'
   if (source === 'cockpit') return 'Group'
   return source
 }
@@ -13,6 +14,7 @@ export function sourceLabel(source: Source): string {
   if (source === 'claude-code') return 'Claude Code'
   if (source === 'codex') return 'Codex'
   if (source === 'opencode') return 'OpenCode'
+  if (source === 'cursor') return 'Cursor'
   if (source === 'cockpit') return 'Cockpit Group Chat'
   return source
 }

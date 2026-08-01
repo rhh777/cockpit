@@ -276,6 +276,12 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
           ['OpenCode data', diagnostics?.roots.opencodeData],
           ['OpenCode DB', diagnostics?.roots.opencodeDb],
         ]
+      : defaultAgent === 'cursor'
+      ? [
+          ['Cursor data', diagnostics?.roots.cursorData],
+          ['Cursor transcripts', diagnostics?.roots.cursorProjects],
+          ['Cursor chats', diagnostics?.roots.cursorChats],
+        ]
       : []
 
   return (
@@ -456,6 +462,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                 { value: 'claude-code', label: 'Claude' },
                 { value: 'codex', label: 'Codex' },
                 { value: 'opencode', label: 'OpenCode' },
+                { value: 'cursor', label: 'Cursor' },
               ]}
             />
             <ToggleRow label={t('settings.autoRefresh')} checked={autoRefresh} onChange={pickAutoRefresh} />
@@ -479,6 +486,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                   ['settings', diagnostics.roots.settings],
                   ['followups', diagnostics.roots.followups],
                   ['opencode db', diagnostics.roots.opencodeDb],
+                  ['cursor transcripts', diagnostics.roots.cursorProjects],
                 ].map(([key, value]) => (
                   <div key={key} className="settings-path-line">
                     <span>{key}</span>

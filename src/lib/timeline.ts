@@ -22,6 +22,13 @@ const META_NOISE_KEYS = new Set([
   'approval_required',
   'approval_resolved',
   'run_permissions',
+  // Cursor stream protocol frames;用户消息和最终 assistant 已由 Cockpit/adapter
+  // 归一化成可读事件,这些帧只会制造空白或协议名气泡。
+  'cursor_system',
+  'cursor_user',
+  'cursor_thinking',
+  'cursor_result',
+  'cursor_turn_ended',
 ])
 
 export function isNoiseEvent(env: EventEnvelope): boolean {
@@ -47,6 +54,28 @@ export interface TimelineModel {
 }
 
 export function buildTimeline(events: EventEnvelope[]): TimelineModel {
+  // Cursor 2026.07 的旧 adapter 曾把 --stream-partial-output 的每个 assistant
+  // 小片段当成终态落盘,随后又落一条完整终态。对已经存在的 transcript 做只读兼容:
+  // 当同一 turn/run 的最后一条 Cursor 文本恰好等于前面所有片段拼接时,只显示终态。
+  // 原始事件不删除,trace/审计仍可读取。
+  const legacyCursorChunkIndexes = new Set<number>()
+  const legacyCursorByTurn = new Map<string, Array<{ index: number; text: string }>>()
+  events.forEach((envelope, index) => {
+    const ev = envelope.event
+    if (ev.type !== 'assistant_text' || ev.delta || ev.agent !== 'cursor' || !envelope.turnId) return
+    const key = `${envelope.turnId}:${envelope.runId ?? ''}`
+    legacyCursorByTurn.set(key, [...(legacyCursorByTurn.get(key) ?? []), { index, text: ev.text }])
+  })
+  for (const messages of legacyCursorByTurn.values()) {
+    if (messages.length < 2) continue
+    const final = messages[messages.length - 1]
+    const chunks = messages.slice(0, -1)
+    if (chunks.map((message) => message.text).join('') === final.text) {
+      for (const chunk of chunks) legacyCursorChunkIndexes.add(chunk.index)
+    }
+  }
+  const displayEvents = events.filter((_, index) => !legacyCursorChunkIndexes.has(index))
+
   const resultByToolId = new Map<string, Extract<NormalizedEvent, { type: 'tool_result' }>>()
   // 哪些 streamId 已有终态 assistant_text 到达:同 streamId 的 delta 全部丢弃,改用终态那条。
   // Claude CLI 偶尔不会给出能稳定对应到最终 assistant message 的 streamId;下面的文本匹配
@@ -60,7 +89,7 @@ export function buildTimeline(events: EventEnvelope[]): TimelineModel {
     if (ev.type !== 'assistant_text' || !e.turnId) return null
     return `${e.turnId}:${e.runId ?? ''}:${ev.agent ?? ''}`
   }
-  for (const e of events) {
+  for (const e of displayEvents) {
     if (e.event.type === 'tool_result') {
       resultByToolId.set(e.event.toolUseId, e.event)
     } else if (
@@ -92,7 +121,7 @@ export function buildTimeline(events: EventEnvelope[]): TimelineModel {
   const deltaRowIndex = new Map<string, number>()
   const rowTurnKey = (env: EventEnvelope): string =>
     `${env.turnId ?? ''}:${env.runId ?? ''}:${('agent' in env.event && env.event.agent) || ''}`
-  for (const e of events) {
+  for (const e of displayEvents) {
     const ev = e.event
     if (ev.type === 'tool_result') continue // 折进配对的 tool_use 卡
     if (isNoiseEvent(e)) continue // 不让噪音事件占用虚拟列表槽位
