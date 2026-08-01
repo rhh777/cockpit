@@ -10,11 +10,12 @@ import {
 } from '../lib/preferences'
 import { parseMentions } from '../lib/mentions'
 import { labelForAgent } from '../lib/agents'
-import { fetchAgentModels, type AgentModelOptionDTO } from '../lib/api'
+import { fetchAgentCapabilities, type AgentCliCapabilitiesDTO } from '../lib/api'
 import type { ApprovalMode, RunPermissions } from '../lib/types'
 import { useI18n, type MessageKey } from '../lib/i18n'
 import { pickLocalPaths } from '../lib/native-dialog'
 import { useEnabledAgentOptions } from '../hooks/useEnabledAgents'
+import { FALLBACK_MODEL_OPTIONS } from '../lib/cli-options'
 
 export type SendMode = 'followup' | 'native'
 type GroupDiscussionMode = 'parallel' | 'serial'
@@ -50,13 +51,7 @@ const CLI_GROUPS: Record<AgentName, CliGroup[]> = {
       key: 'model',
       labelKey: 'cli.model',
       flag: '--model',
-      options: [
-        { value: '', label: 'Default', hintKey: 'cli.default' },
-        { value: 'claude-opus-4-8', label: 'Opus 4.8' },
-        { value: 'claude-opus-4-7', label: 'Opus 4.7' },
-        { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
-        { value: 'claude-haiku-4-5', label: 'Haiku 4.5' },
-      ],
+      options: [{ value: '', label: 'Default', hintKey: 'cli.default' }, ...FALLBACK_MODEL_OPTIONS.claude],
     },
     {
       key: 'effort',
@@ -77,11 +72,7 @@ const CLI_GROUPS: Record<AgentName, CliGroup[]> = {
       key: 'model',
       labelKey: 'cli.model',
       flag: '-m',
-      options: [
-        { value: '', label: 'Default', hintKey: 'cli.default' },
-        { value: 'gpt-5.5', label: 'GPT-5.5' },
-        { value: 'gpt-5.4-mini', label: 'GPT-5.4-Mini' },
-      ],
+      options: [{ value: '', label: 'Default', hintKey: 'cli.default' }, ...FALLBACK_MODEL_OPTIONS.codex],
     },
     {
       key: 'effort',
@@ -101,12 +92,7 @@ const CLI_GROUPS: Record<AgentName, CliGroup[]> = {
       key: 'model',
       labelKey: 'cli.model',
       flag: '--model',
-      options: [
-        { value: '', label: 'Default', hintKey: 'cli.openCodeDefault' },
-        { value: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet' },
-        { value: 'openai/gpt-5.5', label: 'GPT-5.5' },
-        { value: 'qwen/qwen3-coder-plus', label: 'Qwen Coder' },
-      ],
+      options: [{ value: '', label: 'Default', hintKey: 'cli.openCodeDefault' }, ...FALLBACK_MODEL_OPTIONS.opencode],
     },
     {
       key: 'effort',
@@ -126,12 +112,7 @@ const CLI_GROUPS: Record<AgentName, CliGroup[]> = {
       key: 'model',
       labelKey: 'cli.model',
       flag: '--model',
-      options: [
-        { value: '', label: 'Default', hintKey: 'cli.cursorDefault' },
-        { value: 'auto', label: 'Auto' },
-        { value: 'gpt-5.5', label: 'GPT-5.5' },
-        { value: 'claude-sonnet-4-6', label: 'Claude Sonnet' },
-      ],
+      options: [{ value: '', label: 'Default', hintKey: 'cli.cursorDefault' }, ...FALLBACK_MODEL_OPTIONS.cursor],
     },
   ],
 }
@@ -258,7 +239,7 @@ export function FollowupComposer({
   // 每个 composer 从设置中的模型/推理默认值初始化;在这里临时修改只影响当前 composer。
   const [cliByAgent, setCliByAgent] = useState<Record<AgentName, CliSelection>>(() => readAllCliSelections())
   const [modelMenuOpen, setModelMenuOpen] = useState<AgentName | null>(null)
-  const [openCodeModels, setOpenCodeModels] = useState<AgentModelOptionDTO[] | null>(null)
+  const [cliCapabilities, setCliCapabilities] = useState<Partial<Record<AgentName, AgentCliCapabilitiesDTO>>>({})
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false)
   const [advancedMenuOpen, setAdvancedMenuOpen] = useState(false)
   const [permissionMenuOpen, setPermissionMenuOpen] = useState(false)
@@ -366,17 +347,41 @@ export function FollowupComposer({
 
   useEffect(() => {
     let alive = true
-    fetchAgentModels('opencode', cwd)
-      .then((models) => {
-        if (alive) setOpenCodeModels(models.length ? models : null)
+    Promise.all(enabledAgents.map(async (name) => {
+      try {
+        return [name, await fetchAgentCapabilities(name, cwd)] as const
+      } catch {
+        return null
+      }
+    }))
+      .then((entries) => {
+        if (alive) {
+          setCliCapabilities(Object.fromEntries(entries.filter((entry) => entry !== null)) as Partial<Record<AgentName, AgentCliCapabilitiesDTO>>)
+        }
       })
-      .catch(() => {
-        if (alive) setOpenCodeModels(null)
-      })
+      .catch(() => {})
     return () => {
       alive = false
     }
-  }, [cwd])
+  }, [cwd, enabledAgents])
+
+  useEffect(() => {
+    setCliByAgent((current) => {
+      let changed = false
+      const next = { ...current }
+      for (const targetAgent of enabledAgents) {
+        const capability = cliCapabilities[targetAgent]
+        const selected = current[targetAgent]
+        if (capability?.effortDetection.status !== 'detected' || !selected?.model || !selected.effort) continue
+        const model = capability.models.find((item) => item.value === selected.model)
+        if (model && !(model.efforts ?? []).includes(selected.effort)) {
+          next[targetAgent] = { ...selected, effort: '' }
+          changed = true
+        }
+      }
+      return changed ? next : current
+    })
+  }, [cliCapabilities, enabledAgents])
 
   useEffect(() => {
     if ((groupMode || !nativeAvailable) && mode === 'native') setMode('followup')
@@ -522,7 +527,14 @@ export function FollowupComposer({
   }
 
   const pickCli = (targetAgent: AgentName, field: CliField, value: string) => {
-    setCliByAgent((m) => ({ ...m, [targetAgent]: { ...m[targetAgent], [field]: value } }))
+    setCliByAgent((current) => {
+      const selected = { ...current[targetAgent], [field]: value }
+      if (field === 'model') {
+        const allowed = cliCapabilities[targetAgent]?.models.find((model) => model.value === value)?.efforts
+        if (allowed?.length && selected.effort && !allowed.includes(selected.effort)) selected.effort = ''
+      }
+      return { ...current, [targetAgent]: selected }
+    })
   }
 
   const toggleGroupAgent = (targetAgent: AgentName) => {
@@ -570,15 +582,45 @@ export function FollowupComposer({
 
   const cliGroupsForAgent = (targetAgent: AgentName): CliGroup[] => {
     const base = CLI_GROUPS[targetAgent] ?? []
-    if (targetAgent !== 'opencode' || !openCodeModels?.length) return base
-    return base.map((g) =>
-      g.key === 'model'
-        ? {
-            ...g,
-            options: [{ value: '', label: 'Default', hintKey: 'cli.openCodeDefault' }, ...openCodeModels],
-          }
-        : g,
-    )
+    const capability = cliCapabilities[targetAgent]
+    const detectedModels = capability && ['detected', 'cached'].includes(capability.modelDetection.status)
+      ? capability.models
+      : []
+    const selectedModel = detectedModels.find((model) => model.value === (cliByAgent[targetAgent]?.model ?? ''))
+    const detectedEfforts = selectedModel
+      ? selectedModel.efforts ?? []
+      : targetAgent === 'opencode'
+        ? []
+        : capability?.effortDetection.values ?? []
+    return base.map((group) => {
+      if (group.key === 'model' && detectedModels.length) {
+        const defaultHintKey: MessageKey =
+          targetAgent === 'opencode'
+            ? 'cli.openCodeDefault'
+            : targetAgent === 'cursor'
+              ? 'cli.cursorDefault'
+              : 'cli.default'
+        return {
+          ...group,
+          options: [{
+            value: '',
+            label: 'Default',
+            hint: detectedModels.find((model) => model.isDefault)?.label,
+            hintKey: detectedModels.some((model) => model.isDefault) ? undefined : defaultHintKey,
+          }, ...detectedModels],
+        }
+      }
+      if (group.key === 'effort' && capability?.effortDetection.status === 'detected') {
+        return {
+          ...group,
+          options: [
+            { value: '', label: 'Default', hintKey: 'cli.default' },
+            ...detectedEfforts.map((value) => ({ value, label: value })),
+          ],
+        }
+      }
+      return group
+    })
   }
 
   const groups = cliGroupsForAgent(agent)

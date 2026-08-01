@@ -153,7 +153,9 @@ cursor-agent -p \
 - 使用 `stream-json` 让前端能流式显示。
 - 使用 `--stream-partial-output` 优先拿文本 delta。
 - 使用 `--mode ask` 对齐只读语义。
-- `effort` 当前不透传,因为 Cursor CLI 没有稳定统一的 reasoning effort flag。
+- `effort` 不单独透传。Cursor CLI 把推理强度编码在账号返回的模型变体 ID 中
+  (也支持参数化 `--model '...[effort=high]'`),所以 Cockpit 直接展示
+  `cursor-agent --list-models` 的真实变体,不伪造独立 effort 下拉。
 
 当前不做:
 
@@ -186,6 +188,25 @@ OpenCode 和 Cursor 的 JSON event 形状可能随版本变化,所以 parser 使
 - `src/components/FollowupComposer.tsx`:发送对象、mention 菜单、每 agent CLI 参数。
 - `src/components/SettingsPanel.tsx`:默认 agent、模型/推理设置、CLI diagnostics。
 - `src/components/AgentIcon.tsx`:头像与 label。
+
+模型与推理强度发现统一走 `GET /api/agents/:agent/models`,响应同时包含
+`models`、`modelDetection` 和 `effortDetection`;设置页与单聊/群聊 composer 复用同一份结果:
+
+| Agent | 模型来源 | 推理强度来源 |
+|---|---|---|
+| Claude | CLI 无账号级机器可读列表,明确标记 unsupported,降级显示当前 CLI 接受的 alias | 从当前安装版本的 `claude --help` 解析 `--effort` 档位 |
+| Codex | `codex app-server` 的 `model/list` | 每个模型的 `supportedReasoningEfforts` |
+| OpenCode | SDK provider/config runtime 的已连接 providers | 每个模型的 `variants` |
+| Cursor | `cursor-agent --list-models`(fallback binary 同 adapter 探测顺序) | 编码在模型变体中,标记为 embedded |
+
+发现是 best-effort:失败不能阻断设置页或对话;UI 保留 CLI 默认和静态降级候选。
+Codex 的 metadata request 复用 app-server 进程,但不占用 turn mutex,也不创建 thread/turn。
+
+Claude 的 alias fallback 覆盖当前 CLI 菜单中的 Fable 5 / Opus 5 / Sonnet 5 /
+Haiku 4.5 和可见旧版本,但不把它伪装成账号级探测结果。Cursor CLI 在 macOS 上
+可能因 Keychain 暂不可读而输出 `SecItemCopyMatching failed` 并以成功状态退出；
+空解析结果不能覆盖已知模型。成功探测的账号列表写入
+`~/.cockpit/cache/cursor-models.json`,后续失败时显示最近一次真实列表并标明缓存来源。
 
 OpenCode / Cursor 当前使用字母头像和独立配色,不新增图片资源。
 

@@ -111,6 +111,13 @@ interface ReviewAgent {
 
 `AgentRunInput` 关键字段:`text` / `contextEvents` / `cwd` / `permissions` / `writableRoots` / `model` / `effort` / `requestApproval?` / `nativeLinked?` / `signal`。
 
+模型选择不再以 UI 静态列表为事实源。`/api/agents/:agent/models` 会尽量从本机登录态发现
+真实模型与推理档位:Codex 用 app-server `model/list`,OpenCode 用 provider runtime,
+Cursor 用 `--list-models`,并把成功结果缓存到 `~/.cockpit/cache/cursor-models.json`,
+避免 macOS Keychain 暂不可读时退回伪造的三项静态列表。Claude CLI 只公开 effort
+参数范围,没有账号级模型列表接口,因此模型部分明确降级为当前 CLI 接受的 Fable 5 /
+Opus 5 / Sonnet 5 / Haiku 4.5 等 alias。发现结果同时用于设置默认值和对话时的临时切换。
+
 - 有 `requestApproval` 回调时,adapter **可以** 走能拦截工具调用的通道(Claude Agent SDK / Codex app-server / OpenCode SDK);Codex 和 OpenCode 现在无论有没有回调都走 server/SDK 通道。
 - `nativeLinked.scope` 只影响 codex adapter:传了就查/建 provider-thread-link,不传就 ephemeral(见表 E)。
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import type { AgentModelOptionDTO, SettingsDiagnostics } from '../lib/api'
-import { fetchAgentModels, fetchSettingsDiagnostics } from '../lib/api'
+import type { AgentCliCapabilitiesDTO, SettingsDiagnostics } from '../lib/api'
+import { fetchAgentCapabilities, fetchSettingsDiagnostics } from '../lib/api'
 import { AGENT_OPTIONS, labelForAgent } from '../lib/agents'
 import type { AgentName } from '../lib/types'
 import { AgentPicker } from './AgentPicker'
@@ -31,30 +31,7 @@ import {
   PREFERENCES_CHANGED_EVENT,
 } from '../lib/preferences'
 import { useI18n, type LocalePreference } from '../lib/i18n'
-
-// 只列具体模型;「CLI 默认」那一项在渲染时用 t('common.cliDefault') 前置,不在这里写死文案。
-const MODEL_OPTIONS: Record<AgentName, { value: string; label: string }[]> = {
-  claude: [
-    { value: 'claude-opus-4-8', label: 'Opus 4.8' },
-    { value: 'claude-opus-4-7', label: 'Opus 4.7' },
-    { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
-    { value: 'claude-haiku-4-5', label: 'Haiku 4.5' },
-  ],
-  codex: [
-    { value: 'gpt-5.5', label: 'GPT-5.5' },
-    { value: 'gpt-5.4-mini', label: 'GPT-5.4-Mini' },
-  ],
-  opencode: [
-    { value: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet' },
-    { value: 'openai/gpt-5.5', label: 'GPT-5.5' },
-    { value: 'qwen/qwen3-coder-plus', label: 'Qwen Coder' },
-  ],
-  cursor: [
-    { value: 'auto', label: 'Auto' },
-    { value: 'gpt-5.5', label: 'GPT-5.5' },
-    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet' },
-  ],
-}
+import { FALLBACK_MODEL_OPTIONS } from '../lib/cli-options'
 
 // effort 档位只存值;显示文案渲染时从 i18n 取(effortLabels),不在这里写死。
 const EFFORT_VALUES: Record<AgentName, string[]> = {
@@ -119,7 +96,8 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const [diagLoading, setDiagLoading] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [cliRev, setCliRev] = useState(0)
-  const [openCodeModels, setOpenCodeModels] = useState<AgentModelOptionDTO[] | null>(null)
+  const [capabilities, setCapabilities] = useState<AgentCliCapabilitiesDTO | null>(null)
+  const [capabilitiesLoading, setCapabilitiesLoading] = useState(false)
 
   useEffect(() => applyThemePreference(theme), [theme])
   useEffect(() => applyFontSizePreference(fontSize), [fontSize])
@@ -147,19 +125,32 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
   }, [refreshKey])
 
   useEffect(() => {
-    if (defaultAgent !== 'opencode') return
     let alive = true
-    fetchAgentModels('opencode')
-      .then((models) => {
-        if (alive) setOpenCodeModels(models.length ? models : null)
+    setCapabilities(null)
+    setCapabilitiesLoading(true)
+    fetchAgentCapabilities(defaultAgent, null, refreshKey > 0)
+      .then((result) => {
+        if (alive) setCapabilities(result)
       })
       .catch(() => {
-        if (alive) setOpenCodeModels(null)
+        if (alive) setCapabilities(null)
       })
+      .finally(() => alive && setCapabilitiesLoading(false))
     return () => {
       alive = false
     }
   }, [defaultAgent, refreshKey])
+
+  useEffect(() => {
+    if (!capabilities || capabilities.effortDetection.status !== 'detected') return
+    const selected = readCliSelection(defaultAgent)
+    if (!selected.model || !selected.effort) return
+    const model = capabilities.models.find((item) => item.value === selected.model)
+    if (model && !(model.efforts ?? []).includes(selected.effort)) {
+      setCliSelection(defaultAgent, 'effort', '')
+      setCliRev((revision) => revision + 1)
+    }
+  }, [capabilities, defaultAgent])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -206,20 +197,39 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
 
   const pickCli = (agent: AgentName, field: CliField, value: string) => {
     setCliSelection(agent, field, value)
+    if (field === 'model') {
+      const allowed = capabilities?.models.find((model) => model.value === value)?.efforts
+      const currentEffort = readCliSelection(agent).effort
+      if (allowed?.length && currentEffort && !allowed.includes(currentEffort)) {
+        setCliSelection(agent, 'effort', '')
+      }
+    }
     setCliRev((n) => n + 1)
   }
 
   const selectedCli = readCliSelection(defaultAgent)
   void cliRev
   const selectedStatus = diagnostics?.agents.find((a) => a.name === defaultAgent)
+  const detectedModels = capabilities && ['detected', 'cached'].includes(capabilities.modelDetection.status)
+    ? capabilities.models
+    : []
   const baseModelOptions =
-    defaultAgent === 'opencode' && openCodeModels?.length
-      ? openCodeModels.map((model) => ({
+    detectedModels.length
+      ? detectedModels.map((model) => ({
           value: model.value,
-          label: model.hint ? `${model.label} · ${model.hint}` : model.label,
+          label: `${model.label}${model.isDefault ? ` · ${t('settings.detectedDefault')}` : ''}${model.hint ? ` · ${model.hint}` : ''}`,
         }))
-      : MODEL_OPTIONS[defaultAgent]
-  const modelOptions = [{ value: '', label: t('common.cliDefault') }, ...baseModelOptions]
+      : FALLBACK_MODEL_OPTIONS[defaultAgent]
+  const detectedDefaultModel = detectedModels.find((model) => model.isDefault)
+  const modelOptions = [
+    {
+      value: '',
+      label: detectedDefaultModel
+        ? t('settings.cliDefaultModel', { model: detectedDefaultModel.label })
+        : t('common.cliDefault'),
+    },
+    ...baseModelOptions,
+  ]
   const effortLabels: Record<string, string> = {
     '': t('common.cliDefault'),
     low: t('common.low'),
@@ -227,11 +237,30 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
     high: t('common.high'),
     xhigh: t('common.xhigh'),
     max: t('common.max'),
+    ultra: t('common.ultra'),
+    none: t('common.none'),
   }
-  const effortOptions = EFFORT_VALUES[defaultAgent].map((value) => ({
+  const selectedDetectedModel = detectedModels.find((model) => model.value === (selectedCli.model ?? ''))
+  const detectedEfforts = selectedDetectedModel
+    ? selectedDetectedModel.efforts ?? []
+    : defaultAgent === 'opencode'
+      ? []
+      : capabilities?.effortDetection.values ?? []
+  const effortValues = capabilities?.effortDetection.status === 'detected'
+    ? ['', ...detectedEfforts]
+    : EFFORT_VALUES[defaultAgent]
+  const effortOptions = [...new Set(effortValues)].map((value) => ({
     value,
     label: effortLabels[value] ?? value,
   }))
+  const detectionReason = (reason?: string, detail?: string) => {
+    if (reason === 'claude-model-list-unsupported') return t('settings.claudeModelDetectionUnsupported')
+    if (reason === 'cursor-model-cache') return t('settings.cursorModelsCached')
+    if (reason === 'cursor-effort-embedded') return t('settings.cursorEffortEmbedded')
+    if (reason === 'model-list-unsupported') return t('settings.modelDetectionUnavailable')
+    if (reason === 'effort-list-unsupported') return t('settings.effortDetectionUnavailable')
+    return detail
+  }
   const agentPaths =
     defaultAgent === 'claude'
       ? [
@@ -325,12 +354,27 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                 onChange={(value) => pickCli(defaultAgent, 'model', value)}
                 options={modelOptions}
               />
+              <p className="settings-section-hint">
+                {capabilitiesLoading
+                  ? t('settings.detectingModels')
+                  : capabilities?.modelDetection.status === 'detected'
+                    ? t('settings.detectedModels', { count: capabilities.models.length })
+                    : capabilities?.modelDetection.status === 'cached'
+                      ? t('settings.cachedModels', { count: capabilities.models.length })
+                    : detectionReason(capabilities?.modelDetection.reason, capabilities?.modelDetection.detail)
+                      ?? t('settings.modelDetectionUnavailable')}
+              </p>
               <SelectRow
                 label={t('settings.defaultReasoning')}
                 value={selectedCli.effort ?? ''}
                 onChange={(value) => pickCli(defaultAgent, 'effort', value)}
                 options={effortOptions}
               />
+              {(capabilities?.effortDetection.reason || capabilities?.effortDetection.detail) && (
+                <p className="settings-section-hint">
+                  {detectionReason(capabilities.effortDetection.reason, capabilities.effortDetection.detail)}
+                </p>
+              )}
               <div className="settings-diagnostic-card selectable">
                 <div className="settings-diagnostic-head">
                   <span>{t('settings.detectionStatus')}</span>

@@ -18,6 +18,9 @@ export interface AgentModelOption {
   value: string
   label: string
   hint?: string
+  efforts?: string[]
+  defaultEffort?: string
+  isDefault?: boolean
 }
 
 class AsyncQueue {
@@ -435,7 +438,12 @@ async function* resumeOpenCodeNative(input: NativeResumeInput): AsyncGenerator<N
 interface OpenCodeProviderInfo {
   id: string
   name?: string
-  models?: Record<string, { id?: string; name?: string; status?: string }>
+  models?: Record<string, {
+    id?: string
+    name?: string
+    status?: string
+    variants?: Record<string, unknown>
+  }>
 }
 
 function providerEntries(value: unknown): OpenCodeProviderInfo[] {
@@ -476,6 +484,7 @@ export async function listOpenCodeModels(cwd?: string | null): Promise<AgentMode
           value: `${provider.id}/${id}`,
           label: model.name || id,
           hint: provider.name || provider.id,
+          efforts: Object.keys(model.variants ?? {}),
         })
       }
     }

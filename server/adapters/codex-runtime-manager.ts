@@ -146,6 +146,14 @@ export class CodexRuntimeManager {
     await this.ensureSession(processKey)
   }
 
+  /** Read-only protocol metadata requests do not occupy the turn mutex. */
+  async requestMetadata<T = unknown>(method: string, params: unknown, key?: CodexProcessKey): Promise<T> {
+    const processKey = key ?? (await this.resolveDefaultKey())
+    const session = await this.ensureSession(processKey)
+    session.lastUsedAt = this.now()
+    return session.server.request<T>(method, params)
+  }
+
   async acquire(signal: AbortSignal, key?: CodexProcessKey): Promise<CodexRuntimeLease> {
     const processKey = key ?? (await this.resolveDefaultKey())
     const session = await this.ensureSession(processKey)

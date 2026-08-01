@@ -44,11 +44,47 @@ export interface AgentModelOptionDTO {
   value: string
   label: string
   hint?: string
+  efforts?: string[]
+  defaultEffort?: string
+  isDefault?: boolean
+}
+
+export interface AgentCliCapabilitiesDTO {
+  models: AgentModelOptionDTO[]
+  modelDetection: {
+    status: 'detected' | 'cached' | 'unsupported' | 'failed'
+    reason?: string
+    detail?: string
+    cachedAt?: string
+  }
+  effortDetection: {
+    status: 'detected' | 'unsupported' | 'failed' | 'embedded'
+    values: string[]
+    reason?: string
+    detail?: string
+  }
+}
+
+const agentCapabilitiesCache = new Map<string, Promise<AgentCliCapabilitiesDTO>>()
+
+export function fetchAgentCapabilities(
+  agent: string,
+  cwd?: string | null,
+  refresh = false,
+): Promise<AgentCliCapabilitiesDTO> {
+  const qs = cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''
+  const key = `${agent}\0${cwd ?? ''}`
+  if (refresh) agentCapabilitiesCache.delete(key)
+  const existing = agentCapabilitiesCache.get(key)
+  if (existing) return existing
+  const request = getJson<AgentCliCapabilitiesDTO>(`/api/agents/${encodeURIComponent(agent)}/models${qs}`)
+  agentCapabilitiesCache.set(key, request)
+  request.catch(() => agentCapabilitiesCache.delete(key))
+  return request
 }
 
 export async function fetchAgentModels(agent: string, cwd?: string | null): Promise<AgentModelOptionDTO[]> {
-  const qs = cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''
-  const json = await getJson<{ models?: AgentModelOptionDTO[] }>(`/api/agents/${encodeURIComponent(agent)}/models${qs}`)
+  const json = await fetchAgentCapabilities(agent, cwd)
   return Array.isArray(json.models) ? json.models : []
 }
 

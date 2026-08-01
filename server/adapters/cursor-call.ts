@@ -8,7 +8,7 @@ import { serializeForAgent } from './serialize'
 import type { AgentRunInput, ReviewAgent } from './types'
 import { cursorPermissionArgs } from '../permissions/adapter-policy'
 
-async function resolveCursorCommand(): Promise<string | null> {
+export async function resolveCursorCommand(): Promise<string | null> {
   if (await commandExists('cursor-agent', ['--version'])) return 'cursor-agent'
   if (await commandExists('agent', ['--version'])) return 'agent'
   return null
