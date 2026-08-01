@@ -5,11 +5,12 @@ import { AgentIcon } from './AgentIcon'
 import { AgentPicker } from './AgentPicker'
 import { setDefaultAgent } from '../lib/preferences'
 import { parseMentions } from '../lib/mentions'
-import { AGENT_OPTIONS, labelForAgent } from '../lib/agents'
+import { labelForAgent } from '../lib/agents'
 import { fetchAgentModels, type AgentModelOptionDTO } from '../lib/api'
 import type { ApprovalMode, RunPermissions } from '../lib/types'
 import { useI18n, type MessageKey } from '../lib/i18n'
 import { pickLocalPaths } from '../lib/native-dialog'
+import { useEnabledAgentOptions } from '../hooks/useEnabledAgents'
 
 export type SendMode = 'followup' | 'native'
 type GroupDiscussionMode = 'parallel' | 'serial'
@@ -153,7 +154,6 @@ const SERIAL_PRESETS: { value: SerialPreset; labelKey: MessageKey; hintKey: Mess
   { value: 'peer-review', labelKey: 'serial.presetPeer', hintKey: 'serial.presetPeerHint' },
 ]
 
-const DEFAULT_GROUP_AGENTS: AgentName[] = ['claude', 'codex']
 const MODEL_POPOVER_WIDTH = 360
 const MODEL_POPOVER_MARGIN = 12
 
@@ -197,6 +197,7 @@ export function FollowupComposer({
   groupDefaultDiscussionMode = 'parallel',
   codexAcceleratedMode = false,
   onCodexAcceleratedModeChange,
+  externalDraft,
 }: {
   hasActiveStreams: boolean
   sessionAgent: AgentName
@@ -233,8 +234,11 @@ export function FollowupComposer({
   /** Phase 2 opt-in:「Codex 加速模式」当前 thread 是否已启用。由 SessionDetail per-thread 持久化。 */
   codexAcceleratedMode?: boolean
   onCodexAcceleratedModeChange?: (next: boolean) => void
+  /** Lets adjacent workbenches prepare a message without sending it. */
+  externalDraft?: { text: string; nonce: number } | null
 }) {
   const { t } = useI18n()
+  const { enabledAgents, enabledSet, options: enabledAgentOptions } = useEnabledAgentOptions()
   const [text, setText] = useState('')
   const [agent, setAgent] = useState<AgentName>(sessionAgent)
   const [mode, setMode] = useState<SendMode>('followup')
@@ -246,7 +250,7 @@ export function FollowupComposer({
   // 临时排除的成员(docs/13:「允许临时取消某些 agent」)。存排除集而不是包含集,
   // 这样 group 成员变化时新成员默认参与,不会因为旧快照被漏掉。
   const [serialExcluded, setSerialExcluded] = useState<Set<AgentName>>(new Set())
-  const [groupAgents, setGroupAgents] = useState<AgentName[]>(DEFAULT_GROUP_AGENTS)
+  const [groupAgents, setGroupAgents] = useState<AgentName[]>(() => enabledAgents)
   // 按当前 composer 临时记录 model / reasoning 选择。空串 = Default。
   // 不跨 session 持久化,避免新开的会话继承上一次临时挑的模型。
   //
@@ -283,10 +287,19 @@ export function FollowupComposer({
   const advancedMenuRef = useRef<HTMLDivElement | null>(null)
   const permissionMenuRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  useEffect(() => {
+    if (!externalDraft) return
+    setMode('followup')
+    setText(externalDraft.text)
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus()
+      textareaRef.current?.setSelectionRange(externalDraft.text.length, externalDraft.text.length)
+    })
+  }, [externalDraft])
 
   useEffect(() => {
-    setAgent(sessionAgent)
-  }, [sessionAgent])
+    setAgent(enabledSet.has(sessionAgent) ? sessionAgent : enabledAgents[0])
+  }, [sessionAgent, enabledAgents, enabledSet])
 
   useEffect(() => {
     if (groupMode) setGroupDiscussionMode(groupDefaultDiscussionMode)
@@ -307,10 +320,13 @@ export function FollowupComposer({
     return () => document.removeEventListener('mousedown', onDoc)
   }, [modelMenuOpen, attachmentMenuOpen, advancedMenuOpen, permissionMenuOpen])
 
-  const mentions = useMemo(() => parseMentions(text), [text])
+  const mentions = useMemo(() => parseMentions(text).filter((name) => enabledSet.has(name)), [text, enabledSet])
   const activeGroupAgents = useMemo(
-    () => (groupAgents.length ? groupAgents : DEFAULT_GROUP_AGENTS),
-    [groupAgents],
+    () => {
+      const visible = groupAgents.filter((name) => enabledSet.has(name))
+      return visible.length ? visible : enabledAgents
+    },
+    [groupAgents, enabledAgents, enabledSet],
   )
   const activeGroupSet = useMemo(() => new Set(activeGroupAgents), [activeGroupAgents])
   const groupMentions = useMemo(
@@ -343,10 +359,10 @@ export function FollowupComposer({
   const usingMentions = !usingNative && mentions.length > 0
   const mentionOptions = useMemo(() => {
     if (!mentionMenu) return []
-    return AGENT_OPTIONS.filter((a) =>
+    return enabledAgentOptions.filter((a) =>
       a.value.toLowerCase().startsWith(mentionMenu.query) && (!groupMode || activeGroupSet.has(a.value)),
     )
-  }, [mentionMenu, groupMode, activeGroupSet])
+  }, [mentionMenu, groupMode, activeGroupSet, enabledAgentOptions])
 
   useEffect(() => {
     let alive = true
@@ -384,7 +400,8 @@ export function FollowupComposer({
   }
 
   const pickReviewTemplate = () => {
-    const reviewAgent = sessionAgent === 'codex' ? 'claude' : 'codex'
+    const preferred = sessionAgent === 'codex' ? 'claude' : 'codex'
+    const reviewAgent = enabledSet.has(preferred) ? preferred : enabledAgents[0]
     setMode('followup')
     setAgent(reviewAgent)
     setModelMenuOpen(null)
@@ -817,7 +834,7 @@ export function FollowupComposer({
                 </>
               )}
               <div className="group-model-settings" ref={modelMenuRef}>
-                {AGENT_OPTIONS.map((a) => (
+                {enabledAgentOptions.map((a) => (
                   <div key={a.value}>{renderModelPicker(a.value, true, activeGroupSet.has(a.value))}</div>
                 ))}
               </div>

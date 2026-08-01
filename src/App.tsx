@@ -5,14 +5,16 @@ import { Splitter } from './components/Splitter'
 import { SettingsPanel } from './components/SettingsPanel'
 import { Icon } from './components/Icon'
 import { useResizable } from './hooks/useResizable'
-import { warmupAgent } from './lib/api'
+import { fetchSettingsDiagnostics, warmupAgent } from './lib/api'
 import { applyLanguagePreference, useI18n } from './lib/i18n'
 import {
   PREFERENCES_CHANGED_EVENT,
   applyFontSizePreference,
   applyThemePreference,
   readDefaultAgent,
+  initializeEnabledAgents,
 } from './lib/preferences'
+import type { AgentName } from './lib/types'
 
 const SessionDetail = lazy(() => import('./pages/SessionDetail').then((module) => ({ default: module.SessionDetail })))
 
@@ -31,6 +33,18 @@ export default function App() {
     applyThemePreference()
     applyFontSizePreference()
     applyLanguagePreference()
+  }, [])
+
+  useEffect(() => {
+    fetchSettingsDiagnostics()
+      .then((diagnostics) => {
+        initializeEnabledAgents(
+          diagnostics.agents.filter((agent) => agent.available).map((agent) => agent.name as AgentName),
+        )
+      })
+      .catch(() => {
+        // 诊断失败时保留兼容默认值,设置页仍可重试检测。
+      })
   }, [])
 
   useEffect(() => {

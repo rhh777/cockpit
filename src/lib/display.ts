@@ -93,6 +93,24 @@ export function displayTitle(raw: string, maxLen = 60, locale?: ResolvedLocale):
   return stripMarkup(text).slice(0, maxLen) || translate('title.untitled', undefined, locale)
 }
 
+/** 兼容旧版本已经落盘的系统默认评审标题；用户自定义标题保持原样。 */
+export function localizeReviewRoomTitle(raw: string, locale?: ResolvedLocale): string {
+  if (!locale?.startsWith('zh')) return raw
+  const fresh = raw.match(/^Fresh review\s*·\s*(.+)$/i)
+  if (fresh) return `独立复核 · ${localizeReviewRoomTitle(fresh[1], locale)}`
+  const review = raw.match(/^(Repository|Folder|Document|Files) Review:\s*(.+)$/i)
+  if (review) {
+    const kind = review[1].toLowerCase()
+    const label = kind === 'repository' ? '仓库' : kind === 'folder' ? '文件夹' : kind === 'document' ? '文档' : '文件'
+    return `${label}评审：${review[2]}`
+  }
+  const generic = raw.match(/^Review:\s*(.+)$/i)
+  if (generic) return `评审：${generic[1]}`
+  if (/^Fresh Review$/i.test(raw)) return '独立复核'
+  if (/^Review Room$/i.test(raw)) return '评审室'
+  return raw
+}
+
 export function agentAvatarClass(agent?: string): { cls: string; letter: string } {
   if (agent === 'claude') return { cls: 'claude', letter: 'C' }
   if (agent === 'codex') return { cls: 'codex', letter: 'X' }

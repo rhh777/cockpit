@@ -14,6 +14,7 @@ export const STORAGE_KEYS = {
   reviewWidth: 'cockpit.reviewWidth',
   defaultSourceFilter: 'cockpit.defaultSourceFilter',
   autoRefresh: 'cockpit.autoRefresh',
+  enabledAgents: 'cockpit.enabledAgents',
 }
 
 export const CLI_STORAGE_PREFIX = 'cockpit.cli.'
@@ -60,6 +61,44 @@ export function readDefaultAgent(): AgentName {
 export function setDefaultAgent(agent: AgentName) {
   localStorage.setItem(STORAGE_KEYS.lastAgent, agent)
   notifyPreferencesChanged()
+}
+
+const KNOWN_AGENTS: AgentName[] = ['claude', 'codex', 'opencode', 'cursor']
+
+function normalizeEnabledAgents(values: unknown): AgentName[] {
+  if (!Array.isArray(values)) return []
+  const known = new Set<AgentName>(KNOWN_AGENTS)
+  return [...new Set(values.filter((value): value is AgentName => typeof value === 'string' && known.has(value as AgentName)))]
+}
+
+export function hasEnabledAgentsPreference(): boolean {
+  return localStorage.getItem(STORAGE_KEYS.enabledAgents) !== null
+}
+
+export function readEnabledAgents(): AgentName[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.enabledAgents)
+    if (raw === null) return [readDefaultAgent()]
+    const agents = normalizeEnabledAgents(JSON.parse(raw))
+    return agents.length ? agents : [readDefaultAgent()]
+  } catch {
+    return [readDefaultAgent()]
+  }
+}
+
+export function setEnabledAgents(agents: AgentName[]) {
+  const normalized = normalizeEnabledAgents(agents)
+  const next = normalized.length ? normalized : [readDefaultAgent()]
+  localStorage.setItem(STORAGE_KEYS.enabledAgents, JSON.stringify(next))
+  if (!next.includes(readDefaultAgent())) setDefaultAgent(next[0])
+  else notifyPreferencesChanged()
+}
+
+/** 首次运行按本机 CLI 检测初始化;已有用户选择时绝不覆盖。 */
+export function initializeEnabledAgents(availableAgents: AgentName[]) {
+  if (hasEnabledAgentsPreference()) return
+  const available = normalizeEnabledAgents(availableAgents)
+  setEnabledAgents(available.length ? available : [readDefaultAgent()])
 }
 
 export function readCliSelection(agent: AgentName): CliSelection {

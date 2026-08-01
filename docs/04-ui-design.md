@@ -127,6 +127,15 @@ Agent 相关 UI 是全局组件体系,不是单聊/群聊各自发挥的局部�
 - 新增 agent 时必须同步检查:`AGENT_OPTIONS`、`AgentIcon.normalizeAgent`、agent CSS class、`FollowupComposer` 的 @mention/模型参数、设置页 CLI 检测、server adapter registry。
 - 不允许为了修一个页面的视觉问题而在另一个页面制造不同步;若需要页面特化,先抽出共享 primitive,再用 prop 控制差异。
 
+设置页提供独立的「启用的 Agents」偏好:
+
+- `AGENT_OPTIONS` 始终保留完整注册表,供历史 timeline、来源标识和诊断展示使用;不要按用户偏好删减它。
+- 首次没有偏好时,根据本机 CLI 检测结果初始化启用列表;之后只由用户显式调整。
+- 未检测到 CLI 的 agent 仍显示在设置诊断中,但不能新开启;已启用列表至少保留一个 agent。
+- 启用列表过滤可交互入口:侧栏 agent 快捷过滤、单聊 `AgentPicker`、新建群聊/Review Room、群聊模型与成员控件、@mention 候选和新一轮 Review Room 参与者。关闭当前侧栏 agent 过滤时回到「全部」。
+- 已有 session、group transcript 和历史 agent label/icon 不因关闭而隐藏;原生来源到 agent 的映射也不受该偏好影响。
+- 当前默认 agent 被关闭时,默认值切到启用列表中的第一项。
+
 ### 4.5 ReviewPanel(右侧可拖拽侧栏)
 
 - 详情页右侧抽屉,展示**当前 follow-up 轮次的结构化 review 视图**(verdict / reasons / suggestions),与 timeline 并列,便于"边看 timeline 边对照 reviewer 结论"。

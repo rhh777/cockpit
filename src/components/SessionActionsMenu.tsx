@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Icon } from './Icon'
-import { nativeAgentForSource } from '../lib/agents'
+import { labelForAgent, nativeAgentForSource } from '../lib/agents'
 import { useI18n } from '../lib/i18n'
+import { useEnabledAgentOptions, useEnabledAgents } from '../hooks/useEnabledAgents'
+import type { AgentName } from '../lib/types'
+import { AgentIcon } from './AgentIcon'
 import {
   createHandoff,
   createReviewRoom,
@@ -44,16 +47,18 @@ function sourceRefFor(source: string, sessionId: string, isGroup: boolean): Hand
 
 export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
   const navigate = useNavigate()
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
+  const enabledAgents = useEnabledAgents()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<BusyKind>(null)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<HandoffResult | null>(null)
   const [groupChooserOpen, setGroupChooserOpen] = useState(false)
+  const [reviewSetupOpen, setReviewSetupOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const currentNativeAgent = isGroup ? null : nativeAgentForSource(source)
-  const showCodexContinue = currentNativeAgent !== 'codex'
-  const showClaudeContinue = currentNativeAgent !== 'claude'
+  const showCodexContinue = enabledAgents.includes('codex') && currentNativeAgent !== 'codex'
+  const showClaudeContinue = enabledAgents.includes('claude') && currentNativeAgent !== 'claude'
 
   useEffect(() => {
     if (!open) return
@@ -65,7 +70,13 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
   }, [open])
 
   const runAction = useCallback(
-    async (kind: Exclude<BusyKind, null>, opts?: { groupScope?: GroupScope }) => {
+    async (
+      kind: Exclude<BusyKind, null>,
+      opts?: {
+        groupScope?: GroupScope
+        review?: { goal: string; participants: AgentName[]; mode: 'parallel' | 'serial' }
+      },
+    ) => {
       setError(null)
       setBusy(kind)
       setOpen(false)
@@ -74,7 +85,7 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
           if (isGroup) throw new Error(t('actions.alreadyGroup'))
           const scope = opts?.groupScope ?? 'all'
           const includeRecentEvents = scope === 'all' ? 'all' : scope * 2
-          const { groupThreadId } = await groupFromSession({ source, sessionId, includeRecentEvents })
+          const { groupThreadId } = await groupFromSession({ source, sessionId, includeRecentEvents, agents: enabledAgents })
           navigate(`/cockpit/${encodeURIComponent(groupThreadId)}`)
           return
         }
@@ -89,9 +100,11 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
               }
           const created = await createReviewRoom({
             source: reviewSource,
-            goal: t('actions.reviewRoomGoal'),
-            participants: ['claude', 'codex'],
+            goal: opts?.review?.goal,
+            participants: opts?.review?.participants,
+            mode: opts?.review?.mode,
             startReview: true,
+            promptLocale: locale.startsWith('zh') ? 'zh-CN' : 'en',
           })
           if (created.startError) setError(t('actions.reviewRoomStartFailed', { error: created.startError }))
           navigate(`/cockpit/${encodeURIComponent(created.groupThreadId)}`)
@@ -123,7 +136,7 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
         setBusy(null)
       }
     },
-    [source, sessionId, isGroup, navigate],
+    [source, sessionId, isGroup, navigate, enabledAgents, locale],
   )
 
   return (
@@ -139,7 +152,13 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
       </button>
       {open && (
         <div className="session-actions-menu" role="menu">
-          <button role="menuitem" onClick={() => runAction('review-room')}>
+          <button
+            role="menuitem"
+            onClick={() => {
+              setOpen(false)
+              setReviewSetupOpen(true)
+            }}
+          >
             {t('actions.createReviewRoom')}
           </button>
           <button
@@ -197,6 +216,134 @@ export function SessionActionsMenu({ source, sessionId, isGroup, cwd }: Props) {
           }}
         />
       )}
+      {reviewSetupOpen && (
+        <ReviewSetupDialog
+          busy={busy === 'review-room'}
+          onCancel={() => setReviewSetupOpen(false)}
+          onConfirm={(review) => {
+            setReviewSetupOpen(false)
+            void runAction('review-room', { review })
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function ReviewSetupDialog({
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  busy: boolean
+  onCancel: () => void
+  onConfirm: (review: { goal: string; participants: AgentName[]; mode: 'parallel' | 'serial' }) => void
+}) {
+  const { t } = useI18n()
+  const { enabledAgents, options } = useEnabledAgentOptions()
+  const [goal, setGoal] = useState(() => t('actions.reviewRoomGoal'))
+  const [participants, setParticipants] = useState<AgentName[]>(enabledAgents)
+  const [mode, setMode] = useState<'parallel' | 'serial'>('parallel')
+
+  useEffect(() => {
+    setParticipants((current) => {
+      const available = current.filter((agent) => enabledAgents.includes(agent))
+      return available.length ? available : enabledAgents
+    })
+  }, [enabledAgents])
+
+  useEffect(() => {
+    if (participants.length < 2 && mode === 'serial') setMode('parallel')
+  }, [mode, participants.length])
+
+  const toggleAgent = (agent: AgentName) => {
+    setParticipants((current) => {
+      if (!current.includes(agent)) return [...current, agent]
+      return current.length === 1 ? current : current.filter((item) => item !== agent)
+    })
+  }
+
+  const submit = () => {
+    const trimmedGoal = goal.trim()
+    if (!trimmedGoal || participants.length === 0) return
+    onConfirm({ goal: trimmedGoal, participants, mode })
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal review-setup-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <div className="review-setup-heading">
+            <span className="modal-title">{t('reviewSetup.title')}</span>
+            <span className="modal-hint">{t('reviewSetup.hint')}</span>
+          </div>
+          <button className="modal-close" onClick={onCancel} aria-label={t('common.close')}>×</button>
+        </div>
+        <div className="modal-body">
+          <label className="review-setup-brief">
+            <span className="modal-label">{t('reviewSetup.brief')}</span>
+            <textarea
+              className="modal-textarea"
+              value={goal}
+              onChange={(event) => setGoal(event.target.value)}
+              placeholder={t('newChat.goalPlaceholder')}
+              rows={4}
+              autoFocus
+            />
+            <span className="modal-hint">{t('reviewSetup.briefHint')}</span>
+          </label>
+          <div className="modal-section">
+            <span className="modal-label">{t('newChat.participants')}</span>
+            <div className="review-agents-row" role="group" aria-label={t('newChat.participants')}>
+              {options.map((agent) => (
+                <button
+                  key={agent.value}
+                  type="button"
+                  className={`review-agent-chip ${participants.includes(agent.value) ? 'active' : ''}`}
+                  onClick={() => toggleAgent(agent.value)}
+                  disabled={participants.includes(agent.value) && participants.length === 1}
+                  aria-pressed={participants.includes(agent.value)}
+                >
+                  <AgentIcon source={agent.value} size={16} />
+                  <span>{labelForAgent(agent.value)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="modal-section">
+            <span className="modal-label">{t('newChat.discussionMode')}</span>
+            <div className="review-kind-row" role="group" aria-label={t('newChat.discussionMode')}>
+              <button
+                type="button"
+                className={`review-kind-item ${mode === 'parallel' ? 'active' : ''}`}
+                onClick={() => setMode('parallel')}
+                aria-pressed={mode === 'parallel'}
+              >
+                {t('newChat.parallel')}
+              </button>
+              <button
+                type="button"
+                className={`review-kind-item ${mode === 'serial' ? 'active' : ''}`}
+                onClick={() => setMode('serial')}
+                disabled={participants.length < 2}
+                aria-pressed={mode === 'serial'}
+              >
+                {t('newChat.serial')}
+              </button>
+            </div>
+          </div>
+          <div className="review-setup-notice">
+            <Icon name="sparkle" size={13} />
+            <span>{t('reviewSetup.startNotice')}</span>
+          </div>
+        </div>
+        <div className="modal-actions">
+          <button className="modal-btn" onClick={onCancel} disabled={busy}>{t('common.cancel')}</button>
+          <button className="modal-btn primary" onClick={submit} disabled={busy || !goal.trim() || participants.length === 0}>
+            {busy ? t('actions.busy') : t('reviewSetup.createAndStart')}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

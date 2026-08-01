@@ -91,3 +91,16 @@ test('setDone 不会被手动修复轮挡住(awaiting-user 不是 running)', asy
   const done = await reviewRoomStore.setDone(id, true, 'ok')
   assert.equal(done?.phase, 'done')
 })
+
+test('abortRunningRounds 立即把运行中轮次持久化为 aborted', async () => {
+  const id = await room()
+  await reviewRoomStore.startRound(id, {
+    kind: 'review',
+    mode: 'parallel',
+    agents: ['claude', 'codex'] as AgentName[],
+    groupTurnId: 'turn_cancel',
+  })
+  const next = await reviewRoomStore.abortRunningRounds(id)
+  assert.equal(next?.rounds[0].status, 'aborted')
+  assert.ok(next?.rounds[0].completedAt)
+})

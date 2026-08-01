@@ -81,7 +81,7 @@ function textOfEvent(env: { event: { type: string; text?: string; agent?: string
   return null
 }
 
-async function pathSource(input: unknown): Promise<BuiltSource> {
+async function pathSource(input: unknown, promptLocale: 'en' | 'zh-CN'): Promise<BuiltSource> {
   const o = input && typeof input === 'object' ? input as Record<string, unknown> : {}
   const kind = o.kind === 'repository' || o.kind === 'directory' || o.kind === 'files' || o.kind === 'document'
     ? o.kind as 'repository' | 'directory' | 'files' | 'document'
@@ -117,9 +117,10 @@ async function pathSource(input: unknown): Promise<BuiltSource> {
   const cwd = kind === 'repository' || kind === 'directory'
     ? refs[0]?.path ?? null
     : refs[0] ? path.dirname(refs[0].path) : null
-  const title = typeof o.title === 'string' && o.title.trim()
-    ? o.title.trim()
+  const defaultTitle = promptLocale === 'zh-CN'
+    ? `${kind === 'repository' ? '仓库' : kind === 'directory' ? '文件夹' : kind === 'document' ? '文档' : '文件'}评审：${refs[0]?.name ?? '评审室'}`
     : `${kind === 'repository' ? 'Repository' : kind === 'directory' ? 'Folder' : kind === 'document' ? 'Document' : 'Files'} Review: ${refs[0]?.name ?? 'Review Room'}`
+  const title = typeof o.title === 'string' && o.title.trim() ? o.title.trim() : defaultTitle
   const gitHead = cwd ? await readGitHead(cwd) : undefined
   const snapshotText = await buildPathSnapshot(refs, cwd, gitHead)
   return {
@@ -238,10 +239,12 @@ function buildTranscriptSnapshot(
   return truncate(parts.join('\n'), 16000)
 }
 
-function freeformSource(input: unknown, goal: string): BuiltSource {
+function freeformSource(input: unknown, goal: string, promptLocale: 'en' | 'zh-CN'): BuiltSource {
   const o = input && typeof input === 'object' ? input as Record<string, unknown> : {}
   const text = typeof o.freeformText === 'string' ? o.freeformText : ''
-  const title = typeof o.title === 'string' && o.title.trim() ? o.title.trim() : cleanTitle(goal || text, 48) || 'Review Room'
+  const title = typeof o.title === 'string' && o.title.trim()
+    ? o.title.trim()
+    : cleanTitle(goal || text, 48) || (promptLocale === 'zh-CN' ? '评审室' : 'Review Room')
   return {
     title,
     cwd: null,
@@ -265,11 +268,11 @@ async function readGitHead(cwd: string): Promise<string | undefined> {
   }
 }
 
-async function buildSource(input: unknown, goal: string) {
+async function buildSource(input: unknown, goal: string, promptLocale: 'en' | 'zh-CN') {
   const o = input && typeof input === 'object' ? input as Record<string, unknown> : {}
   if (o.kind === 'native-session' || o.kind === 'cockpit-followup' || o.kind === 'group-thread') return sessionSource(input)
-  if (o.kind === 'repository' || o.kind === 'directory' || o.kind === 'files' || o.kind === 'document') return pathSource(input)
-  return freeformSource(input, goal)
+  if (o.kind === 'repository' || o.kind === 'directory' || o.kind === 'files' || o.kind === 'document') return pathSource(input, promptLocale)
+  return freeformSource(input, goal, promptLocale)
 }
 
 async function handleCreate(req: IncomingMessage, res: ServerResponse) {
@@ -280,19 +283,21 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse) {
     participants?: AgentName[]
     mode?: 'parallel' | 'serial'
     startReview?: boolean
+    promptLocale?: 'en' | 'zh-CN'
     permissions?: unknown
   }
   const goal = (body.goal ?? '').trim()
+  const promptLocale = body.promptLocale === 'zh-CN' ? 'zh-CN' : 'en'
   const participants = uniqueAgents(body.participants)
   let built: Awaited<ReturnType<typeof buildSource>>
   try {
-    built = await buildSource(body.source, goal)
+    built = await buildSource(body.source, goal, promptLocale)
   } catch (e) {
     sendJson(res, 400, { error: String((e as Error)?.message ?? e) })
     return
   }
 
-  const title = cleanTitle(built.title, 60) || 'Review Room'
+  const title = cleanTitle(built.title, 60) || (promptLocale === 'zh-CN' ? '评审室' : 'Review Room')
   const group = await groupThreadStore.create({
     title,
     cwd: built.cwd,
@@ -310,6 +315,7 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse) {
     goal,
     preset: body.preset ?? null,
     participants,
+    promptLocale,
   })
 
   await groupThreadStore.appendEvent(group.id, {
@@ -358,6 +364,7 @@ async function startReviewRound(
   permissions?: unknown,
   kind: RoundKind = 'review',
   participantsOverride?: AgentName[],
+  issueIds?: string[],
 ) {
   const group = await groupThreadStore.readState(id)
   const review = await reviewRoomStore.read(id)
@@ -371,10 +378,12 @@ async function startReviewRound(
   })
   const { participants, runMode } = plan
   const snapshotText = await recoverSnapshotText(id)
-  const priorFindings = kind !== 'review' ? formatPriorFindings(review) : ''
+  const priorFindings = kind !== 'review' ? formatPriorFindings(review, issueIds) : ''
+  if (kind !== 'review' && issueIds?.length && !priorFindings) throw new Error('review issue not found')
+  const promptLocale = review.promptLocale ?? (/[一-鿿]/.test(review.goal) ? 'zh-CN' : 'en')
   const started = await runRegistry.startGroupTurn({
     id,
-    text: reviewPrompt(review.source, review.goal, snapshotText, kind, priorFindings),
+    text: reviewPrompt(review.source, review.goal, snapshotText, kind, priorFindings, promptLocale),
     targetAgents: runMode === 'serial' ? [participants[0]] : participants,
     mode: runMode,
     serial: runMode === 'serial'
@@ -414,13 +423,20 @@ async function recoverSnapshotText(groupThreadId: string): Promise<string> {
   return ''
 }
 
-function formatPriorFindings(review: import('../store/review-room-store').ReviewRoomDiskState): string {
+function formatPriorFindings(
+  review: import('../store/review-room-store').ReviewRoomDiskState,
+  issueIds?: string[],
+): string {
   const lastReviewRound = [...review.rounds].reverse().find((r) => r.kind === 'review' && r.status === 'completed')
   if (!lastReviewRound) return ''
   const set = review.issueSets.find((s) => s.roundId === lastReviewRound.id)
   if (!set || set.issues.length === 0) return ''
-  const lines: string[] = ['', 'Prior review findings (reference by issueId in your results):']
-  for (const it of set.issues) {
+  const selected = issueIds?.length ? set.issues.filter((it) => issueIds.includes(it.id)) : set.issues
+  if (selected.length === 0) return ''
+  const lines: string[] = ['', review.promptLocale === 'zh-CN'
+    ? '此前的评审问题（请在结果中用 issueId 引用）：'
+    : 'Prior review findings (reference by issueId in your results):']
+  for (const it of selected) {
     const at = it.path ? ` @ ${it.path}${it.line ? `:${it.line}` : ''}` : ''
     lines.push(`- [${it.id}] (${it.severity}) ${it.title}${at} — ${it.agent}`)
     if (it.body) lines.push(`    ${it.body.split('\n').join(' ').slice(0, 240)}`)
@@ -434,6 +450,7 @@ function reviewPrompt(
   snapshotText: string,
   kind: RoundKind,
   priorFindings: string,
+  promptLocale: 'en' | 'zh-CN' = 'en',
 ): string {
   const sourceLine = source.paths?.length
     ? source.paths.map((p) => `${p.kind}: ${p.path}`).join('\n')
@@ -442,6 +459,40 @@ function reviewPrompt(
       : source.groupThreadId
         ? `group-thread:${source.groupThreadId}`
         : source.freeformText ?? ''
+  if (promptLocale === 'zh-CN') {
+    const intro = kind === 'review'
+      ? '你是多位评审者之一，请独立评审这个 Review Room 的来源内容。'
+      : kind === 'fix'
+        ? '请处理上一轮评审指出的问题，用最小且完整的改动解决每项问题。'
+        : '请复核上一轮修复，逐项确认问题是否解决，并指出仍存在的缺口。'
+    const tail = kind === 'review'
+      ? '请先用中文给出分析，最后严格以如下 FINDINGS 结构化块结尾。评审阶段不要修改文件。'
+      : kind === 'fix'
+        ? '请先用中文说明修改内容，最后以 FINDINGS 块列出已修复或暂缓的问题。'
+        : '请逐项检查此前问题，最后以 FINDINGS 块标明 VERIFIED / STILL BROKEN / NEEDS DISCUSSION。'
+    const findingsSpec = kind === 'review'
+      ? [
+          '', '重要：消息末尾必须包含以下结构化结果，供 Review Room 对比多位评审者：', '', 'FINDINGS', '```json', '{',
+          '  "issues": [',
+          '    {"title": "简短的问题描述", "severity": "blocker|major|minor|nit", "path": "src/foo.ts", "line": 42, "body": "影响以及建议的修复方式"}',
+          '  ],', '  "agreements": ["预计与其他评审者一致的观点"],', '  "disagreements": ["预计存在分歧的观点"],',
+          '  "next": "建议的下一步（fix / verify / discuss / stop）"', '}', '```', '',
+          '没有对应内容时使用空数组。结束代码围栏后不要再添加文字。',
+        ].join('\n')
+      : [
+          '', '重要：消息末尾必须包含以下结构化结果。请在 refIssueId 中引用此前问题 ID：', '', 'FINDINGS', '```json', '{', '  "results": [',
+          kind === 'fix'
+            ? '    {"refIssueId": "claude-1", "outcome": "verified|still-broken|needs-discussion", "path": "src/foo.ts", "note": "改了什么、改在何处"}'
+            : '    {"refIssueId": "claude-1", "outcome": "verified|still-broken|needs-discussion", "note": "核查证据"}',
+          '  ],', '  "issues": [', '    {"title": "过程中发现的新问题", "severity": "major", "body": "..."}', '  ],',
+          '  "next": "fix|verify|discuss|stop"', '}', '```', '', '没有对应内容时使用空数组。结束代码围栏后不要再添加文字。',
+        ].join('\n')
+    return [
+      intro, goal ? `目标：${goal}` : '', '', `来源（${source.kind}）：`, sourceLine,
+      snapshotText ? '\nReview Room 创建时的快照：\n---\n' + snapshotText + '\n---' : '',
+      priorFindings, '', tail, findingsSpec,
+    ].filter(Boolean).join('\n')
+  }
   const intro = kind === 'review'
     ? 'You are one of multiple reviewers looking at this Review Room source independently.'
     : kind === 'fix'
@@ -699,11 +750,16 @@ async function handleFreshReview(req: IncomingMessage, res: ServerResponse, id: 
   }
   const reviewers = uniqueAgents(body.reviewerAgents)
   const reason = body.reason === 'new-risks' || body.reason === 'verify' ? body.reason : 'user-requested'
-  const goal = (body.goal ?? `Fresh review of ${parent.source.title}. Do not be biased by prior findings — form your own judgement first, then compare.`).trim()
+  const fallbackGoal = parent.promptLocale === 'zh-CN' || /[一-鿿]/.test(parent.goal)
+    ? `独立复核 ${parent.source.title}。不要受此前结论影响，请先形成自己的判断，再与已有结果对照。`
+    : `Fresh review of ${parent.source.title}. Do not be biased by prior findings — form your own judgement first, then compare.`
+  const goal = (body.goal ?? fallbackGoal).trim()
 
   const handoff = await tryBuildHandoffForFresh(id, parent)
   const snapshotText = buildFreshReviewSnapshot(parent, handoff)
-  const childTitle = cleanTitle(`Fresh review · ${parent.source.title}`, 60) || 'Fresh Review'
+  const childTitle = parent.promptLocale === 'zh-CN'
+    ? cleanTitle(`独立复核 · ${parent.source.title}`, 60) || '独立复核'
+    : cleanTitle(`Fresh review · ${parent.source.title}`, 60) || 'Fresh Review'
   const childSource: ReviewRoomSource = {
     kind: 'freeform',
     title: childTitle,
@@ -728,6 +784,7 @@ async function handleFreshReview(req: IncomingMessage, res: ServerResponse, id: 
     source: childSource,
     goal,
     participants: reviewers,
+    promptLocale: parent.promptLocale,
   })
   await groupThreadStore.appendEvent(child.id, {
     origin: 'cockpit',
@@ -922,6 +979,7 @@ async function handleStartReview(req: IncomingMessage, res: ServerResponse, id: 
     permissions?: unknown
     kind?: RoundKind
     participants?: AgentName[]
+    issueIds?: string[]
   }
   const kind: RoundKind = body.kind === 'fix' || body.kind === 'verify' ? body.kind : 'review'
   try {
@@ -931,6 +989,7 @@ async function handleStartReview(req: IncomingMessage, res: ServerResponse, id: 
       body.permissions,
       kind,
       Array.isArray(body.participants) ? body.participants : undefined,
+      Array.isArray(body.issueIds) ? body.issueIds.filter((issueId): issueId is string => typeof issueId === 'string') : undefined,
     )
     sendJson(res, 202, started)
   } catch (e) {
@@ -945,6 +1004,22 @@ async function handleStartReview(req: IncomingMessage, res: ServerResponse, id: 
           : 400
     sendJson(res, status, { error: message })
   }
+}
+
+async function handleCancelReview(res: ServerResponse, id: string) {
+  if (!isValidSessionId(id)) {
+    sendJson(res, 400, { error: 'invalid reviewRoomId' })
+    return
+  }
+  const review = await reviewRoomStore.read(id)
+  if (!review) {
+    sendJson(res, 404, { error: 'review room not found' })
+    return
+  }
+  const canceled = runRegistry.cancelGroupTurn(id)
+  const next = await reviewRoomStore.abortRunningRounds(id)
+  sessionRegistry.invalidate()
+  sendJson(res, 202, { ok: true, canceled, review: next ? await decorateReview(next) : null })
 }
 
 export async function handleReviewRoomsRoute(
@@ -967,6 +1042,11 @@ export async function handleReviewRoomsRoute(
 
   if (req.method === 'POST' && parts.length === 4 && parts[3] === 'review') {
     await handleStartReview(req, res, decodeURIComponent(parts[2]))
+    return true
+  }
+
+  if (req.method === 'POST' && parts.length === 4 && parts[3] === 'cancel') {
+    await handleCancelReview(res, decodeURIComponent(parts[2]))
     return true
   }
 

@@ -52,7 +52,7 @@ export async function fetchAgentModels(agent: string, cwd?: string | null): Prom
   return Array.isArray(json.models) ? json.models : []
 }
 
-export async function createGroupThread(body: { title?: string; cwd?: string | null } = {}): Promise<{
+export async function createGroupThread(body: { title?: string; cwd?: string | null; agents?: string[] } = {}): Promise<{
   id: string
 }> {
   const res = await fetch('/api/group-threads', {
@@ -76,6 +76,7 @@ export interface CreateReviewRoomBody {
   participants?: string[]
   mode?: 'parallel' | 'serial'
   startReview?: boolean
+  promptLocale?: 'en' | 'zh-CN'
 }
 
 export type ReviewIssueSeverity = 'blocker' | 'major' | 'minor' | 'nit'
@@ -112,6 +113,7 @@ export interface ReviewRoomState {
   groupThreadId: string
   goal: string
   preset: string | null
+  promptLocale?: 'en' | 'zh-CN'
   phase: 'draft' | 'review' | 'compare' | 'fix' | 'verify' | 'done'
   participants: string[]
   rounds: {
@@ -272,6 +274,13 @@ export interface ReviewRoomDTO {
 
 export function createReviewRoom(body: CreateReviewRoomBody): Promise<ReviewRoomDTO> {
   return postJson('/api/review-rooms', body)
+}
+
+export async function cancelReviewRoom(id: string): Promise<ReviewRoomState | null> {
+  const res = await fetch(`/api/review-rooms/${encodeURIComponent(id)}/cancel`, { method: 'POST' })
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  const json = await res.json() as { review?: ReviewRoomState | null }
+  return json.review ?? null
 }
 
 export async function fetchReviewRoom(id: string): Promise<ReviewRoomState | null> {

@@ -19,6 +19,49 @@ const OUTCOME_LABEL: Record<ReviewIssueOutcome, MessageKey> = {
   'needs-discussion': 'compare.outcomeNeedsDiscussion',
 }
 
+const ROUND_KIND_LABEL: Record<string, MessageKey> = {
+  review: 'reviewRoom.kindReview',
+  fix: 'reviewRoom.kindFix',
+  verify: 'reviewRoom.kindVerify',
+  'fresh-review': 'reviewRoom.kindFreshReview',
+}
+
+const ROUND_MODE_LABEL: Record<string, MessageKey> = {
+  parallel: 'reviewRoom.modeParallel',
+  serial: 'reviewRoom.modeSerial',
+  single: 'reviewRoom.modeSingle',
+  manual: 'reviewRoom.modeManual',
+}
+
+const RECOMMENDATION_LABEL: Record<string, MessageKey> = {
+  stop: 'reviewRoom.recommendStop',
+  fix: 'reviewRoom.recommendFix',
+  verify: 'reviewRoom.recommendVerify',
+  discuss: 'reviewRoom.recommendDiscuss',
+}
+
+const SOURCE_KIND_LABEL: Record<string, MessageKey> = {
+  'native-session': 'reviewRoom.sourceNativeSession',
+  'cockpit-followup': 'reviewRoom.sourceCockpitFollowup',
+  'group-thread': 'reviewRoom.sourceGroupThread',
+  repository: 'reviewRoom.sourceRepository',
+  directory: 'reviewRoom.sourceDirectory',
+  files: 'reviewRoom.sourceFiles',
+  document: 'reviewRoom.sourceDocument',
+  freeform: 'reviewRoom.sourceFreeform',
+}
+
+const FRESH_REASON_LABEL: Record<string, MessageKey> = {
+  verify: 'fresh.reasonVerify',
+  'new-risks': 'fresh.reasonNewRisks',
+  'user-requested': 'fresh.reasonUserRequested',
+}
+
+function recommendationLabel(t: (key: MessageKey) => string, value: string): string {
+  const key = RECOMMENDATION_LABEL[value.trim().toLowerCase()]
+  return key ? t(key) : value
+}
+
 function FollowupResults({
   followupSets,
   issueTitleById,
@@ -33,8 +76,12 @@ function FollowupResults({
       {followupSets.map(({ round, set }) => (
         <div key={round.id} className="review-followup-round">
           <div className="review-followup-round-head">
-            <span className="review-followup-kind">{round.kind === 'fix' ? 'Fix' : 'Verify'}</span>
-            <span className="review-followup-mode">{round.mode}</span>
+            <span className="review-followup-kind">
+              {ROUND_KIND_LABEL[round.kind] ? t(ROUND_KIND_LABEL[round.kind]) : round.kind}
+            </span>
+            <span className="review-followup-mode">
+              {ROUND_MODE_LABEL[round.mode] ? t(ROUND_MODE_LABEL[round.mode]) : round.mode}
+            </span>
           </div>
           {set.issues.length === 0 ? (
             <div className="review-compare-empty">{t('compare.noStructured')}</div>
@@ -122,7 +169,17 @@ function IssueStatusPicker({
 }
 
 const SEVERITY_ORDER: Record<string, number> = { blocker: 0, major: 1, minor: 2, nit: 3 }
-const SEVERITY_LABEL: Record<string, string> = { blocker: 'Blocker', major: 'Major', minor: 'Minor', nit: 'Nit' }
+const SEVERITY_LABEL: Record<string, MessageKey> = {
+  blocker: 'reviewRoom.severityBlocker',
+  major: 'reviewRoom.severityMajor',
+  minor: 'reviewRoom.severityMinor',
+  nit: 'reviewRoom.severityNit',
+}
+
+function severityLabel(t: (key: MessageKey) => string, severity: string): string {
+  const key = SEVERITY_LABEL[severity]
+  return key ? t(key) : severity
+}
 
 function normalize(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9\s\/.\-_]/g, ' ').replace(/\s+/g, ' ').trim()
@@ -190,6 +247,7 @@ function clusterIssues(issues: ReviewIssueDTO[], threshold = 0.5): ClusterEntry[
 // docs/14 §Done:收口后展示最终决策、已修复、未修复但接受、仍待处理,以及评审来源快照。
 function DoneSummary({ room }: { room: ReviewRoomState }) {
   const { t } = useI18n()
+  const [open, setOpen] = useState(false)
   const lastReview = [...room.rounds].reverse().find((r) => r.kind === 'review' && r.status === 'completed')
   const set = lastReview ? room.issueSets.find((s) => s.roundId === lastReview.id) : undefined
   const issues = set?.issues ?? []
@@ -204,53 +262,76 @@ function DoneSummary({ room }: { room: ReviewRoomState }) {
   ]
   return (
     <div className="review-done">
-      <div className="review-done-head">
+      <button
+        type="button"
+        className="review-done-head review-done-toggle"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+      >
         <Icon name="check" size={14} />
         <span className="review-done-title">{t('done.title')}</span>
+        <span className="review-done-counts">
+          {t('done.summaryCounts', {
+            fixed: room.statusSummary?.fixed ?? groups[0].items.length,
+            wontfix: room.statusSummary?.wontfix ?? groups[1].items.length,
+            remaining: room.statusSummary
+              ? room.statusSummary.open + room.statusSummary.needsCheck
+              : groups[2].items.length,
+          })}
+        </span>
         {room.doneAt && (
           <span className="review-done-at">
             {t('done.at', { when: new Date(room.doneAt).toLocaleString() })}
           </span>
         )}
-      </div>
-      {room.conclusion && (
-        <div className="review-done-block">
-          <div className="review-done-block-title">{t('done.conclusion')}</div>
-          <div className="review-done-conclusion">{room.conclusion}</div>
+        <span className={`review-done-caret ${open ? 'open' : ''}`}>
+          <Icon name="chevron-right" size={12} />
+        </span>
+      </button>
+      {open && (
+        <div className="review-done-content">
+          {room.conclusion && (
+            <div className="review-done-block">
+              <div className="review-done-block-title">{t('done.conclusion')}</div>
+              <div className="review-done-conclusion">{room.conclusion}</div>
+            </div>
+          )}
+          {groups.map((g) => (
+            <div className="review-done-block" key={g.key}>
+              <div className="review-done-block-title">
+                {t(g.labelKey)} <span className="review-compare-stat-count">{g.items.length}</span>
+              </div>
+              {g.items.length === 0 ? (
+                <div className="review-compare-empty">{t('done.noneInGroup')}</div>
+              ) : (
+                <ul className="review-done-list">
+                  {g.items.map((it) => (
+                    <li key={`${it.agent}:${it.id}`}>
+                      <span className={`review-sev sev-${it.severity}`}>{severityLabel(t, it.severity)}</span>
+                      <span>{it.title}</span>
+                      {it.path && (
+                        <code className="review-cluster-issue-path">
+                          {it.path}
+                          {it.line ? `:${it.line}` : ''}
+                        </code>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+          <div className="review-done-block">
+            <div className="review-done-block-title">{t('done.sourceSnapshot')}</div>
+            <div className="review-done-source">
+              <code className="review-cluster-issue-path">{room.source.title}</code>
+              <span className="review-compare-empty">
+                {SOURCE_KIND_LABEL[room.source.kind] ? t(SOURCE_KIND_LABEL[room.source.kind]) : room.source.kind}
+              </span>
+            </div>
+          </div>
         </div>
       )}
-      {groups.map((g) => (
-        <div className="review-done-block" key={g.key}>
-          <div className="review-done-block-title">
-            {t(g.labelKey)} <span className="review-compare-stat-count">{g.items.length}</span>
-          </div>
-          {g.items.length === 0 ? (
-            <div className="review-compare-empty">{t('done.noneInGroup')}</div>
-          ) : (
-            <ul className="review-done-list">
-              {g.items.map((it) => (
-                <li key={`${it.agent}:${it.id}`}>
-                  <span className={`review-sev sev-${it.severity}`}>{SEVERITY_LABEL[it.severity] ?? it.severity}</span>
-                  <span>{it.title}</span>
-                  {it.path && (
-                    <code className="review-cluster-issue-path">
-                      {it.path}
-                      {it.line ? `:${it.line}` : ''}
-                    </code>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ))}
-      <div className="review-done-block">
-        <div className="review-done-block-title">{t('done.sourceSnapshot')}</div>
-        <div className="review-done-source">
-          <code className="review-cluster-issue-path">{room.source.title}</code>
-          <span className="review-compare-empty">{room.source.kind}</span>
-        </div>
-      </div>
     </div>
   )
 }
@@ -317,7 +398,9 @@ function FreshReviewSection({ room }: { room: ReviewRoomState }) {
               title={t('fresh.openChild')}
             >
               <span>→ {f.reviewerAgents.map(labelForAgent).join(', ')}</span>
-              <span className="review-cluster-issue-path">{f.reason}</span>
+              <span className="review-cluster-issue-path">
+                {FRESH_REASON_LABEL[f.reason] ? t(FRESH_REASON_LABEL[f.reason]) : f.reason}
+              </span>
               <span className="review-fresh-state">
                 {!r || !r.completed
                   ? t('fresh.pending')
@@ -332,7 +415,7 @@ function FreshReviewSection({ room }: { room: ReviewRoomState }) {
                   {r.newIssues.map((it) => (
                     <li key={`${f.childReviewRoomId}:${it.id}`}>
                       <span className={`review-sev sev-${it.severity}`}>
-                        {SEVERITY_LABEL[it.severity] ?? it.severity}
+                        {severityLabel(t, it.severity)}
                       </span>
                       <span>{it.title}</span>
                       {it.path && (
@@ -359,6 +442,8 @@ export function ReviewCompareView({
   onExtract,
   onFreshReview,
   onSetIssueStatus,
+  onFixIssue,
+  onDiscussIssue,
   busy,
   freshBusy,
 }: {
@@ -366,6 +451,8 @@ export function ReviewCompareView({
   onExtract: () => void
   onFreshReview?: () => void
   onSetIssueStatus?: (roundId: string, issueId: string, status: ReviewIssueStatus | null) => void
+  onFixIssue?: (issue: ReviewIssueDTO) => void
+  onDiscussIssue?: (issue: ReviewIssueDTO) => void
   busy?: boolean
   freshBusy?: boolean
 }) {
@@ -404,35 +491,12 @@ export function ReviewCompareView({
   )
   const clusters = useMemo(() => (set ? clusterIssues(set.issues) : []), [set])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [metaOpen, setMetaOpen] = useState(false)
 
   const runningReview = room.rounds.find((r) => r.kind === 'review' && r.status === 'running')
   if (reviewRounds.length === 0) {
-    if (runningReview) {
-      const started = new Date(runningReview.startedAt).getTime()
-      const minutes = Number.isFinite(started) ? Math.max(0, Math.round((Date.now() - started) / 60000)) : null
-      return (
-        <div className="review-compare in-progress">
-          <div className="review-compare-head">
-            <div className="review-compare-title">
-              <Icon name="wrench" size={13} />
-              <span>{t('compare.reviewRunning')}</span>
-            </div>
-            {minutes !== null && (
-              <span className="review-compare-empty">
-                {t('compare.startedAgo', {
-                  when: minutes < 1 ? t('compare.justNow') : t('compare.minutesAgo', { count: minutes }),
-                  mode: runningReview.mode,
-                  agents: runningReview.agents.map(labelForAgent).join(', '),
-                })}
-              </span>
-            )}
-          </div>
-          <div className="review-compare-empty">
-            {t('compare.runningHint')}
-          </div>
-        </div>
-      )
-    }
+    // 运行状态已在 workflow header 和轮次行展示。这里保持安静，避免同一状态连续出现三次。
+    if (runningReview) return null
     return (
       <div className="review-compare-empty">
         {t('compare.noRounds')}
@@ -466,7 +530,7 @@ export function ReviewCompareView({
       <div className="review-compare-head">
         <div className="review-compare-title">
           <Icon name="wrench" size={13} />
-          <span>Compare</span>
+          <span>{t('compare.title')}</span>
         </div>
         {reviewRounds.length > 1 && (
           <select
@@ -476,7 +540,10 @@ export function ReviewCompareView({
           >
             {reviewRounds.map((r, i) => (
               <option key={r.id} value={r.id}>
-                Round {i + 1} · {r.mode}
+                {t('compare.roundOption', {
+                  count: i + 1,
+                  mode: ROUND_MODE_LABEL[r.mode] ? t(ROUND_MODE_LABEL[r.mode]) : r.mode,
+                })}
               </option>
             ))}
           </select>
@@ -496,34 +563,35 @@ export function ReviewCompareView({
         )}
       </div>
 
-      <div className="review-compare-stats">
-        {agents.map((a) => (
-          <div className="review-compare-stat" key={a}>
-            <AgentIcon source={a} size={16} />
-            <span>{labelForAgent(a)}</span>
-            <span className="review-compare-stat-count">{perAgent.get(a)?.length ?? 0}</span>
+      <div className="review-compare-summary-line">
+        <div className="review-compare-stats">
+          {agents.map((a) => (
+            <div className="review-compare-stat" key={a}>
+              <AgentIcon source={a} size={16} />
+              <span>{labelForAgent(a)}</span>
+              <span className="review-compare-stat-count">{perAgent.get(a)?.length ?? 0}</span>
+            </div>
+          ))}
+          <div className="review-compare-stat">
+            <span>{t('compare.consensusStat')}</span>
+            <span className="review-compare-stat-count">{clusters.filter((c) => c.agents.size > 1).length}</span>
           </div>
-        ))}
-        <div className="review-compare-stat">
-          <span>{t('compare.consensusStat')}</span>
-          <span className="review-compare-stat-count">{clusters.filter((c) => c.agents.size > 1).length}</span>
         </div>
+        {room.statusSummary && room.statusSummary.total > 0 && (
+          <div className="review-status-summary">
+            {t('compare.statusSummary', {
+              fixed: room.statusSummary.fixed,
+              wontfix: room.statusSummary.wontfix,
+              open: room.statusSummary.open,
+              needsCheck: room.statusSummary.needsCheck,
+            })}
+          </div>
+        )}
       </div>
-
-      {room.statusSummary && room.statusSummary.total > 0 && (
-        <div className="review-status-summary">
-          {t('compare.statusSummary', {
-            fixed: room.statusSummary.fixed,
-            wontfix: room.statusSummary.wontfix,
-            open: room.statusSummary.open,
-            needsCheck: room.statusSummary.needsCheck,
-          })}
-        </div>
-      )}
 
       {set.recommendedNextStep && (
         <div className="review-compare-next">
-          <strong>{t('compare.nextStep')}</strong>&nbsp;{set.recommendedNextStep}
+          <strong>{t('compare.nextStep')}</strong>&nbsp;{recommendationLabel(t, set.recommendedNextStep)}
         </div>
       )}
 
@@ -554,13 +622,13 @@ export function ReviewCompareView({
                   }
                   aria-expanded={open}
                 >
-                  <span className={`review-sev sev-${c.worstSeverity}`}>{SEVERITY_LABEL[c.worstSeverity] ?? c.worstSeverity}</span>
+                  <span className={`review-sev sev-${c.worstSeverity}`}>{severityLabel(t, c.worstSeverity)}</span>
                   <span className="review-cluster-title">
                     {c.primaryTitle}
                     {latestOutcome && (
                       <span
                         className={`review-outcome sev-${latestOutcome.outcome} inline`}
-                        title={`${latestOutcome.round} ${latestOutcome.kind} · ${labelForAgent(latestOutcome.agent as AgentName)}`}
+                        title={`${latestOutcome.round} ${ROUND_KIND_LABEL[latestOutcome.kind] ? t(ROUND_KIND_LABEL[latestOutcome.kind]) : latestOutcome.kind} · ${labelForAgent(latestOutcome.agent as AgentName)}`}
                       >
                         {t(OUTCOME_LABEL[latestOutcome.outcome])}
                       </span>
@@ -593,7 +661,7 @@ export function ReviewCompareView({
                       <div className="review-cluster-trail">
                         {clusterOutcomes.map((o, i) => (
                           <span key={i} className="review-cluster-trail-item">
-                            {o.round} {o.kind} · {labelForAgent(o.agent as AgentName)}{' '}
+                            {o.round} {ROUND_KIND_LABEL[o.kind] ? t(ROUND_KIND_LABEL[o.kind]) : o.kind} · {labelForAgent(o.agent as AgentName)}{' '}
                             <span className={`review-outcome sev-${o.outcome}`}>{t(OUTCOME_LABEL[o.outcome])}</span>
                           </span>
                         ))}
@@ -604,7 +672,7 @@ export function ReviewCompareView({
                         <div className="review-cluster-issue-head">
                           <AgentIcon source={it.agent} size={14} />
                           <span className="review-cluster-issue-agent">{labelForAgent(it.agent)}</span>
-                          <span className={`review-sev sev-${it.severity}`}>{SEVERITY_LABEL[it.severity] ?? it.severity}</span>
+                          <span className={`review-sev sev-${it.severity}`}>{severityLabel(t, it.severity)}</span>
                           {it.path && (
                             <code className="review-cluster-issue-path">
                               {it.path}
@@ -621,6 +689,22 @@ export function ReviewCompareView({
                         </div>
                         <div className="review-cluster-issue-title">{it.title}</div>
                         {it.body && <div className="review-cluster-issue-body">{it.body}</div>}
+                        {(onFixIssue || onDiscussIssue) && (
+                          <div className="review-issue-actions">
+                            {onDiscussIssue && (
+                              <button type="button" className="review-issue-action" onClick={() => onDiscussIssue(it)}>
+                                <Icon name="users" size={12} />
+                                {t('issue.discuss')}
+                              </button>
+                            )}
+                            {onFixIssue && it.status !== 'fixed' && it.status !== 'wontfix' && (
+                              <button type="button" className="review-issue-action primary" onClick={() => onFixIssue(it)} disabled={busy}>
+                                <Icon name="wrench" size={12} />
+                                {t('issue.fixThis')}
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -642,24 +726,45 @@ export function ReviewCompareView({
 
       {(set.agreements.length > 0 || set.disagreements.length > 0) && (
         <div className="review-compare-meta">
-          {set.agreements.length > 0 && (
-            <div className="review-compare-meta-block">
-              <div className="review-compare-meta-title">Agreements</div>
-              <ul>
-                {set.agreements.map((a, i) => (
-                  <li key={i}>{a}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {set.disagreements.length > 0 && (
-            <div className="review-compare-meta-block">
-              <div className="review-compare-meta-title">Disagreements</div>
-              <ul>
-                {set.disagreements.map((d, i) => (
-                  <li key={i}>{d}</li>
-                ))}
-              </ul>
+          <button
+            type="button"
+            className="review-compare-meta-toggle"
+            onClick={() => setMetaOpen((open) => !open)}
+            aria-expanded={metaOpen}
+          >
+            <span>{t('compare.reviewNotes')}</span>
+            <span className="review-compare-meta-counts">
+              {t('compare.notesCount', {
+                agreements: set.agreements.length,
+                disagreements: set.disagreements.length,
+              })}
+            </span>
+            <span className={`review-compare-meta-caret ${metaOpen ? 'open' : ''}`}>
+              <Icon name="chevron-right" size={12} />
+            </span>
+          </button>
+          {metaOpen && (
+            <div className="review-compare-meta-content">
+              {set.agreements.length > 0 && (
+                <div className="review-compare-meta-block">
+                  <div className="review-compare-meta-title">{t('compare.agreements')}</div>
+                  <ul>
+                    {set.agreements.map((a, i) => (
+                      <li key={i}>{a}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {set.disagreements.length > 0 && (
+                <div className="review-compare-meta-block">
+                  <div className="review-compare-meta-title">{t('compare.disagreements')}</div>
+                  <ul>
+                    {set.disagreements.map((d, i) => (
+                      <li key={i}>{d}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </div>

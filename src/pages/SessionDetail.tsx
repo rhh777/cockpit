@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
+  cancelReviewRoom,
   extractReviewIssues,
   fetchChanges,
   fetchReviewRoom,
@@ -31,7 +32,8 @@ import {
 } from '../lib/sse'
 import { labelForAgent, sessionAgentOf } from '../lib/agents'
 import { useI18n, type MessageKey } from '../lib/i18n'
-import { sourceLabel, displayTitle } from '../lib/display'
+import { useEnabledAgents } from '../hooks/useEnabledAgents'
+import { sourceLabel, displayTitle, localizeReviewRoomTitle } from '../lib/display'
 import { buildTimeline, summarizeTools, type FilterKind, type TraceGroup } from '../lib/timeline'
 import type { AgentName, ApprovalRequest, ChatAttachment, EventEnvelope, RunPermissions, Source } from '../lib/types'
 import { EventTimeline } from '../components/EventTimeline'
@@ -160,7 +162,7 @@ function reviewRoomMeta(summary: SessionDetailDTO['summary'] | null): ReviewRoom
 }
 
 export function SessionDetail() {
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
   const { source, id } = useParams()
   const navigate = useNavigate()
   const { width: reviewWidth, onDragStart: onReviewDrag } = useResizable(
@@ -170,8 +172,17 @@ export function SessionDetail() {
     700,
     'right',
   )
+  const { width: reviewRoomWidth, onDragStart: onReviewRoomDrag } = useResizable(
+    'cockpit.reviewRoomWidth',
+    420,
+    320,
+    720,
+    'right',
+  )
   const [detail, setDetail] = useState<SessionDetailDTO | null>(null)
   const [reviewRoom, setReviewRoom] = useState<ReviewRoomState | null>(null)
+  const [reviewWorkflowOpen, setReviewWorkflowOpen] = useState(true)
+  const [composerDraft, setComposerDraft] = useState<{ text: string; nonce: number } | null>(null)
   const [extractingIssues, setExtractingIssues] = useState(false)
   const [freshReviewBusy, setFreshReviewBusy] = useState(false)
   const [events, setEvents] = useState<EventEnvelope[]>([])
@@ -1075,13 +1086,14 @@ export function SessionDetail() {
   )
 
   const handleReviewRoomStart = useCallback(
-    (opts?: { kind?: 'review' | 'fix' | 'verify'; mode?: 'parallel' | 'serial'; participants?: AgentName[] }) => {
+    (opts?: { kind?: 'review' | 'fix' | 'verify'; mode?: 'parallel' | 'serial'; participants?: AgentName[]; issueIds?: string[] }) => {
       if (!id) return
       setSendError(null)
       startReviewRoomRun(id, {
         mode: opts?.mode ?? 'parallel',
         kind: opts?.kind ?? 'review',
         participants: opts?.participants,
+        issueIds: opts?.issueIds,
       })
         .then(({ groupTurnId, mode, records, userEnvelope, turnStart }) => {
           appendEnvelopes([userEnvelope, ...(turnStart ? [turnStart] : [])])
@@ -1109,16 +1121,36 @@ export function SessionDetail() {
   )
 
   const handleCancelAll = useCallback(() => {
-    for (const stream of streamsRef.current) {
-      if (isServerRunClientId(stream.clientId)) cancelRun(stream.clientId).catch(() => {})
-    }
-    if (id && isGroupSource(source)) {
-      for (const clientId of abortsRef.current.keys()) {
-        if (isGroupTurnClientId(clientId)) cancelGroupTurn(id, clientId.slice('group_turn:'.length)).catch(() => {})
-      }
-    }
+    const active = [...streamsRef.current]
     for (const abort of abortsRef.current.values()) abort()
-  }, [source, id])
+    abortsRef.current.clear()
+    setStreams([])
+    setPendingApprovals([])
+
+    void (async () => {
+      try {
+        if (id && isGroupSource(source)) {
+          if (reviewRoom) {
+            const next = await cancelReviewRoom(id)
+            if (next) setReviewRoom(next)
+            return
+          }
+          // 并行与接力都按整轮取消。逐个 cancel run 会留下 ActiveGroupTurn,
+          // 整轮最终还可能被误记为 failed,且后续发送会被 already running 阻塞。
+          const turnIds = new Set(
+            active
+              .map((stream) => stream.rootTurnId || stream.turnId)
+              .filter((turnId): turnId is string => Boolean(turnId)),
+          )
+          await Promise.all([...turnIds].map((turnId) => cancelGroupTurn(id, turnId)))
+          return
+        }
+        await Promise.all(active.filter((stream) => isServerRunClientId(stream.clientId)).map((stream) => cancelRun(stream.clientId)))
+      } catch (e) {
+        setSendError(t('detail.cancelFailed', { error: String((e as Error)?.message ?? e) }))
+      }
+    })()
+  }, [source, id, reviewRoom, t])
 
   const handleCancelOne = useCallback((clientId: string) => {
     if (isServerRunClientId(clientId)) cancelRun(clientId).catch(() => {})
@@ -1194,6 +1226,8 @@ export function SessionDetail() {
   const [showFiles, setShowFiles] = useState(false)
   const [viewMode, setViewMode] = useState<'narrative' | 'detail'>('detail')
 
+  useEffect(() => setReviewWorkflowOpen(true), [source, id])
+
   if (loading)
     return (
       <div className="detail">
@@ -1211,8 +1245,10 @@ export function SessionDetail() {
   const s = detail.summary
   const reviewMeta = reviewRoomMeta(s)
   const isReviewRoom = groupMode && reviewMeta != null
+  const visibleSessionTitle = isReviewRoom ? localizeReviewRoomTitle(s.title, locale) : s.title
   const reviewStarted = isReviewRoom && (reviewRoom?.rounds.length ?? 0) > 0
   const reviewPhase = reviewRoom?.phase ?? (reviewStarted ? 'review' : 'draft')
+  const reviewWorkflowExpanded = reviewWorkflowOpen
   const hasMainStreams = groupMode
     ? streams.length > 0
     : streams.some((s) => s.agent === sessionAgentOf(source))
@@ -1221,7 +1257,7 @@ export function SessionDetail() {
     (partitioned.threads.length > 0 || streams.some((s) => s.agent !== sessionAgentOf(source)))
 
   return (
-    <div className={`detail ${hasReview ? 'detail-with-review' : ''}`}>
+    <div className={`detail ${hasReview || (isReviewRoom && reviewWorkflowExpanded) ? 'detail-with-review' : ''}`}>
       <div className="detail-main">
         <div className="detail-head">
           <div className="detail-title">
@@ -1231,8 +1267,8 @@ export function SessionDetail() {
             >
               <AgentIcon source={s.source} size={30} />
             </span>
-            <span className="detail-title-text" title={`${s.title}${s.cwd ? `\n${s.cwd}` : ''}`}>
-              {displayTitle(s.title)}
+            <span className="detail-title-text" title={`${visibleSessionTitle}${s.cwd ? `\n${s.cwd}` : ''}`}>
+              {displayTitle(visibleSessionTitle, 60, locale)}
             </span>
             <span
               className="detail-event-count"
@@ -1281,57 +1317,26 @@ export function SessionDetail() {
                 cwd={s.cwd}
               />
             )}
+            {isReviewRoom && (
+              <button
+                type="button"
+                className={`review-workbench-toggle ${reviewWorkflowExpanded ? 'active' : ''}`}
+                onClick={() => setReviewWorkflowOpen((open) => !open)}
+                aria-expanded={reviewWorkflowExpanded}
+                title={reviewWorkflowExpanded ? t('reviewRoom.hideWorkbench') : t('reviewRoom.showWorkbench')}
+              >
+                <Icon name="wrench" size={13} />
+                <span>{t('reviewRoom.workbench')}</span>
+                {reviewRoom?.statusSummary && (
+                  <span className="review-workbench-count">
+                    {reviewRoom.statusSummary.open + reviewRoom.statusSummary.needsCheck}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
         </div>
         <WarningsBanner warnings={detail.warnings} />
-        {isReviewRoom && (
-          <>
-            <ReviewRoomPanel
-              phase={reviewPhase}
-              sourceKind={reviewMeta?.sourceKind}
-              parentReviewRoomId={reviewMeta?.parentReviewRoomId}
-              room={reviewRoom}
-              busy={streams.length > 0}
-              onStart={handleReviewRoomStart}
-              onFinish={handleReviewRoomFinish}
-              onManualFix={handleManualFix}
-            />
-            {reviewRoom && <SourceFreshnessBanner room={reviewRoom} />}
-            {reviewRoom && (
-              <ReviewCompareView
-                room={reviewRoom}
-                busy={extractingIssues}
-                freshBusy={freshReviewBusy}
-                onSetIssueStatus={handleSetIssueStatus}
-                onExtract={async () => {
-                  if (!id) return
-                  setExtractingIssues(true)
-                  try {
-                    const next = await extractReviewIssues(id, { force: true })
-                    if (next) setReviewRoom(next)
-                  } catch (e) {
-                    setSendError(t('detail.extractFailed', { error: String(e) }))
-                  } finally {
-                    setExtractingIssues(false)
-                  }
-                }}
-                onFreshReview={async () => {
-                  if (!id) return
-                  setFreshReviewBusy(true)
-                  try {
-                    const created = await startFreshReview(id, { reason: 'user-requested' })
-                    if (created.startError) setSendError(t('detail.freshReviewStartFailed', { error: created.startError }))
-                    navigate(`/cockpit/${encodeURIComponent(created.groupThreadId)}`)
-                  } catch (e) {
-                    setSendError(t('detail.freshReviewFailed', { error: String(e) }))
-                  } finally {
-                    setFreshReviewBusy(false)
-                  }
-                }}
-              />
-            )}
-          </>
-        )}
         <ToolActivityBar
           activity={activity}
           filter={filter}
@@ -1450,10 +1455,90 @@ export function SessionDetail() {
               cwd={s.cwd}
               codexAcceleratedMode={codexAcceleratedMode}
               onCodexAcceleratedModeChange={setCodexAcceleratedMode}
+              externalDraft={composerDraft}
             />
           </div>
         </div>
       </div>
+      {isReviewRoom && reviewWorkflowExpanded && (
+        <Splitter side="right" onDragStart={onReviewRoomDrag} />
+      )}
+      {isReviewRoom && reviewWorkflowExpanded && (
+        <aside className="review-workbench" style={{ width: reviewRoomWidth }} aria-label={t('reviewRoom.workflow')}>
+          <div className="review-workbench-head">
+            <div>
+              <span className="review-workbench-kicker">{t('newChat.reviewRoom')}</span>
+              <strong>{t('reviewRoom.workbench')}</strong>
+            </div>
+            <button
+              type="button"
+              className="head-icon-btn"
+              onClick={() => setReviewWorkflowOpen(false)}
+              aria-label={t('reviewRoom.hideWorkbench')}
+            >
+              <Icon name="close" size={14} />
+            </button>
+          </div>
+          <div className="review-workbench-scroll">
+            {reviewStarted && reviewRoom && (
+              <ReviewWorkflowSummary room={reviewRoom} expanded onToggle={() => setReviewWorkflowOpen(false)} />
+            )}
+            <ReviewRoomPanel
+              phase={reviewPhase}
+              sourceKind={reviewMeta?.sourceKind}
+              parentReviewRoomId={reviewMeta?.parentReviewRoomId}
+              room={reviewRoom}
+              busy={streams.length > 0}
+              onStart={handleReviewRoomStart}
+              onFinish={handleReviewRoomFinish}
+              onManualFix={handleManualFix}
+            />
+            {reviewRoom && <SourceFreshnessBanner room={reviewRoom} />}
+            {reviewRoom && (
+              <ReviewCompareView
+                room={reviewRoom}
+                busy={extractingIssues}
+                freshBusy={freshReviewBusy}
+                onSetIssueStatus={handleSetIssueStatus}
+                onFixIssue={(issue) => handleReviewRoomStart({ kind: 'fix', mode: 'parallel', issueIds: [issue.id] })}
+                onDiscussIssue={(issue) => {
+                  const ref = issue.path ? `${issue.path}${issue.line ? `:${issue.line}` : ''}` : ''
+                  const text = locale.startsWith('zh')
+                    ? `请围绕评审问题 ${issue.id} 单独讨论：${issue.title}${ref ? `（${ref}）` : ''}\n\n请先分析问题是否成立、影响范围和可选处理方式，不要直接修改文件。`
+                    : `Discuss review issue ${issue.id} separately: ${issue.title}${ref ? ` (${ref})` : ''}\n\nFirst assess whether it is valid, its impact, and possible approaches. Do not modify files yet.`
+                  setComposerDraft({ text, nonce: Date.now() })
+                  setReviewWorkflowOpen(false)
+                }}
+                onExtract={async () => {
+                  if (!id) return
+                  setExtractingIssues(true)
+                  try {
+                    const next = await extractReviewIssues(id, { force: true })
+                    if (next) setReviewRoom(next)
+                  } catch (e) {
+                    setSendError(t('detail.extractFailed', { error: String(e) }))
+                  } finally {
+                    setExtractingIssues(false)
+                  }
+                }}
+                onFreshReview={async () => {
+                  if (!id) return
+                  setFreshReviewBusy(true)
+                  try {
+                    const created = await startFreshReview(id, { reason: 'user-requested' })
+                    if (created.startError) setSendError(t('detail.freshReviewStartFailed', { error: created.startError }))
+                    navigate(`/cockpit/${encodeURIComponent(created.groupThreadId)}`)
+                  } catch (e) {
+                    setSendError(t('detail.freshReviewFailed', { error: String(e) }))
+                  } finally {
+                    setFreshReviewBusy(false)
+                  }
+                }}
+              />
+            )}
+          </div>
+        </aside>
+      )}
       {hasReview && (
         <Splitter side="right" onDragStart={onReviewDrag} />
       )}
@@ -1489,23 +1574,130 @@ export function SessionDetail() {
   )
 }
 
-const ROUND_KIND_LABEL: Record<string, string> = {
-  review: 'Review',
-  fix: 'Fix',
-  verify: 'Verify',
-  'fresh-review': 'Fresh review',
+type ReviewTranslator = ReturnType<typeof useI18n>['t']
+
+const ROUND_KIND_KEY: Record<string, MessageKey> = {
+  review: 'reviewRoom.kindReview',
+  fix: 'reviewRoom.kindFix',
+  verify: 'reviewRoom.kindVerify',
+  'fresh-review': 'reviewRoom.kindFreshReview',
 }
 
-function relativeTs(iso: string): string {
+const ROUND_MODE_KEY: Record<string, MessageKey> = {
+  parallel: 'reviewRoom.modeParallel',
+  serial: 'reviewRoom.modeSerial',
+  single: 'reviewRoom.modeSingle',
+  manual: 'reviewRoom.modeManual',
+}
+
+const ROUND_STATUS_KEY: Record<string, MessageKey> = {
+  running: 'reviewRoom.statusRunning',
+  completed: 'reviewRoom.statusCompleted',
+  failed: 'reviewRoom.statusFailed',
+  aborted: 'reviewRoom.statusAborted',
+  'awaiting-user': 'reviewRoom.statusAwaitingUser',
+}
+
+const REVIEW_PHASE_KEY: Record<string, MessageKey> = {
+  draft: 'reviewRoom.phaseDraft',
+  review: 'reviewRoom.phaseReview',
+  compare: 'reviewRoom.phaseCompare',
+  fix: 'reviewRoom.phaseFix',
+  verify: 'reviewRoom.phaseVerify',
+  done: 'reviewRoom.phaseDone',
+}
+
+const REVIEW_SOURCE_KEY: Record<string, MessageKey> = {
+  'native-session': 'reviewRoom.sourceNativeSession',
+  'cockpit-followup': 'reviewRoom.sourceCockpitFollowup',
+  'group-thread': 'reviewRoom.sourceGroupThread',
+  repository: 'reviewRoom.sourceRepository',
+  directory: 'reviewRoom.sourceDirectory',
+  files: 'reviewRoom.sourceFiles',
+  document: 'reviewRoom.sourceDocument',
+  freeform: 'reviewRoom.sourceFreeform',
+}
+
+const RECOMMENDATION_KEY: Record<string, MessageKey> = {
+  stop: 'reviewRoom.recommendStop',
+  fix: 'reviewRoom.recommendFix',
+  verify: 'reviewRoom.recommendVerify',
+  discuss: 'reviewRoom.recommendDiscuss',
+}
+
+function reviewLabel(t: ReviewTranslator, labels: Record<string, MessageKey>, value: string): string {
+  const key = labels[value]
+  return key ? t(key) : value
+}
+
+function recommendationLabel(t: ReviewTranslator, value: string): string {
+  const normalized = value.trim().toLowerCase()
+  return reviewLabel(t, RECOMMENDATION_KEY, normalized)
+}
+
+function relativeTs(iso: string, locale: string): string {
   const t = new Date(iso).getTime()
   if (!Number.isFinite(t)) return ''
   const diff = Math.max(0, Date.now() - t)
   const min = Math.floor(diff / 60000)
-  if (min < 1) return 'just now'
-  if (min < 60) return `${min}m ago`
+  const formatter = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' })
+  if (min < 1) return formatter.format(0, 'minute')
+  if (min < 60) return formatter.format(-min, 'minute')
   const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr}h ago`
-  return `${Math.floor(hr / 24)}d ago`
+  if (hr < 24) return formatter.format(-hr, 'hour')
+  return formatter.format(-Math.floor(hr / 24), 'day')
+}
+
+function ReviewWorkflowSummary({
+  room,
+  expanded,
+  onToggle,
+}: {
+  room: ReviewRoomState
+  expanded: boolean
+  onToggle: () => void
+}) {
+  const { t } = useI18n()
+  return (
+    <button
+      type="button"
+      className={`review-workflow-summary ${expanded ? 'expanded' : ''}`}
+      onClick={onToggle}
+      aria-expanded={expanded}
+    >
+      <span className="review-workflow-summary-head">
+        <span className="review-workflow-summary-title">
+          <Icon name="sparkle" size={13} />
+          {t('reviewRoom.overview')}
+        </span>
+        <span className="review-workflow-summary-count">
+          {t('reviewRoom.roundTotal', { count: room.rounds.length })}
+        </span>
+      </span>
+      <span className="review-workflow-summary-rounds">
+        {room.rounds.map((round, index) => {
+          const issueSet = room.issueSets.find((set) => set.roundId === round.id)
+          const suggestion = issueSet?.recommendedNextStep?.trim()
+          return (
+            <span className="review-workflow-summary-round" key={round.id}>
+              <span className="review-workflow-summary-kind">
+                #{index + 1} {reviewLabel(t, ROUND_KIND_KEY, round.kind)}
+              </span>
+              <span className="review-workflow-summary-suggestion">
+                {suggestion
+                  ? t('reviewRoom.roundSuggestion', { suggestion: recommendationLabel(t, suggestion) })
+                  : reviewLabel(t, ROUND_STATUS_KEY, round.status)}
+              </span>
+            </span>
+          )
+        })}
+      </span>
+      <span className="review-workflow-summary-action">
+        {expanded ? t('reviewRoom.hideDetails') : t('reviewRoom.showDetails')}
+        <span className="review-workflow-summary-caret"><Icon name="chevron-right" size={12} /></span>
+      </span>
+    </button>
+  )
 }
 
 function ReviewRoomPanel({
@@ -1523,11 +1715,12 @@ function ReviewRoomPanel({
   parentReviewRoomId?: string
   room: ReviewRoomState | null
   busy: boolean
-  onStart: (opts?: { kind?: 'review' | 'fix' | 'verify'; mode?: 'parallel' | 'serial'; participants?: import('../lib/types').AgentName[] }) => void
+  onStart: (opts?: { kind?: 'review' | 'fix' | 'verify'; mode?: 'parallel' | 'serial'; participants?: import('../lib/types').AgentName[]; issueIds?: string[] }) => void
   onFinish: (done: boolean, conclusion?: string) => void
   onManualFix: (active: boolean) => void
 }) {
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
+  const enabledAgents = useEnabledAgents()
   const rounds = room?.rounds ?? []
   const started = rounds.length > 0
   const anyRunning = rounds.some((r) => r.status === 'running')
@@ -1539,7 +1732,12 @@ function ReviewRoomPanel({
   // 不在前端复制那套规则,避免两处逻辑漂移。
   const [fixer, setFixer] = useState<AgentName | 'auto'>('auto')
   const [doneDialogOpen, setDoneDialogOpen] = useState(false)
+  const [roundSetupOpen, setRoundSetupOpen] = useState(false)
   const participants = room?.participants ?? (['claude', 'codex'] as AgentName[])
+  const enabledParticipants = useMemo(
+    () => participants.filter((agent) => enabledAgents.includes(agent)),
+    [participants, enabledAgents],
+  )
   const isDone = room?.phase === 'done'
   const summary = room?.statusSummary
   const canFinish = !anyRunning && (room?.rounds.length ?? 0) > 0
@@ -1549,6 +1747,9 @@ function ReviewRoomPanel({
     if (last.status === 'running') return
     setNextKind(last.kind === 'review' ? 'fix' : last.kind === 'fix' ? 'verify' : 'review')
   }, [started, rounds])
+  useEffect(() => {
+    if (fixer !== 'auto' && !enabledParticipants.includes(fixer)) setFixer('auto')
+  }, [fixer, enabledParticipants])
 
   return (
     <>
@@ -1563,9 +1764,14 @@ function ReviewRoomPanel({
               agents: (room?.participants ?? ['claude', 'codex']).map(labelForAgent).join(' × '),
             })}
           </span>
+          {!started && room?.goal && (
+            <span className="review-room-brief" title={room.goal}>
+              {room.goal}
+            </span>
+          )}
           <span className="review-room-meta">
-            {sourceKind ? `${sourceKind} · ` : ''}
-            {phase}
+            {sourceKind ? `${reviewLabel(t, REVIEW_SOURCE_KEY, sourceKind)} · ` : ''}
+            {reviewLabel(t, REVIEW_PHASE_KEY, phase)}
             {rounds.length ? t('reviewRoom.roundCount', { count: rounds.length }) : ''}
             {manualFixPending && <> · <strong>{t('manualFix.inProgress')}</strong></>}
             {parentReviewRoomId && (
@@ -1589,10 +1795,15 @@ function ReviewRoomPanel({
               onStart({
                 kind: nextKind,
                 mode: nextKind === 'fix' ? 'parallel' : nextMode,
-                participants: nextKind === 'fix' && fixer !== 'auto' ? [fixer] : undefined,
+                participants:
+                  nextKind === 'fix'
+                    ? fixer !== 'auto'
+                      ? [fixer]
+                      : undefined
+                    : enabledParticipants,
               })
             }
-            disabled={busy || anyRunning}
+            disabled={busy || anyRunning || enabledParticipants.length === 0}
             title={
               anyRunning
                 ? t('reviewRoom.roundRunning')
@@ -1601,7 +1812,7 @@ function ReviewRoomPanel({
                       fixer: fixer === 'auto' ? t('reviewRoom.autoFixer') : labelForAgent(fixer),
                     })
                   : t('reviewRoom.startRoundTitle', {
-                      kind: ROUND_KIND_LABEL[nextKind],
+                      kind: reviewLabel(t, ROUND_KIND_KEY, nextKind),
                       mode: nextMode === 'serial' ? t('newChat.serial') : t('newChat.parallel'),
                     })
             }
@@ -1610,14 +1821,14 @@ function ReviewRoomPanel({
             {anyRunning
               ? t('reviewRoom.inProgress')
               : started
-              ? t('reviewRoom.startKind', { kind: ROUND_KIND_LABEL[nextKind] })
-              : 'Start Review'}
+              ? t('reviewRoom.startKind', { kind: reviewLabel(t, ROUND_KIND_KEY, nextKind) })
+              : t('reviewRoom.start')}
           </button>
           {manualFixPending && (
             <button
               className="review-room-secondary is-ready"
-              onClick={() => onStart({ kind: 'verify', mode: 'parallel' })}
-              disabled={busy || anyRunning}
+              onClick={() => onStart({ kind: 'verify', mode: 'parallel', participants: enabledParticipants })}
+              disabled={busy || anyRunning || enabledParticipants.length === 0}
               title={t('manualFix.verifyTitle')}
             >
               <Icon name="check" size={14} />
@@ -1666,9 +1877,24 @@ function ReviewRoomPanel({
         <div className="review-rounds-head">
           <div className="review-rounds-heading">
             <span className="review-rounds-title">{t('reviewRoom.rounds')}</span>
-            <span>{t('reviewRoom.nextRound')}</span>
+            <span>
+              {rounds.length
+                ? t('reviewRoom.latestRound', { count: rounds.length })
+                : t('reviewRoom.nextRound')}
+            </span>
           </div>
-          <div className="review-rounds-controls">
+          {started && (
+            <button
+              type="button"
+              className={`review-round-setup-toggle ${roundSetupOpen ? 'active' : ''}`}
+              onClick={() => setRoundSetupOpen((open) => !open)}
+              aria-expanded={roundSetupOpen}
+            >
+              {t('reviewRoom.adjustNext', { kind: reviewLabel(t, ROUND_KIND_KEY, nextKind) })}
+              <span className="review-round-setup-caret"><Icon name="chevron-right" size={12} /></span>
+            </button>
+          )}
+          {(!started || roundSetupOpen) && <div className="review-rounds-controls">
             <div className="review-kind-row review-segmented" role="group" aria-label={t('reviewRoom.nextRound')}>
               {(['review', 'fix', 'verify'] as const).map((k) => (
                 <button
@@ -1676,9 +1902,10 @@ function ReviewRoomPanel({
                   type="button"
                   className={`review-kind-item ${nextKind === k ? 'active' : ''}`}
                   onClick={() => setNextKind(k)}
+                  disabled={anyRunning}
                   aria-pressed={nextKind === k}
                 >
-                  {ROUND_KIND_LABEL[k]}
+                  {reviewLabel(t, ROUND_KIND_KEY, k)}
                 </button>
               ))}
             </div>
@@ -1688,12 +1915,13 @@ function ReviewRoomPanel({
                 <span className="review-control-label" title={t('reviewRoom.singleWriterLabel')}>
                   {t('reviewRoom.singleWriter')}
                 </span>
-                {(['auto', ...participants] as const).map((f) => (
+                {(['auto', ...enabledParticipants] as const).map((f) => (
                   <button
                     key={f}
                     type="button"
                     className={`review-kind-item ${fixer === f ? 'active' : ''}`}
                     onClick={() => setFixer(f as AgentName | 'auto')}
+                    disabled={anyRunning}
                     aria-pressed={fixer === f}
                     title={
                       f === 'auto'
@@ -1713,6 +1941,7 @@ function ReviewRoomPanel({
                     type="button"
                     className={`review-kind-item ${nextMode === m ? 'active' : ''}`}
                     onClick={() => setNextMode(m)}
+                    disabled={anyRunning || (m === 'serial' && enabledParticipants.length < 2)}
                     aria-pressed={nextMode === m}
                   >
                     {m === 'parallel' ? t('newChat.parallel') : t('newChat.serial')}
@@ -1720,7 +1949,7 @@ function ReviewRoomPanel({
                 ))}
               </div>
             )}
-          </div>
+          </div>}
         </div>
         {rounds.length === 0 ? (
           <div className="review-round-row" style={{ gridTemplateColumns: '1fr' }}>
@@ -1734,15 +1963,15 @@ function ReviewRoomPanel({
           rounds.map((r, idx) => (
             <div className="review-round-row" key={r.id}>
               <span className={`review-round-status ${r.status}`}>
-                {r.status === 'awaiting-user' ? t('manualFix.awaiting') : r.status}
+                {reviewLabel(t, ROUND_STATUS_KEY, r.status)}
               </span>
               <span className="review-round-agents">
                 #{idx + 1} ·{' '}
                 {r.mode === 'manual'
                   ? t('manualFix.round')
-                  : `${ROUND_KIND_LABEL[r.kind] ?? r.kind} · ${r.mode} · ${r.agents.map(labelForAgent).join(', ')}`}
+                  : `${reviewLabel(t, ROUND_KIND_KEY, r.kind)} · ${reviewLabel(t, ROUND_MODE_KEY, r.mode)} · ${r.agents.map(labelForAgent).join(', ')}`}
               </span>
-              <span className="review-round-agents">{relativeTs(r.startedAt)}</span>
+              <span className="review-round-agents">{relativeTs(r.startedAt, locale)}</span>
             </div>
           ))
         )}

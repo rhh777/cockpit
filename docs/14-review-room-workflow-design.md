@@ -412,6 +412,15 @@ Right or collapsible:
 
 不要把它做成营销式 landing page。第一屏就是可操作工作台。
 
+**实现记录(2026-08-01)**:桌面端采用「主时间线 + 右侧评审工作台」布局。工作台可关闭、可拖拽宽度,
+窄屏降级为右侧覆盖抽屉;详情头只保留带未处理数量的轻量入口,不再把完整 workflow 堆在时间线上方。
+Issue 延续 GitHub issue 的渐进展开语言:每条可单独改状态、准备讨论草稿,或只把该 issueId 交给单写者 fix 轮。
+讨论动作只预填群聊 composer,不自动发送;修复动作继续复用既有单 writer 约束。
+
+取消 Review Room 工作必须按整个 `groupTurnId` 处理,不能只逐个断开或取消 member run。服务端先标记
+ActiveGroupTurn aborted 并 abort 全部成员,同时把 review-state 中所有 running 轮次持久化为 aborted;
+前端收到用户取消动作后立即清理本地 stream / approval 投影,不得因主动断开 SSE 而遗留永久 spinner。
+
 ### Session 详情页入口
 
 原生 session 详情页的 actions 中增加:
@@ -520,6 +529,10 @@ Review Room prompt 分为三层:
 1. Source context:session 摘要、repo/file/document 摘要、附件说明。
 2. Workflow instruction:当前阶段、agent 角色、输出结构。
 3. User goal:用户真实目标。
+
+创建房间时记录 `promptLocale`。中文 UI 创建的 Review Room 使用中文 workflow instruction、字段说明和
+默认 fresh-review 目标;JSON 协议键与枚举值保持英文,避免破坏确定性解析。旧房间没有该字段时,可按 goal
+是否包含中文做兼容推断,但不回写或翻译既有 transcript。
 
 Review 阶段要求每个 agent 输出:
 

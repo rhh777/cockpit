@@ -164,7 +164,8 @@ export async function attachRunStream(
 }
 
 export async function cancelRun(runId: string): Promise<void> {
-  await fetch(`/api/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' })
+  const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' })
+  if (!res.ok) throw new Error(`cancel run ${res.status}`)
 }
 
 export async function startNativeResumeRun(
@@ -242,6 +243,7 @@ export async function startReviewRoomRun(
     permissions?: RunPermissions
     kind?: 'review' | 'fix' | 'verify'
     participants?: string[]
+    issueIds?: string[]
   } = {},
 ): Promise<{
   groupTurnId: string
@@ -282,7 +284,7 @@ export async function attachGroupTurnStream(
 }
 
 export async function cancelGroupTurn(id: string, groupTurnId: string): Promise<void> {
-  await fetch(
+  const res = await fetch(
     `/api/group-threads/${encodeURIComponent(id)}/turns/${encodeURIComponent(groupTurnId)}/cancel`,
     {
       method: 'POST',
@@ -290,6 +292,7 @@ export async function cancelGroupTurn(id: string, groupTurnId: string): Promise<
       body: JSON.stringify({}),
     },
   )
+  if (!res.ok) throw new Error(`cancel group turn ${res.status}`)
 }
 
 export type SessionStreamMessage =

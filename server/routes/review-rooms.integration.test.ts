@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createServer, type Server } from 'node:http'
 import type { NormalizedEvent } from '../loaders/types'
+import type { AgentRunInput, ReviewAgent } from '../adapters/types'
 
 const testHome = await fsp.mkdtemp(path.join(os.tmpdir(), 'cockpit-review-routes-'))
 process.env.HOME = testHome
@@ -16,14 +17,15 @@ const { runRegistry } = await import('../runs/run-registry')
 const { registerAgent, resolveAgent } = await import('../adapters/registry')
 const realClaude = resolveAgent('claude')
 
-registerAgent({
+const fastClaude: ReviewAgent = {
   name: 'claude',
   displayName: 'Claude',
   async isAvailable() { return true },
   async *run(): AsyncGenerator<NormalizedEvent> {
     yield { type: 'assistant_text', text: 'No new findings.', ts: new Date().toISOString(), agent: 'claude' }
   },
-})
+}
+registerAgent(fastClaude)
 
 let server: Server
 let baseUrl = ''
@@ -78,8 +80,11 @@ test('Review Room route validates allowed roots and leaves native files untouche
     goal: 'Review safely',
     participants: ['claude', 'codex'],
     startReview: false,
+    promptLocale: 'zh-CN',
   })
   assert.equal(created.status, 201)
+  const createdBody = await created.json() as { state: { title: string } }
+  assert.equal(createdBody.state.title, '仓库评审：repo')
   assert.equal(await fsp.readFile(native, 'utf8'), 'native-history-must-not-change\n')
 
   const rejected = await post('/api/review-rooms', {
@@ -115,6 +120,7 @@ test('fresh review creates a child room and a handoff for group-backed source', 
     source: { kind: 'group-thread', groupThreadId: group.id },
     goal: 'Review the source group',
     startReview: false,
+    promptLocale: 'zh-CN',
   })
   const parent = await parentResponse.json() as { reviewRoomId: string }
   const freshResponse = await post(`/api/review-rooms/${parent.reviewRoomId}/fresh-review`, {
@@ -123,6 +129,10 @@ test('fresh review creates a child room and a handoff for group-backed source', 
   assert.equal(freshResponse.status, 201)
   const fresh = await freshResponse.json() as { childReviewRoomId: string }
   assert.ok(fresh.childReviewRoomId)
+  const childDetail = await (await request(`/api/review-rooms/${fresh.childReviewRoomId}`)).json() as {
+    state: { title: string }
+  }
+  assert.match(childDetail.state.title, /^独立复核 · /)
 
   const entries = await fsp.readdir(COCKPIT_HANDOFFS_ROOT)
   assert.ok(entries.length >= 1)
@@ -131,4 +141,45 @@ test('fresh review creates a child room and a handoff for group-backed source', 
   }
   assert.equal(parentDetail.review.freshReviews[0]?.childReviewRoomId, fresh.childReviewRoomId)
   assert.ok(parentDetail.review.freshReviews[0]?.handoffId)
+})
+
+test('cancel Review Room aborts the whole running round and persists terminal state', async () => {
+  const slowClaude: ReviewAgent = {
+    name: 'claude',
+    displayName: 'Claude',
+    async isAvailable() { return true },
+    async *run(input: AgentRunInput): AsyncGenerator<NormalizedEvent> {
+      await new Promise<void>((resolve) => {
+        if (input.signal.aborted) return resolve()
+        input.signal.addEventListener('abort', () => resolve(), { once: true })
+      })
+      throw new Error('aborted')
+    },
+  }
+  registerAgent(slowClaude)
+  try {
+    const created = await post('/api/review-rooms', {
+      source: { kind: 'freeform', freeformText: 'cancel test' },
+      goal: 'Review until canceled',
+      participants: ['claude'],
+      startReview: false,
+    })
+    const room = await created.json() as { reviewRoomId: string }
+    const started = await post(`/api/review-rooms/${room.reviewRoomId}/review`, {
+      participants: ['claude'],
+    })
+    assert.equal(started.status, 202)
+
+    const canceled = await post(`/api/review-rooms/${room.reviewRoomId}/cancel`, {})
+    assert.equal(canceled.status, 202)
+    const body = await canceled.json() as {
+      canceled: boolean
+      review: { rounds: { status: string; completedAt?: string }[] }
+    }
+    assert.equal(body.canceled, true)
+    assert.equal(body.review.rounds[0]?.status, 'aborted')
+    assert.ok(body.review.rounds[0]?.completedAt)
+  } finally {
+    registerAgent(fastClaude)
+  }
 })

@@ -113,6 +113,8 @@ export interface ReviewRoomDiskState {
   source: ReviewRoomSource
   goal: string
   preset: string | null
+  /** Agent workflow prompt language captured when the room is created. */
+  promptLocale?: 'en' | 'zh-CN'
   phase: ReviewPhase
   participants: AgentName[]
   rounds: ReviewRound[]
@@ -175,6 +177,7 @@ export const reviewRoomStore = {
     source: ReviewRoomSource
     goal: string
     preset?: string | null
+    promptLocale?: 'en' | 'zh-CN'
     participants: AgentName[]
     phase?: ReviewPhase
   }): Promise<ReviewRoomDiskState> {
@@ -187,6 +190,7 @@ export const reviewRoomStore = {
         source: input.source,
         goal: input.goal,
         preset: input.preset ?? null,
+        promptLocale: input.promptLocale,
         phase: input.phase ?? 'draft',
         participants: [...new Set(input.participants)],
         rounds: [],
@@ -214,6 +218,25 @@ export const reviewRoomStore = {
           r.id === roundId ? { ...r, status, completedAt: r.completedAt ?? new Date().toISOString() } : r,
         ),
         updatedAt: new Date().toISOString(),
+      }
+      await writeState(next)
+      return next
+    })
+  },
+
+  /** 用户取消当前 Review Room 工作时，立即持久化轮次终态；agent 的异步收尾可随后幂等回写。 */
+  async abortRunningRounds(groupThreadId: string): Promise<ReviewRoomDiskState | null> {
+    return enqueue(groupThreadId, async () => {
+      const current = await this.read(groupThreadId)
+      if (!current) return null
+      if (!current.rounds.some((round) => round.status === 'running')) return current
+      const now = new Date().toISOString()
+      const next: ReviewRoomDiskState = {
+        ...current,
+        rounds: current.rounds.map((round) =>
+          round.status === 'running' ? { ...round, status: 'aborted', completedAt: now } : round,
+        ),
+        updatedAt: now,
       }
       await writeState(next)
       return next

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { AgentModelOptionDTO, SettingsDiagnostics } from '../lib/api'
 import { fetchAgentModels, fetchSettingsDiagnostics } from '../lib/api'
-import { labelForAgent } from '../lib/agents'
+import { AGENT_OPTIONS, labelForAgent } from '../lib/agents'
 import type { AgentName } from '../lib/types'
 import { AgentPicker } from './AgentPicker'
+import { AgentIcon } from './AgentIcon'
 import { Icon } from './Icon'
 import {
   applyThemePreference,
@@ -12,12 +13,14 @@ import {
   readAutoRefreshPreference,
   readCliSelection,
   readDefaultAgent,
+  readEnabledAgents,
   readDefaultSourceFilter,
   readThemePreference,
   resetLayoutPreferences,
   setAutoRefreshPreference,
   setCliSelection,
   setDefaultAgent,
+  setEnabledAgents,
   setDefaultSourceFilter,
   setFontSizePreference,
   setThemePreference,
@@ -25,6 +28,7 @@ import {
   type FontSizePreference,
   type SourceFilterPreference,
   type ThemePreference,
+  PREFERENCES_CHANGED_EVENT,
 } from '../lib/preferences'
 import { useI18n, type LocalePreference } from '../lib/i18n'
 
@@ -107,6 +111,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const [theme, setTheme] = useState<ThemePreference>(() => readThemePreference())
   const [fontSize, setFontSize] = useState<FontSizePreference>(() => readFontSizePreference())
   const [defaultAgent, setAgent] = useState<AgentName>(() => readDefaultAgent())
+  const [enabledAgents, setEnabledAgentsState] = useState<AgentName[]>(() => readEnabledAgents())
   const [sourceFilter, setSourceFilter] = useState<SourceFilterPreference>(() => readDefaultSourceFilter())
   const [autoRefresh, setAutoRefresh] = useState(() => readAutoRefreshPreference())
   const [diagnostics, setDiagnostics] = useState<SettingsDiagnostics | null>(null)
@@ -118,6 +123,15 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
 
   useEffect(() => applyThemePreference(theme), [theme])
   useEffect(() => applyFontSizePreference(fontSize), [fontSize])
+
+  useEffect(() => {
+    const refresh = () => {
+      setEnabledAgentsState(readEnabledAgents())
+      setAgent(readDefaultAgent())
+    }
+    window.addEventListener(PREFERENCES_CHANGED_EVENT, refresh)
+    return () => window.removeEventListener(PREFERENCES_CHANGED_EVENT, refresh)
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -168,6 +182,16 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const pickAgent = (next: AgentName) => {
     setAgent(next)
     setDefaultAgent(next)
+  }
+
+  const toggleEnabledAgent = (agent: AgentName) => {
+    const isEnabled = enabledAgents.includes(agent)
+    const isAvailable = diagnostics?.agents.find((item) => item.name === agent)?.available === true
+    if ((!isEnabled && !isAvailable) || (isEnabled && enabledAgents.length === 1)) return
+    const next = isEnabled ? enabledAgents.filter((item) => item !== agent) : [...enabledAgents, agent]
+    setEnabledAgentsState(next)
+    setEnabledAgents(next)
+    if (!next.includes(defaultAgent)) setAgent(next[0])
   }
 
   const pickSourceFilter = (next: SourceFilterPreference) => {
@@ -240,8 +264,52 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
 
         <div className="settings-body">
           <section className="settings-section">
-            <h2>Agent</h2>
-            <AgentPicker value={defaultAgent} onChange={pickAgent} className="settings-agent-picker" variant="grid" />
+            <h2>{t('settings.agents')}</h2>
+            <p className="settings-section-hint">{t('settings.enabledAgentsHint')}</p>
+            <div className="settings-enabled-agents" role="group" aria-label={t('settings.enabledAgents')}>
+              {AGENT_OPTIONS.map((agent) => {
+                const enabled = enabledAgents.includes(agent.value)
+                const status = diagnostics?.agents.find((item) => item.name === agent.value)
+                const canToggle = enabled ? enabledAgents.length > 1 : status?.available === true
+                return (
+                  <button
+                    key={agent.value}
+                    type="button"
+                    className={`settings-enabled-agent agent-${agent.value} ${enabled ? 'active' : ''}`}
+                    onClick={() => toggleEnabledAgent(agent.value)}
+                    disabled={diagLoading || !canToggle}
+                    aria-pressed={enabled}
+                    title={
+                      !status?.available && !enabled
+                        ? t('settings.enableRequiresCli', { agent: agent.label })
+                        : enabled && enabledAgents.length === 1
+                          ? t('settings.keepOneAgent')
+                          : undefined
+                    }
+                  >
+                    <AgentIcon agent={agent.value} size={17} />
+                    <span>{agent.label}</span>
+                    <span className={`settings-agent-availability ${status?.available ? 'ok' : 'bad'}`}>
+                      {diagLoading
+                        ? t('common.detecting')
+                        : status?.available
+                          ? t('common.available')
+                          : t('common.unavailable')}
+                    </span>
+                    {enabled && <Icon name="check" size={13} />}
+                  </button>
+                )
+              })}
+            </div>
+            <div className="settings-row settings-default-agent-row">
+              <span>{t('settings.defaultAgent')}</span>
+              <AgentPicker
+                value={defaultAgent}
+                onChange={pickAgent}
+                options={AGENT_OPTIONS.filter((option) => enabledAgents.includes(option.value))}
+                className="settings-default-agent-picker"
+              />
+            </div>
             <div className="settings-agent-block">
               <div className="settings-agent-title">
                 <span>CLI</span>

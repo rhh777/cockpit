@@ -4,12 +4,13 @@ import { AGENT_OPTIONS } from '../lib/agents'
 import { AgentIcon } from './AgentIcon'
 import { useI18n } from '../lib/i18n'
 import { Icon } from './Icon'
+import { useEnabledAgentOptions } from '../hooks/useEnabledAgents'
 
 export function AgentPicker({
   value,
   onChange,
   className = '',
-  options = AGENT_OPTIONS,
+  options,
   variant = 'menu',
 }: {
   value: AgentName
@@ -19,9 +20,11 @@ export function AgentPicker({
   variant?: 'menu' | 'grid'
 }) {
   const { t } = useI18n()
+  const { options: enabledOptions } = useEnabledAgentOptions()
+  const visibleOptions = options ?? enabledOptions
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement | null>(null)
-  const selected = options.find((a) => a.value === value) ?? options[0]
+  const selected = visibleOptions.find((a) => a.value === value) ?? visibleOptions[0]
 
   useEffect(() => {
     if (!open) return
@@ -47,7 +50,7 @@ export function AgentPicker({
   return (
     <div ref={ref} className={`agent-picker agent-picker-${variant} ${className}`.trim()}>
       <div className="agent-picker-scroll" role="radiogroup" aria-label="Agent">
-        {options.map((a) => (
+        {visibleOptions.map((a) => (
           <button
             key={a.value}
             type="button"
@@ -78,7 +81,7 @@ export function AgentPicker({
         {open && (
           <div className="agent-picker-popover" role="listbox" aria-label="Agent">
             <div className="agent-picker-popover-head">Agent</div>
-          {options.map((a) => (
+          {visibleOptions.map((a) => (
               <button
                 key={a.value}
                 type="button"

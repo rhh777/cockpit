@@ -11,13 +11,14 @@ import {
   type CreateReviewRoomBody,
   type SessionSummaryDTO,
 } from '../lib/api'
-import { displayTitle, relativeTime } from '../lib/display'
+import { displayTitle, localizeReviewRoomTitle, relativeTime } from '../lib/display'
 import { AgentIcon } from '../components/AgentIcon'
 import { AGENT_OPTIONS, labelForAgent } from '../lib/agents'
 import { Icon } from '../components/Icon'
 import { useI18n, type MessageKey, type ResolvedLocale } from '../lib/i18n'
 import type { AgentName } from '../lib/types'
 import { pickLocalPaths } from '../lib/native-dialog'
+import { useEnabledAgentOptions } from '../hooks/useEnabledAgents'
 
 type ViewMode = 'all' | 'cockpit' | AgentName
 type GroupMode = 'project' | 'time'
@@ -178,6 +179,7 @@ function searchableText(s: SessionSummaryDTO, t: (key: MessageKey) => string, lo
 
 export function SessionList({ style }: { style?: CSSProperties }) {
   const { locale, t } = useI18n()
+  const { enabledAgents, options: enabledAgentOptions } = useEnabledAgentOptions()
   const [sessions, setSessions] = useState<SessionSummaryDTO[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -219,6 +221,12 @@ export function SessionList({ style }: { style?: CSSProperties }) {
   useEffect(() => {
     writeGroupMode(groupMode)
   }, [groupMode])
+
+  useEffect(() => {
+    if (viewMode !== 'all' && viewMode !== 'cockpit' && !enabledAgents.includes(viewMode)) {
+      setViewMode('all')
+    }
+  }, [viewMode, enabledAgents])
 
   useEffect(() => {
     if (!contextMenu) return
@@ -317,7 +325,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
   const handleCreateGroup = async () => {
     setCreatingGroup(true)
     try {
-      const state = await createGroupThread()
+      const state = await createGroupThread({ agents: enabledAgents })
       const fresh = await fetchSessions()
       setSessions(fresh)
       setViewMode('cockpit')
@@ -397,7 +405,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
   const viewItems: { key: ViewMode; label: string; icon?: Parameters<typeof Icon>[0]['name'] }[] = [
     { key: 'all', label: t('sessions.all'), icon: 'folder' },
     { key: 'cockpit', label: t('sessions.groupChat') },
-    ...AGENT_OPTIONS.map((agent) => ({ key: agent.value, label: agent.label })),
+    ...enabledAgentOptions.map((agent) => ({ key: agent.value, label: agent.label })),
   ]
 
   const renderSessionRow = (s: SessionSummaryDTO) => {
@@ -411,6 +419,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
     const isRunning = activeRuns.length > 0
     const reviewExt = reviewRoomExtension(s)
     const isFreshChild = !!reviewExt?.parentReviewRoomId
+    const visibleTitle = reviewExt ? localizeReviewRoomTitle(s.title, locale) : s.title
     const activeAgents = [...new Set(activeRuns.map((r) => r.agent))]
     const runningLabel =
       activeAgents.length === 1
@@ -479,8 +488,8 @@ export function SessionList({ style }: { style?: CSSProperties }) {
             ) : (
               <AgentIcon source={s.source} size={30} className="project-session-icon" />
             )}
-            <span className="project-session-title" title={s.title}>
-              {displayTitle(s.title, 60, locale)}
+            <span className="project-session-title" title={visibleTitle}>
+              {displayTitle(visibleTitle, 60, locale)}
               {isFreshChild && (
                 <span className="project-session-fresh" title={t('sessions.freshReviewChild')}>
                   {' '}↑
@@ -547,7 +556,13 @@ export function SessionList({ style }: { style?: CSSProperties }) {
         </div>
       )}
 
-      <div className="project-view-switch">
+      <div
+        className="project-view-switch"
+        style={{
+          gridTemplateColumns: `repeat(${viewItems.length}, minmax(0, 1fr))`,
+          width: `min(${viewItems.length * 46 + 6}px, calc(100% - 20px))`,
+        }}
+      >
         {viewItems.map((item) => (
           <button
             key={item.key}
@@ -758,6 +773,7 @@ function NewConversationDialog({
   onCreateReviewRoom: (body: CreateReviewRoomBody) => void
 }) {
   const { locale, t } = useI18n()
+  const { enabledAgents, options: enabledAgentOptions } = useEnabledAgentOptions()
   const [mode, setMode] = useState<'review' | 'group'>('review')
   const [kind, setKind] = useState<ReviewSourceKind>('folder')
   const [selectedFolder, setSelectedFolder] = useState('')
@@ -766,8 +782,11 @@ function NewConversationDialog({
   const [selectedSessionKey, setSelectedSessionKey] = useState('')
   const [sessionQuery, setSessionQuery] = useState('')
   const [pickerError, setPickerError] = useState<string | null>(null)
-  const [goal, setGoal] = useState('')
-  const [participants, setParticipants] = useState<AgentName[]>(DEFAULT_REVIEW_AGENTS)
+  const [goal, setGoal] = useState(() => t('actions.reviewRoomGoal'))
+  const [participants, setParticipants] = useState<AgentName[]>(() => {
+    const preferred = DEFAULT_REVIEW_AGENTS.filter((agent) => enabledAgents.includes(agent))
+    return preferred.length ? preferred : enabledAgents
+  })
   const [discussion, setDiscussion] = useState<'parallel' | 'serial'>('parallel')
 
   const activeKind = REVIEW_KIND_OPTIONS.find((k) => k.value === kind)!
@@ -787,10 +806,10 @@ function NewConversationDialog({
   const canSubmit = mode === 'group'
     ? true
     : kind === 'freeform'
-      ? freeformText.trim().length > 0
+      ? freeformText.trim().length > 0 && goal.trim().length > 0
       : kind === 'existing-session'
-        ? Boolean(selectedSession) && participants.length >= 1
-        : paths.length > 0 && participants.length >= 1
+        ? Boolean(selectedSession) && participants.length >= 1 && goal.trim().length > 0
+        : paths.length > 0 && participants.length >= 1 && goal.trim().length > 0
 
   const toggleAgent = (agent: AgentName) => {
     setParticipants((prev) => {
@@ -803,12 +822,19 @@ function NewConversationDialog({
     if (participants.length < 2 && discussion === 'serial') setDiscussion('parallel')
   }, [discussion, participants.length])
 
+  useEffect(() => {
+    setParticipants((current) => {
+      const visible = current.filter((agent) => enabledAgents.includes(agent))
+      return visible.length ? visible : enabledAgents
+    })
+  }, [enabledAgents])
+
   const submit = () => {
     if (mode === 'group') {
       onCreateGroup()
       return
     }
-    const goalText = goal.trim() || 'Review this source with the selected reviewers. Identify risks, disagreements, and next steps.'
+    const goalText = goal.trim()
     let source: CreateReviewRoomBody['source']
     if (kind === 'freeform') {
       source = { kind: 'freeform', freeformText: freeformText.trim() }
@@ -833,6 +859,7 @@ function NewConversationDialog({
       participants,
       mode: discussion,
       startReview: true,
+      promptLocale: locale.startsWith('zh') ? 'zh-CN' : 'en',
     })
   }
 
@@ -1057,7 +1084,7 @@ function NewConversationDialog({
               <div className="modal-section">
                 <span className="modal-label">{t('newChat.participants')}</span>
                 <div className="review-agents-row" role="group" aria-label={t('newChat.participants')}>
-                  {AGENT_OPTIONS.map((agent) => (
+                  {enabledAgentOptions.map((agent) => (
                     <button
                       key={agent.value}
                       type="button"
@@ -1106,6 +1133,7 @@ function NewConversationDialog({
                   placeholder={t('newChat.goalPlaceholder')}
                   rows={2}
                 />
+                <span className="modal-hint">{t('reviewSetup.briefHint')}</span>
               </label>
             </>
           )}
@@ -1117,7 +1145,7 @@ function NewConversationDialog({
             onClick={submit}
             disabled={busy || !canSubmit}
           >
-            {t('newChat.create')}
+            {mode === 'review' ? t('reviewSetup.createAndStart') : t('newChat.create')}
           </button>
         </div>
       </div>
