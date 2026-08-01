@@ -25,8 +25,8 @@
     "developer-tools"
   ],
   "engines": {
-    "node": ">=20",
-    "pnpm": ">=9"
+    "node": ">=22.13",
+    "pnpm": ">=11"
   },
   "scripts": {
     "dev": "vite",
@@ -52,7 +52,8 @@
     "files": [
       "dist/**",
       "dist-electron/**",
-      "package.json"
+      "package.json",
+      "!node_modules/@anthropic-ai/claude-agent-sdk-*/**"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
