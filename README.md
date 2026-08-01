@@ -12,7 +12,7 @@
 
 - Browse complete Claude Code / Codex CLI / OpenCode / Cursor Agent CLI session timelines.
 - Start cross-agent follow-ups, reviews, or group chats from an existing session.
-- Run a **Review Room**: point Claude and Codex at a repo, folder, file, document, or existing session and have them review each other's plan, then fix and verify.
+- Run a **Review Room**: point any set of agents at a repo, folder, file, document, or existing session and have them review each other's plan, then fix and verify.
 - Store Cockpit-owned data under `~/.cockpit/` without rewriting native CLI files.
 
 Follow-up agents run read-only by default. The "resume native session" mode writes to native history only through the official CLI subprocess.
@@ -24,10 +24,10 @@ Follow-up agents run read-only by default. The "resume native session" mode writ
 - **Viewer** — Claude Code / Codex JSONL, OpenCode SQLite, and Cursor Agent CLI JSONL sessions; unified timeline, tool activity summary, patch diffs, filtering, virtualized long sessions, live refresh over SSE.
 - **Follow-up** — continue any native session with Claude, Codex, OpenCode, or Cursor; history lands in `~/.cockpit/threads/`, never in native CLI files.
 - **Group chat** — Cockpit-owned threads with `@mention` parallel dispatch (`@all` / `@everyone` / `@所有人` fan out to the whole roster), plus **serial relay discussion** where each agent hands off via a `Next:` protocol.
-- **Review Room** — workflow-ized group thread: source snapshot → parallel or serial review → structured findings compare → fix (single writer) → verify → fresh review.
-- **Approvals & write access** — per-run permission tiers (`ask` / `auto-safe` / `full-access`) with real per-operation approval cards from the Codex app-server and the Claude SDK; approve once / always / reject.
+- **Review Room** — workflow-ized group thread: source snapshot → parallel or serial review → structured findings compare → fix (single writer) → verify → fresh review. Reviewers are any subset of your enabled agents (Claude + Codex by default); serial mode needs at least two.
+- **Approvals & write access** — per-run permission tiers (`ask` / `auto-safe` / `full-access`), with real per-operation approval cards from the Codex app-server, the Claude SDK, and the OpenCode SDK; approve once / always / reject. Cursor runs under CLI-level permission flags and has no interactive approval yet.
 - **Background runs** — runs are owned by a `RunRegistry`, survive page switches, and can be re-attached by `runId`.
-- **Native continuation & handoff** — handoff bundles, Codex deep links, Codex app-server linked threads, and a one-shot Codex thread mirror.
+- **Native continuation & handoff** — write back into native history for Claude, Codex, and OpenCode through the official CLI subprocess, plus handoff bundles, Codex deep links, Codex app-server linked threads, and a one-shot Codex thread mirror.
 - **Settings** — per-agent model and reasoning-effort discovery from the installed CLIs, plus theme, language, font size, default agent, and layout, persisted to `~/.cockpit/settings.json`.
 - Attachments, Electron shell, i18n scaffolding.
 

@@ -12,7 +12,7 @@
 
 - 查看 Claude Code / Codex CLI / OpenCode / Cursor Agent CLI 的完整会话 timeline。
 - 基于原会话发起跨 agent follow-up、review 或群聊。
-- 用 **Review Room** 让 Claude 和 Codex 围绕一个仓库、文件夹、文件、文档或已有会话互相 review 方案,再修复、复核。
+- 用 **Review Room** 让任意几个 agent 围绕一个仓库、文件夹、文件、文档或已有会话互相 review 方案,再修复、复核。
 - 将 cockpit 产生的数据保存到 `~/.cockpit/`,不直接改写原生 CLI 文件。
 
 Follow-up agent 默认只读。「回到原会话」模式只通过官方 CLI 子进程写入原生历史。
@@ -24,10 +24,10 @@ Follow-up agent 默认只读。「回到原会话」模式只通过官方 CLI �
 - **查看** — Claude Code / Codex JSONL、OpenCode SQLite、Cursor Agent CLI JSONL 会话;统一 timeline、工具活动摘要、patch diff、筛选、长会话虚拟化、SSE 实时刷新。
 - **Follow-up** — 在任一原生会话后继续问 Claude / Codex / OpenCode / Cursor;历史落 `~/.cockpit/threads/`,不写原生 CLI 文件。
 - **群聊** — cockpit 自建 thread,`@mention` 并行调度(`@all` / `@所有人` / `@全体` / `@大家` 展开为全体成员),以及 agent 按 `Next:` 协议接棒的**接力讨论**。
-- **Review Room** — 工作流化的群聊:source 快照 → 并行/接力 review → 结构化 findings 对比 → fix(单写者)→ verify → fresh review。
-- **审批与写权限** — run 级三档权限(`ask` / `auto-safe` / `full-access`),Codex app-server 与 Claude SDK 发起真实逐操作审批卡(允许一次 / 总是允许 / 拒绝)。
+- **Review Room** — 工作流化的群聊:source 快照 → 并行/接力 review → 结构化 findings 对比 → fix(单写者)→ verify → fresh review。reviewer 是已启用 agent 的任意子集(默认 Claude + Codex),接力模式至少两个。
+- **审批与写权限** — run 级三档权限(`ask` / `auto-safe` / `full-access`),Codex app-server、Claude SDK、OpenCode SDK 发起真实逐操作审批卡(允许一次 / 总是允许 / 拒绝);Cursor 目前只靠 CLI 权限参数,没有交互式审批。
 - **后台运行** — run 由 `RunRegistry` 托管,切页不中断,可按 `runId` 重新 attach。
-- **原生延续与 handoff** — handoff bundle、Codex deep link、Codex app-server linked thread、Codex thread 一次性镜像。
+- **原生延续与 handoff** — Claude / Codex / OpenCode 可经官方 CLI 子进程写回原生历史,另有 handoff bundle、Codex deep link、Codex app-server linked thread、Codex thread 一次性镜像。
 - **设置** — 从已安装 CLI 探测各 agent 的可用模型与推理强度,连同主题、语言、字号、默认 agent、布局一起持久化到 `~/.cockpit/settings.json`。
 - 附件、Electron 桌面壳、i18n 框架。
 
