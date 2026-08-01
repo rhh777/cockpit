@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <!-- Tray template:纯黑 + alpha;macOS 自动反色适配深浅菜单栏 -->
-  <circle cx="16" cy="16" r="10" fill="none" stroke="black" stroke-width="2.4"/>
-  <path d="M 8.5 16 Q 16 21 23.5 16" fill="none" stroke="black" stroke-width="2.4" stroke-linecap="round"/>
-  <circle cx="22.5" cy="11.5" r="1.8" fill="black"/>
+  <!-- Tray template:纯黑 + alpha;三片旋臂对应彩色 Cockpit app icon,macOS 自动反色。 -->
+  <path d="M8.2 12.5C5.5 10.5 7 6.3 10.5 4.3 14.2 2.1 21 2 23.8 5c2 2.2.2 5.8-2.6 7-3 1.3-3.8-1.5-6.9-1.7-3.1-.2-3.6 4.2-6.1 2.2Z" fill="black"/>
+  <path d="M8.2 12.5C5.5 10.5 7 6.3 10.5 4.3 14.2 2.1 21 2 23.8 5c2 2.2.2 5.8-2.6 7-3 1.3-3.8-1.5-6.9-1.7-3.1-.2-3.6 4.2-6.1 2.2Z" fill="black" transform="rotate(120 16 16)"/>
+  <path d="M8.2 12.5C5.5 10.5 7 6.3 10.5 4.3 14.2 2.1 21 2 23.8 5c2 2.2.2 5.8-2.6 7-3 1.3-3.8-1.5-6.9-1.7-3.1-.2-3.6 4.2-6.1 2.2Z" fill="black" transform="rotate(240 16 16)"/>
 </svg>

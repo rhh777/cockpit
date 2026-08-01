@@ -444,7 +444,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
               void submitRename(s)
             }}
           >
-            <Icon name="users" size={14} className="project-session-icon" />
+            <AgentIcon source="cockpit" size={22} className="project-session-icon" />
             <input
               className="project-session-edit-input"
               value={editingTitle}
@@ -484,7 +484,7 @@ export function SessionList({ style }: { style?: CSSProperties }) {
         ) : (
           <Link to={`/${s.source}/${s.id}`} className="project-session-link">
             {isGroup ? (
-              <Icon name="users" size={14} className="project-session-icon" />
+              <AgentIcon source="cockpit" size={22} className="project-session-icon" />
             ) : (
               <AgentIcon source={s.source} size={30} className="project-session-icon" />
             )}
@@ -654,7 +654,11 @@ export function SessionList({ style }: { style?: CSSProperties }) {
                   })
                 }
               >
-                <Icon name={groupMode === 'project' ? 'folder' : 'clock'} size={15} />
+                {project.key === 'group:cockpit' ? (
+                  <AgentIcon source="cockpit" size={22} />
+                ) : (
+                  <Icon name={groupMode === 'project' ? 'folder' : 'clock'} size={15} />
+                )}
                 <span>{project.label}</span>
                 <span className="project-group-count">{project.items.length}</span>
               </button>
@@ -906,7 +910,7 @@ function NewConversationDialog({
               className={`new-conversation-option ${mode === 'group' ? 'active' : ''}`}
               onClick={() => setMode('group')}
             >
-              <Icon name="users" size={18} />
+              <AgentIcon source="cockpit" size={28} />
               <span>{t('newChat.blankGroup')}</span>
               <small>{t('newChat.blankGroupHint')}</small>
             </button>
