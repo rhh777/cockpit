@@ -124,7 +124,10 @@ jobs:
             | awk '{ name = $2; sub(/.*\//, "", name); print $1 "  " name }' \
             | sort -k2 > SHA256SUMS.txt
           cat SHA256SUMS.txt
+      # 这个 job 不 checkout 源码,gh 没有 git 上下文可推断目标仓库,
+      # 必须用 GH_REPO 显式指定,否则报 "not a git repository"。
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: gh release create "$GITHUB_REF_NAME" artifacts/*/* artifacts/SHA256SUMS.txt --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
