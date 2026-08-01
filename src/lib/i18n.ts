@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
+import {
+  PREFERENCES_CHANGED_EVENT,
+  readLanguagePreference as readPersistedLanguagePreference,
+  setLanguagePreference as setPersistedLanguagePreference,
+  type LanguagePreference,
+} from './preferences'
 
-export type LocalePreference = 'system' | 'en' | 'zh-CN'
+export type LocalePreference = LanguagePreference
 export type ResolvedLocale = 'en' | 'zh-CN'
 
-const LANGUAGE_KEY = 'cockpit.language'
 export const LANGUAGE_CHANGED_EVENT = 'cockpit:language-changed'
 
 const messages = {
@@ -1229,8 +1234,7 @@ export function resolveLocale(preference = readLanguagePreference()): ResolvedLo
 }
 
 export function readLanguagePreference(): LocalePreference {
-  const value = localStorage.getItem(LANGUAGE_KEY)
-  return value === 'en' || value === 'zh-CN' ? value : 'system'
+  return readPersistedLanguagePreference()
 }
 
 export function applyLanguagePreference(preference = readLanguagePreference()) {
@@ -1238,7 +1242,7 @@ export function applyLanguagePreference(preference = readLanguagePreference()) {
 }
 
 export function setLanguagePreference(preference: LocalePreference) {
-  localStorage.setItem(LANGUAGE_KEY, preference)
+  setPersistedLanguagePreference(preference)
   applyLanguagePreference(preference)
   window.dispatchEvent(new Event(LANGUAGE_CHANGED_EVENT))
 }
@@ -1261,10 +1265,10 @@ export function useI18n() {
   useEffect(() => {
     const onChange = () => setPreference(readLanguagePreference())
     window.addEventListener(LANGUAGE_CHANGED_EVENT, onChange)
-    window.addEventListener('storage', onChange)
+    window.addEventListener(PREFERENCES_CHANGED_EVENT, onChange)
     return () => {
       window.removeEventListener(LANGUAGE_CHANGED_EVENT, onChange)
-      window.removeEventListener('storage', onChange)
+      window.removeEventListener(PREFERENCES_CHANGED_EVENT, onChange)
     }
   }, [])
 

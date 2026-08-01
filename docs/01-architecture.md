@@ -77,11 +77,13 @@
 │   ~/.cockpit/handoffs/<id>/{manifest.json,*.md}           │
 │   ~/.cockpit/runs/native-shadow/<src>/<id>/<runId>.jsonl  │
 │   ~/.cockpit/runtime-links/{codex,claude}.jsonl (opt-in)  │
+│   ~/.cockpit/settings.json                                │
 │   ~/.cockpit/cache/session-index.json (可删可重建)       │
 └────────────────────────────────────────────────────────────┘
 ```
 
-> 设置(主题、模型、推理强度、启用的 agent 列表等)存浏览器 localStorage,不落 `~/.cockpit/`。
+> 设置(主题、语言、模型、推理强度、启用的 agent 列表、界面偏好等)统一存
+> `~/.cockpit/settings.json`。首次升级会迁移旧 localStorage 设置并清理旧键;应用重启后仍以该文件为事实源。
 
 ## 三、核心数据模型
 

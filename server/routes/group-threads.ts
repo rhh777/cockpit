@@ -10,6 +10,7 @@ import { runRegistry } from '../runs/run-registry'
 import { loadSessionDetail } from '../sessions-service'
 import type { Source } from '../loaders/types'
 import { normalizeRunPermissions } from '../permissions/types'
+import { settingsStore } from '../store/settings-store'
 
 // 群聊消息的发送/执行统一走 run-registry(POST /api/group-threads/:id/runs)。
 // 本路由负责群聊 thread 的生命周期(创建/导入/改名/删除)与 turn 取消。
@@ -183,6 +184,15 @@ async function handleStartRun(req: IncomingMessage, res: ServerResponse, id: str
     }
   }
   try {
+    const savedCli = (await settingsStore.read()).settings.cliByAgent
+    const cliByAgent = Object.fromEntries(state.agents.map((agent) => {
+      const provided = body.cliByAgent?.[agent]
+      const defaults = savedCli[agent] ?? {}
+      return [agent, {
+        model: provided && Object.hasOwn(provided, 'model') ? provided.model?.trim() || undefined : defaults.model || undefined,
+        effort: provided && Object.hasOwn(provided, 'effort') ? provided.effort?.trim() || undefined : defaults.effort || undefined,
+      }]
+    })) as Partial<Record<AgentName, { model?: string; effort?: string }>>
     const started = await runRegistry.startGroupTurn({
       id,
       text,
@@ -200,7 +210,7 @@ async function handleStartRun(req: IncomingMessage, res: ServerResponse, id: str
           : undefined,
       useTools: body.useTools ?? true,
       permissions: normalizeRunPermissions(body.permissions),
-      cliByAgent: body.cliByAgent,
+      cliByAgent,
       attachments,
       codexAcceleratedMode: body.codexAcceleratedMode === true,
     })

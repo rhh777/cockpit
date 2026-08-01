@@ -23,6 +23,7 @@ import type { HandoffSourceRef } from '../handoffs/types'
 import { sessionRegistry } from '../registry/session-registry'
 import { loadSessionDetail } from '../sessions-service'
 import { normalizeRunPermissions } from '../permissions/types'
+import { settingsStore } from '../store/settings-store'
 import { runRegistry } from '../runs/run-registry'
 import { isUserWorkspacePath, isValidSessionId, isValidSessionIdForSource, isValidSource } from '../util/security'
 import { cleanTitle } from '../util/title'
@@ -381,6 +382,7 @@ async function startReviewRound(
   const priorFindings = kind !== 'review' ? formatPriorFindings(review, issueIds) : ''
   if (kind !== 'review' && issueIds?.length && !priorFindings) throw new Error('review issue not found')
   const promptLocale = review.promptLocale ?? (/[一-鿿]/.test(review.goal) ? 'zh-CN' : 'en')
+  const savedCli = (await settingsStore.read()).settings.cliByAgent
   const started = await runRegistry.startGroupTurn({
     id,
     text: reviewPrompt(review.source, review.goal, snapshotText, kind, priorFindings, promptLocale),
@@ -397,6 +399,7 @@ async function startReviewRound(
       : undefined,
     useTools: kind !== 'review',
     permissions: normalizeRunPermissions(permissions),
+    cliByAgent: Object.fromEntries(participants.map((agent) => [agent, savedCli[agent] ?? {}])),
   })
   await reviewRoomStore.startRound(id, {
     kind,

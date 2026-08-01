@@ -141,7 +141,7 @@ interface NativeStartInput {
   attachments?: ChatAttachment[]
   /** Native resume 只有两档;缺省 read-only。 */
   writeMode?: NativeWriteMode
-  /** 推理强度;缺省由路由决定(当前默认 medium)。 */
+  /** 推理强度;缺省使用 Cockpit 设置中该 agent 的默认值。 */
   effort?: string
 }
 

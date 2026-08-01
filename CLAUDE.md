@@ -97,5 +97,6 @@ pnpm electron:build    # 打 macOS dmg
 | 后台运行 | `~/.cockpit/runs/index.jsonl`,native resume 影子日志 `~/.cockpit/runs/native-shadow/<src>/<id>/<runId>.jsonl` |
 | Provider thread 链接(Phase 2 opt-in) | `~/.cockpit/runtime-links/{codex,claude}.jsonl` |
 | discovery 缓存 | `~/.cockpit/cache/`(可删可重建) |
+| 应用设置 | `~/.cockpit/settings.json`(主题、语言、agent、模型、推理强度、界面偏好) |
 
 群聊附件(图片)落 `group-threads/<id>/attachments/`,**不进原生 CLI 目录**;`file`/`directory` 附件只校验存在性,不复制。

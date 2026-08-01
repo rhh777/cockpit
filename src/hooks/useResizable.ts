@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { PREFERENCES_CHANGED_EVENT } from '../lib/preferences'
+import { PREFERENCES_CHANGED_EVENT, readLayoutPreference, setLayoutPreference } from '../lib/preferences'
 
 /**
  * 可拖拽缩放面板宽度 hook。
- * @param storageKey localStorage 持久化 key
+ * @param storageKey 设置文件中的布局字段兼容 key
  * @param defaultWidth 默认宽度(px)
  * @param minWidth 最小宽度(px)
  * @param maxWidth 最大宽度(px)
@@ -17,9 +17,9 @@ export function useResizable(
   direction: 'left' | 'right',
 ) {
   const [width, setWidth] = useState(() => {
-    const saved = localStorage.getItem(storageKey)
-    if (saved) {
-      const v = parseInt(saved, 10)
+    const saved = readLayoutPreference(storageKey)
+    if (saved != null) {
+      const v = saved
       if (Number.isFinite(v) && v >= minWidth && v <= maxWidth) return v
     }
     return defaultWidth
@@ -29,17 +29,17 @@ export function useResizable(
   widthRef.current = width
 
   useEffect(() => {
-    localStorage.setItem(storageKey, String(width))
+    setLayoutPreference(storageKey, width)
   }, [storageKey, width])
 
   useEffect(() => {
     const onPrefs = () => {
-      const saved = localStorage.getItem(storageKey)
-      if (!saved) {
+      const saved = readLayoutPreference(storageKey)
+      if (saved == null) {
         setWidth(defaultWidth)
         return
       }
-      const v = parseInt(saved, 10)
+      const v = saved
       if (Number.isFinite(v) && v >= minWidth && v <= maxWidth) setWidth(v)
     }
     window.addEventListener(PREFERENCES_CHANGED_EVENT, onPrefs)

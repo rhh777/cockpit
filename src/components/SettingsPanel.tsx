@@ -432,6 +432,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
               <div className="settings-paths selectable">
                 {[
                   ['cockpit', diagnostics.roots.cockpit],
+                  ['settings', diagnostics.roots.settings],
                   ['followups', diagnostics.roots.followups],
                   ['opencode db', diagnostics.roots.opencodeDb],
                 ].map(([key, value]) => (

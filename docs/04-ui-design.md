@@ -31,7 +31,7 @@
 └──────────────┴───────────────────────────────────────────────┘
 ```
 
-**三栏可拖拽**:左 SessionList / 中 Timeline / 右 ReviewPanel(可选)均通过 `Splitter` 调宽,localStorage 持久化(`useResizable.ts`)。**侧栏宽度** ~240px 默认。
+**三栏可拖拽**:左 SessionList / 中 Timeline / 右 ReviewPanel(可选)均通过 `Splitter` 调宽,在 `~/.cockpit/settings.json` 持久化(`useResizable.ts`)。**侧栏宽度** ~240px 默认。
 
 ## 三、设计语言
 
@@ -106,7 +106,7 @@
   - `Cockpit 追问`(默认):走 `/api/threads`,写入 `~/.cockpit/threads/`,原生 jsonl 不动。
   - `回到原会话`:走 `/api/native`,仅原生 session 可用;锁定同源 agent,屏蔽 @mention。
 - chip 行:
-  - `发送对象`:默认下拉选 agent(localStorage 记忆);**输入 `@claude` / `@codex` 时切换到 mention 多选 chip**(`mention-chip`),发送会并行起多条独立轮次。
+  - `发送对象`:默认下拉选设置页指定的 agent;**输入 `@claude` / `@codex` 时切换到 mention 多选 chip**(`mention-chip`),发送会并行起多条独立轮次。
   - `🔒 CLI 只读运行`(Cockpit 追问)/ `写入原历史`(回到原会话)语义提示。
   - `✨ 快捷 Review`:预填 `@codex Please review...` 模板,用户可编辑。
   - 右侧圆形发送键;发送中 → 变取消(全局取消所有进行中的流)。
@@ -139,7 +139,7 @@ Agent 相关 UI 是全局组件体系,不是单聊/群聊各自发挥的局部�
 ### 4.5 ReviewPanel(右侧可拖拽侧栏)
 
 - 详情页右侧抽屉,展示**当前 follow-up 轮次的结构化 review 视图**(verdict / reasons / suggestions),与 timeline 并列,便于"边看 timeline 边对照 reviewer 结论"。
-- 宽度可拖拽(`Splitter` 组件),localStorage 记忆;最小 280px,默认 360px。
+- 宽度可拖拽(`Splitter` 组件),`~/.cockpit/settings.json` 记忆;最小 280px,默认 360px。
 - 仅当 follow-up 含 review 结构化字段时显示;纯 markdown 回复时收起。
 
 ### 4.6 TraceDrawer(底部抽屉)
@@ -149,7 +149,7 @@ Agent 相关 UI 是全局组件体系,不是单聊/群聊各自发挥的局部�
 
 ### 4.7 三栏可调布局
 
-- 左侧栏(SessionList)/ 中间 timeline / 右侧 ReviewPanel 之间均有 `Splitter`,宽度持久化到 localStorage。
+- 左侧栏(SessionList)/ 中间 timeline / 右侧 ReviewPanel 之间均有 `Splitter`,宽度持久化到 `~/.cockpit/settings.json`。
 - 移动端折叠为单栏(后续扩展,当前不做)。
 
 ### 4.8 空状态
@@ -176,7 +176,7 @@ Agent 相关 UI 是全局组件体系,不是单聊/群聊各自发挥的局部�
 | `WarningsBanner.tsx` | loader warnings 折叠展示 |
 | `ReviewPanel.tsx` | 右侧抽屉,展示结构化 review 结论 |
 | `TraceDrawer.tsx` | 底部抽屉,某轮次的 raw 事件流 |
-| `Splitter.tsx` + `useResizable.ts` | 三栏宽度拖拽 + localStorage 持久化 |
+| `Splitter.tsx` + `useResizable.ts` | 三栏宽度拖拽 + `~/.cockpit/settings.json` 持久化 |
 | `StreamingStatus.tsx` | 进行中流式轮次的状态指示 |
 | `AgentIcon.tsx` | agent 头像/字母 badge 的唯一入口 |
 | `AgentPicker.tsx` | agent 选择器(单聊 / 群聊共用) |

@@ -57,7 +57,7 @@ export interface NativeResumeInput {
    *  默认 read-only,trusted 必须由用户在 UI 里显式勾选、每次都要重勾。 */
   writeMode: NativeWriteMode
   /** 推理强度:透传给底层 CLI(claude `--effort`、codex `-c model_reasoning_effort`)。
-   *  缺省时由路由默认成 `medium`,保证原生续写也能看到 thinking/reasoning 事件。 */
+   *  缺省时使用 Cockpit 设置中该 agent 的默认值。 */
   effort?: string
   signal: AbortSignal
 }

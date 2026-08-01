@@ -17,6 +17,7 @@ export const COCKPIT_GROUP_THREADS_ROOT = path.join(COCKPIT_ROOT, 'group-threads
 export const COCKPIT_CACHE_ROOT = path.join(COCKPIT_ROOT, 'cache')
 export const COCKPIT_HANDOFFS_ROOT = path.join(COCKPIT_ROOT, 'handoffs')
 export const COCKPIT_RUNTIME_LINKS_ROOT = path.join(COCKPIT_ROOT, 'runtime-links')
+export const COCKPIT_SETTINGS_PATH = path.join(COCKPIT_ROOT, 'settings.json')
 
 // 路径穿越白名单根目录(不变量 13)。任何 resolve 出的 filePath 必须 startsWith 其中之一。
 export const ALLOWED_ROOTS = [CLAUDE_PROJECTS_ROOT, CODEX_SESSIONS_ROOT, OPENCODE_DATA_ROOT, COCKPIT_ROOT]

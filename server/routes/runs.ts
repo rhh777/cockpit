@@ -5,6 +5,7 @@ import { runRegistry } from '../runs/run-registry'
 import { normalizeAttachments, type AttachmentDraft } from '../util/attachments'
 import { threadAttachmentsDir } from '../store/paths'
 import { normalizeRunPermissions } from '../permissions/types'
+import { settingsStore } from '../store/settings-store'
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status
@@ -58,17 +59,19 @@ async function handleStartFollowup(req: IncomingMessage, res: ServerResponse, so
     return
   }
 
+  const targetAgent = body.targetAgent ?? 'claude'
+  const defaults = await settingsStore.cliDefaults(targetAgent)
   const started = await runRegistry.startFollowup({
     source,
     sessionId: id,
     filePath,
     text,
-    targetAgent: body.targetAgent ?? 'claude',
+    targetAgent,
     useTools: body.useTools ?? true,
     permissions: normalizeRunPermissions(body.permissions),
     parentTurnId: body.parentTurnId?.trim() || undefined,
-    model: body.model?.trim() || undefined,
-    effort: body.effort?.trim() || undefined,
+    model: Object.hasOwn(body, 'model') ? body.model?.trim() || undefined : defaults.model,
+    effort: Object.hasOwn(body, 'effort') ? body.effort?.trim() || undefined : defaults.effort,
     attachments: attachments.length ? attachments : undefined,
     codexAcceleratedMode: body.codexAcceleratedMode === true,
   })
@@ -92,9 +95,9 @@ async function handleStartNative(req: IncomingMessage, res: ServerResponse, sour
     return
   }
   const writeMode = body.writeMode === 'trusted' ? 'trusted' : 'read-only'
-  // Native resume 默认 medium,保证 thinking/reasoning 事件能被下游 CLI 吐出来。
-  // 前端未来暴露 effort 选择器时,body.effort 会覆盖这里的默认值。
-  const effort = body.effort?.trim() || 'medium'
+  const nativeAgent: AgentName = source === 'codex' ? 'codex' : source === 'opencode' ? 'opencode' : 'claude'
+  const defaults = await settingsStore.cliDefaults(nativeAgent)
+  const effort = Object.hasOwn(body, 'effort') ? body.effort?.trim() || undefined : defaults.effort
   try {
     const started = await runRegistry.startNativeResume({
       source,

@@ -4,12 +4,14 @@ import {
   CODEX_SESSION_INDEX,
   CODEX_SESSIONS_ROOT,
   COCKPIT_ROOT,
+  COCKPIT_SETTINGS_PATH,
   COCKPIT_THREADS_ROOT,
   OPENCODE_DATA_ROOT,
   OPENCODE_DB_PATH,
 } from '../config'
 import { listAgents, resolveAgent } from '../adapters/registry'
 import type { AgentName } from '../loaders/types'
+import { settingsStore } from '../store/settings-store'
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status
@@ -69,6 +71,22 @@ export async function handleSettingsRoute(
     await handleWarmup(req, res)
     return true
   }
+  if (url.pathname === '/api/settings') {
+    if (req.method === 'GET') {
+      sendJson(res, 200, await settingsStore.read())
+      return true
+    }
+    if (req.method === 'PUT') {
+      try {
+        sendJson(res, 200, { settings: await settingsStore.write(await readBody(req)), persisted: true })
+      } catch (err) {
+        sendJson(res, 400, { error: String((err as Error)?.message ?? err) })
+      }
+      return true
+    }
+    sendJson(res, 405, { error: 'method not allowed' })
+    return true
+  }
   if (url.pathname !== '/api/settings/diagnostics') return false
   if (req.method !== 'GET') {
     sendJson(res, 405, { error: 'method not allowed' })
@@ -78,6 +96,7 @@ export async function handleSettingsRoute(
   sendJson(res, 200, {
     roots: {
       cockpit: COCKPIT_ROOT,
+      settings: COCKPIT_SETTINGS_PATH,
       followups: COCKPIT_THREADS_ROOT,
       claudeProjects: CLAUDE_PROJECTS_ROOT,
       codexSessions: CODEX_SESSIONS_ROOT,

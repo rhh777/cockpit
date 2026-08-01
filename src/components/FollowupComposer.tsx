@@ -3,7 +3,11 @@ import type { AgentName, ChatAttachment } from '../lib/types'
 import { Icon } from './Icon'
 import { AgentIcon } from './AgentIcon'
 import { AgentPicker } from './AgentPicker'
-import { setDefaultAgent } from '../lib/preferences'
+import {
+  PREFERENCES_CHANGED_EVENT,
+  readAllCliSelections,
+  readDefaultAgent,
+} from '../lib/preferences'
 import { parseMentions } from '../lib/mentions'
 import { labelForAgent } from '../lib/agents'
 import { fetchAgentModels, type AgentModelOptionDTO } from '../lib/api'
@@ -240,7 +244,7 @@ export function FollowupComposer({
   const { t } = useI18n()
   const { enabledAgents, enabledSet, options: enabledAgentOptions } = useEnabledAgentOptions()
   const [text, setText] = useState('')
-  const [agent, setAgent] = useState<AgentName>(sessionAgent)
+  const [agent, setAgent] = useState<AgentName>(() => readDefaultAgent())
   const [mode, setMode] = useState<SendMode>('followup')
   const [groupDiscussionMode, setGroupDiscussionMode] = useState<GroupDiscussionMode>('parallel')
   const [serialMaxSteps, setSerialMaxSteps] = useState(6)
@@ -251,19 +255,8 @@ export function FollowupComposer({
   // 这样 group 成员变化时新成员默认参与,不会因为旧快照被漏掉。
   const [serialExcluded, setSerialExcluded] = useState<Set<AgentName>>(new Set())
   const [groupAgents, setGroupAgents] = useState<AgentName[]>(() => enabledAgents)
-  // 按当前 composer 临时记录 model / reasoning 选择。空串 = Default。
-  // 不跨 session 持久化,避免新开的会话继承上一次临时挑的模型。
-  //
-  // claude/codex 的 effort 默认 medium,原因:两家 CLI 不设 effort 时不会开启 extended
-  // thinking / reasoning summary,timeline 上就只能看到「加密 reasoning,无明文」占位。
-  // 和 native resume 的服务端默认对齐(见 server/routes/runs.ts handleStartNative)。
-  // opencode 的 `effort` 字段语义是 variant,不能塞 'medium';cursor 没有 effort。
-  const [cliByAgent, setCliByAgent] = useState<Record<AgentName, CliSelection>>({
-    claude: { effort: 'medium' },
-    codex: { effort: 'medium' },
-    opencode: {},
-    cursor: {},
-  })
+  // 每个 composer 从设置中的模型/推理默认值初始化;在这里临时修改只影响当前 composer。
+  const [cliByAgent, setCliByAgent] = useState<Record<AgentName, CliSelection>>(() => readAllCliSelections())
   const [modelMenuOpen, setModelMenuOpen] = useState<AgentName | null>(null)
   const [openCodeModels, setOpenCodeModels] = useState<AgentModelOptionDTO[] | null>(null)
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false)
@@ -298,8 +291,15 @@ export function FollowupComposer({
   }, [externalDraft])
 
   useEffect(() => {
-    setAgent(enabledSet.has(sessionAgent) ? sessionAgent : enabledAgents[0])
+    const preferred = readDefaultAgent()
+    setAgent(enabledSet.has(preferred) ? preferred : enabledAgents[0])
   }, [sessionAgent, enabledAgents, enabledSet])
+
+  useEffect(() => {
+    const refreshDefaults = () => setCliByAgent(readAllCliSelections())
+    window.addEventListener(PREFERENCES_CHANGED_EVENT, refreshDefaults)
+    return () => window.removeEventListener(PREFERENCES_CHANGED_EVENT, refreshDefaults)
+  }, [])
 
   useEffect(() => {
     if (groupMode) setGroupDiscussionMode(groupDefaultDiscussionMode)
@@ -421,7 +421,6 @@ export function FollowupComposer({
       // 不允许粘性授权 —— 用户下一条要写回必须重新勾选。
       setNativeTrustWrite(false)
     } else {
-      if (!usingMentions && !groupMode) setDefaultAgent(agent)
       // 单 agent 场景按当前 agent 偏好透传;@mentions 多目标下让 caller 走默认,避免一个
       // 模型设置被错配到另一个 agent。
       const options = groupMode ? cliByAgent : !usingMentions ? cliByAgent[agent] : undefined

@@ -502,6 +502,7 @@ export function fetchChanges(
 export interface SettingsDiagnostics {
   roots: {
     cockpit: string
+    settings: string
     followups: string
     claudeProjects: string
     codexSessions: string
