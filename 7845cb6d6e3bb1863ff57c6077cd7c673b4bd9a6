@@ -1,0 +1,132 @@
+server/routes/group-threads.ts
+  758499bce7f9b9cd 7,159-160,171,175-179
+server/loaders/loaders.test.ts
+  7a59e9e950f621e0 140-183
+src/components/FollowupComposer.tsx
+  758499bce7f9b9cd 11,257,264-265,306-310,319,321-326,348-349,351-352,354,357-365,581,591,1016-1032,1036-1038,1088,1102,1110-1111
+README.md
+  0e5c8ee9257756cf 3,7-8,13,24,26,31-46,55,75,120-122
+src/lib/i18n.ts
+  758499bce7f9b9cd 433,1047
+server/util/mentions.test.ts
+  758499bce7f9b9cd 3,19-46
+README.zh-CN.md
+  0e5c8ee9257756cf 3-7,13,24,26,31-46,55,75,104-113,120-122
+server/util/mentions.ts
+  758499bce7f9b9cd 3-8,14-22,38-40,44-56
+src/styles.css
+  758499bce7f9b9cd 2406-2459,3460-3467,3517-3521
+src/lib/mentions.ts
+  758499bce7f9b9cd 3-6,8-13,16-24,26-30,39,44-48,52-91
+server/loaders/cursor-loader.ts
+  7a59e9e950f621e0 28-267
+docs/05-group-chat-design.md
+  758499bce7f9b9cd 150-151,155-159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "7845cb6d6e3bb1863ff57c6077cd7c673b4bd9a6",
+  "prompts": {
+    "0e5c8ee9257756cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b9dcbe6c-44d4-4e8d-b856-a1126610a155",
+        "model": "claude-opus-5"
+      },
+      "human_author": "haorenhui",
+      "messages": [],
+      "total_additions": 66,
+      "total_deletions": 20,
+      "accepted_lines": 66,
+      "overriden_lines": 0,
+      "messages_url": "http://172.20.103.50:8002/cas/d8c216388575b0ad9c0113a1a37578d49016b4ceb7cdd8bbf1d5e2a9a37bdc2a",
+      "token_usage": {
+        "input_tokens": 62,
+        "output_tokens": 14546,
+        "cache_creation_input_tokens": 57026,
+        "cache_read_input_tokens": 2074945
+      }
+    },
+    "4cc1d80d56e42ef0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a29188b-da97-4d9a-84b6-06d740f428be",
+        "model": "claude-opus-5"
+      },
+      "human_author": "haorenhui",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2564,
+      "overriden_lines": 14,
+      "messages_url": "http://172.20.103.50:8002/cas/1b0f57a0c78ccbff11cbb172744f7c3951a61c96067b6f94a682aa94d0010485",
+      "token_usage": {
+        "input_tokens": 1160,
+        "output_tokens": 192088,
+        "cache_creation_input_tokens": 903043,
+        "cache_read_input_tokens": 84565797
+      }
+    },
+    "62592df39221d739": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "71f05761-69e5-46da-b810-40fc723b1a52",
+        "model": "claude-opus-5"
+      },
+      "human_author": "haorenhui",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1007,
+      "overriden_lines": 0,
+      "messages_url": "http://172.20.103.50:8002/cas/82fe859a4ed2989859264dfafc0552a434a553e16b47b82a66746134b8995f0e",
+      "token_usage": {
+        "input_tokens": 1455,
+        "output_tokens": 303403,
+        "cache_creation_input_tokens": 3078168,
+        "cache_read_input_tokens": 172217568
+      }
+    },
+    "758499bce7f9b9cd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e36f389b-fd4d-4c32-b441-e39c6bac73a3",
+        "model": "claude-opus-5"
+      },
+      "human_author": "haorenhui",
+      "messages": [],
+      "total_additions": 280,
+      "total_deletions": 44,
+      "accepted_lines": 271,
+      "overriden_lines": 0,
+      "messages_url": "http://172.20.103.50:8002/cas/0b1016752bfd78876977d120e0876cfc2b15682b6e192cbb5de718286de55bcb",
+      "token_usage": {
+        "input_tokens": 228,
+        "output_tokens": 34845,
+        "cache_creation_input_tokens": 138123,
+        "cache_read_input_tokens": 13239607
+      }
+    },
+    "7a59e9e950f621e0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "437eaeb4-8df5-4c90-80e9-ac64a33216f5",
+        "model": "claude-opus-5"
+      },
+      "human_author": "haorenhui",
+      "messages": [],
+      "total_additions": 120,
+      "total_deletions": 6,
+      "accepted_lines": 120,
+      "overriden_lines": 0,
+      "messages_url": "http://172.20.103.50:8002/cas/d98fb92feca60a9b707000a9f442b2f4594ea4ca12c1749b44c5f3e5b1cc7bb0",
+      "token_usage": {
+        "input_tokens": 50,
+        "output_tokens": 9932,
+        "cache_creation_input_tokens": 40840,
+        "cache_read_input_tokens": 1404073
+      }
+    }
+  }
+}
